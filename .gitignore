@@ -1,0 +1,43 @@
+node_modules
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
+/build
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Env
+.env
+.env.*
+!.env.example
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# factorioprints records are their authors' work and are never committed: data/raw is the local
+# copy `bun run ingest` keeps, data/source the id list. Test fixtures are cached under .cache/.
+/data/raw/
+/data/source/
+
+# Game renders and fpsr asset bundles. Renders made from real sprites derive from Wube's
+# art and must never be committed; atlases (assets-out) stay on the machine that made them.
+/data/renders/
+/.cache/
+assets-out/
+fpsr-assets/
+
+# Design reference screenshots; they include game icons, so never committed.
+/design-screens/
+
+# Alchemy: local state, bundles and dev state (deploy state lives in Cloudflare; see docs/deploy.md)
+.alchemy/

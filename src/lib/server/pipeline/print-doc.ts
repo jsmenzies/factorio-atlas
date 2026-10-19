@@ -1,0 +1,64 @@
+/**
+ * The print page's whole data source: one JSON document per print in R2, so a print page
+ * never queries D1.
+ */
+import type { PrintAnalysis } from './analyze';
+import type { FirebaseRecord } from './record';
+import { toEpochMs } from './record';
+
+export const analysisKey = (id: string) => `analysis/${id}.json`;
+
+/** Bump when the document's shape changes; readers treat other versions as missing. */
+export const PRINT_DOC_VERSION = 1;
+
+export interface PrintDoc {
+	v: typeof PRINT_DOC_VERSION;
+	print: {
+		id: string;
+		title: string;
+		author_id: string | null;
+		author_name: string | null;
+		favorites: number;
+		image_id: string | null;
+		image_type: string | null;
+		tags: string[];
+		description_md: string;
+		created_at: number | null;
+		updated_at: number | null;
+		source_url: string;
+	};
+	analysis: PrintAnalysis;
+}
+
+export const toPrintDoc = (id: string, sourceUrl: string, r: FirebaseRecord, analysis: PrintAnalysis): PrintDoc => ({
+	v: PRINT_DOC_VERSION,
+	print: {
+		id,
+		title: r.title,
+		author_id: r.author?.userId ?? r.authorId ?? null,
+		author_name: r.author?.displayName ?? null,
+		favorites: r.numberOfFavorites ?? 0,
+		image_id: r.image?.id ?? null,
+		image_type: r.image?.type ?? null,
+		tags: [...(r.tags ?? [])],
+		description_md: r.descriptionMarkdown ?? '',
+		created_at: toEpochMs(r.createdDate),
+		updated_at: toEpochMs(r.lastUpdatedDate),
+		source_url: sourceUrl
+	},
+	analysis
+});
+
+export const parsePrintDoc = (text: string | null): PrintDoc | null => {
+	if (text === null) return null;
+	try {
+		const doc = JSON.parse(text) as PrintDoc;
+		return doc.v === PRINT_DOC_VERSION ? doc : null;
+	} catch {
+		return null;
+	}
+};
+
+/** The print page's data: its R2 document, or null when the print isn't on the site. */
+export const readPrintDoc = async (bucket: R2Bucket, id: string): Promise<PrintDoc | null> =>
+	parsePrintDoc((await (await bucket.get(analysisKey(id)))?.text()) ?? null);

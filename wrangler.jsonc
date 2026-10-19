@@ -1,0 +1,45 @@
+// Local tooling only: `vite dev` (adapter-cloudflare's getPlatformProxy), `wrangler d1 ... --local`,
+// `wrangler types`, `bun run preview` and scripts/ingest.ts, all on miniflare state under
+// .wrangler/state. Deploys go through alchemy.run.ts, which reads the compatibility settings,
+// vars and binding names from this file; never `wrangler deploy` with it. See docs/deploy.md.
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "factorio-atlas",
+	"compatibility_date": "2026-10-18",
+	"compatibility_flags": ["nodejs_als"],
+	// No `main` or assets binding here: adapter-cloudflare still writes .svelte-kit/cloudflare/_worker.js,
+	// and with `main` set, `wrangler types` would import the build output once it exists, so the
+	// generated types (and `bun run check`) would depend on whether a build had run. The deployed
+	// Worker gets its ASSETS binding from alchemy.run.ts; nothing in src uses it.
+	"assets": {
+		"directory": ".svelte-kit/cloudflare"
+	},
+	"workers_dev": false,
+	"preview_urls": false,
+	// Local only. database_id is not a real database: miniflare keys the local D1 file by it, so
+	// changing or removing it starts an empty local database (then `bun run db:reset` and
+	// `bun run ingest --from-disk`). Real databases are created and bound by alchemy.run.ts.
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "prints",
+			"database_id": "00000000-0000-0000-0000-000000000000",
+			"migrations_dir": "migrations"
+		}
+	],
+	"r2_buckets": [
+		// Raw source records (one JSON object per print), keyed `factorioprints/<id>.json`.
+		{ "binding": "RAW", "bucket_name": "prints-raw" },
+		// Game-look renders made offline by `bun run render`, keyed `<id>/<page>.webp` etc.
+		{ "binding": "RENDERS", "bucket_name": "prints-renders" }
+	],
+	"vars": {
+		"MIRROR_BASE_URL": "https://raw.githubusercontent.com/motlin/factorio-blueprint-firebase-cdn/main",
+		"FIREBASE_BASE_URL": "https://facorio-blueprints.firebaseio.com",
+		// /admin (Cloudflare Access). Empty here: local `vite dev` allows /admin without them, and
+		// alchemy.run.ts sets them per stage. Unset in a deployed stage, /admin is a 404.
+		// See docs/deploy.md, "Admin page".
+		"ACCESS_TEAM_DOMAIN": "",
+		"ACCESS_AUD": ""
+	}
+}

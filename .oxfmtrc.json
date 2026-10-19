@@ -1,0 +1,8 @@
+{
+	"$schema": "./node_modules/oxfmt/configuration_schema.json",
+	"useTabs": true,
+	"singleQuote": true,
+	"trailingComma": "none",
+	"printWidth": 140,
+	"ignorePatterns": ["data/**", "worker-configuration.d.ts", ".svelte-kit/**", ".wrangler/**", ".cache/**", "bun.lock"]
+}
