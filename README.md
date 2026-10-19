@@ -8,6 +8,10 @@ pages, an explorable schematic of every blueprint, and per-page exchange strings
 
 Every print links back to its page on factorioprints.com and credits its author.
 
+![Search, with the item picker open: pick what a print makes](docs/screenshots/search.webp)
+
+![A blueprint book: main products and rates, build stages and the page grid](docs/screenshots/book.webp)
+
 ## How it works
 
 ```
