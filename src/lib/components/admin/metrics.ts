@@ -72,14 +72,17 @@ export const bytes = (n: number) => {
 	return `${i === 0 ? v : +v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
 };
 
-/** Prints per second when at least one a second, else per minute (per hour when very slow). */
-export const rateText = (perSecond: number | null) => {
+/** `unit` per second when at least one a second, else per minute (per hour when very slow); null without a rate. */
+export const unitRate = (perSecond: number | null, unit: string) => {
 	if (perSecond === null || !Number.isFinite(perSecond) || perSecond <= 0) return null;
-	if (perSecond >= 1) return `${+perSecond.toFixed(perSecond < 10 ? 1 : 0)} prints/s`;
+	if (perSecond >= 1) return `${+perSecond.toFixed(perSecond < 10 ? 1 : 0)} ${unit}/s`;
 	const perMinute = perSecond * 60;
-	if (perMinute >= 1) return `${+perMinute.toFixed(perMinute < 10 ? 1 : 0)} prints/min`;
-	return `${+(perMinute * 60).toFixed(1)} prints/h`;
+	if (perMinute >= 1) return `${+perMinute.toFixed(perMinute < 10 ? 1 : 0)} ${unit}/min`;
+	return `${+(perMinute * 60).toFixed(1)} ${unit}/h`;
 };
+
+/** "12 prints/s", "3.5 prints/min". */
+export const rateText = (perSecond: number | null) => unitRate(perSecond, 'prints');
 
 /** 45 → "45 s", 4000 → "1 h 6 min", 200000 → "2 d 7 h". */
 export const duration = (ms: number) => {

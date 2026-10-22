@@ -1,12 +1,12 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
-	import type { IconSet } from '#lib/icons.js';
+	import { iconUrl, signalIcon, type IconSet } from '#lib/icons.js';
 	import { signalName } from '#lib/format.js';
 
 	/**
 	 * A blueprint's or book's own icons (the 1–4 signals the author picked), laid out the way
 	 * the game draws them: one fills the badge, two sit side by side, three or four make a 2×2
-	 * grid. Virtual signals have no sprite here, so digits, letters and colours are drawn.
+	 * grid. Virtual signals without an icon are drawn: digits, letters and colours.
 	 */
 	let {
 		icons,
@@ -32,17 +32,14 @@
 		black: '#222222'
 	};
 
-	/** "virtual:signal-7" → {glyph: "7"}; "virtual:signal-blue" → {colour}; anything else → sprite. */
+	/** The signal's icon when there is one; else "virtual:signal-7" → {glyph: "7"}, "virtual:signal-blue" → {colour}. */
 	const parse = (signal: string) => {
-		const [type, name] = signal.includes(':') ? [signal.slice(0, signal.indexOf(':')), signal.slice(signal.indexOf(':') + 1)] : ['item', signal];
-		if (type === 'virtual') {
-			const rest = name.replace(/^signal-/, '');
-			if (/^[0-9A-Z]$/.test(rest)) return { glyph: rest } as const;
-			if (COLOURS[rest]) return { colour: COLOURS[rest] } as const;
-			return { glyph: '◆' } as const;
-		}
-		const spriteKind = type === 'recipe' ? 'recipe' : type === 'entity' ? 'entity' : 'item';
-		return { sprite: { kind: spriteKind, name } } as const;
+		const { kind, name } = signalIcon(signal);
+		if (kind !== 'virtual-signal' || iconUrl(icons, kind, name)) return { icon: true } as const;
+		const rest = name.replace(/^signal-/, '');
+		if (/^[0-9A-Z]$/.test(rest)) return { glyph: rest } as const;
+		if (COLOURS[rest]) return { colour: COLOURS[rest] } as const;
+		return { glyph: '◆' } as const;
 	};
 
 	const tint = $derived(
@@ -66,8 +63,8 @@
 				style:width="{cell}px"
 				style:height="{cell}px"
 			>
-				{#if 'sprite' in p && p.sprite}
-					<Icon {icons} kind={p.sprite.kind} name={p.sprite.name} label="" size={cell} />
+				{#if 'icon' in p}
+					<Icon {icons} signal={s} label="" size={cell} />
 				{:else if 'colour' in p}
 					<span class="rounded-full" style:width="{cell * 0.7}px" style:height="{cell * 0.7}px" style:background={p.colour}></span>
 				{:else}

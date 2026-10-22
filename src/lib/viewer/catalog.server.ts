@@ -1,7 +1,7 @@
 import { gameData, type GameData } from '#lib/server/pipeline/game-data.js';
 import type { Catalog } from './extract.js';
 
-/** Viewer prototype lookups backed by the 2.0.55 game data. 1.x names are renamed first. */
+/** Viewer prototype lookups backed by the game data. 1.x names are renamed first. */
 export const gameCatalog = (game: GameData = gameData): Catalog => ({
 	entity: (name, major) => {
 		const proto = major < 2 ? game.migrate('entity', name) : name;

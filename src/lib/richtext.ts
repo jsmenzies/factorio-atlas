@@ -3,17 +3,14 @@
  * `[virtual-signal=signal-A]`, `[img=item/iron-plate]`, `[color=red]…[/color]` and so on.
  * Icons become segments; colour and font tags are dropped.
  */
-import type { IconKind } from './icons.js';
+import { iconKindOf, type IconKind } from './icons.js';
 
 export type RichSegment =
 	| { kind: 'text'; text: string }
-	/** `sprite` is the sprite-sheet lookup; `null` when we have no sprite for that type (planets, technologies). */
-	| { kind: 'icon'; type: string; name: string; sprite: IconKind | null };
+	/** `icon` is the icon kind to look up; `null` for types without icons. */
+	| { kind: 'icon'; type: string; name: string; icon: IconKind | null };
 
 const TAG = /\[(\/?[a-z-]+)(?:=([^\]]*))?\]/g;
-
-/** Rich-text types whose sprite lives in our item, entity or recipe cells. */
-const SPRITE: Record<string, IconKind> = { item: 'item', fluid: 'item', entity: 'entity', recipe: 'recipe' };
 
 /** Types that name something worth an icon; anything else (`color`, `font`, `gps`) is dropped. */
 const ICON_TYPES = new Set([
@@ -42,7 +39,7 @@ const iconSegment = (type: string, value: string): RichSegment | null => {
 		type = name.slice(0, slash);
 		name = name.slice(slash + 1);
 	}
-	return { kind: 'icon', type, name, sprite: SPRITE[type] ?? null };
+	return { kind: 'icon', type, name, icon: iconKindOf(type) ?? null };
 };
 
 export const parseRichText = (s: string): RichSegment[] => {
@@ -82,12 +79,12 @@ export const plainText = (s: string): string =>
 		.replace(/\s+/g, ' ')
 		.trim();
 
-/** Names a string's icons need from the sprite sheet, by kind, so loaders send only those cells. */
-export const richTextIcons = (texts: (string | null | undefined)[]): Record<IconKind, string[]> => {
-	const out: Record<IconKind, string[]> = { item: [], entity: [], recipe: [] };
+/** The icons strings need, by kind, so loaders send only those. */
+export const richTextIcons = (texts: (string | null | undefined)[]): Partial<Record<IconKind, string[]>> => {
+	const out: Partial<Record<IconKind, string[]>> = {};
 	for (const t of texts) {
 		if (!t || !t.includes('[')) continue;
-		for (const seg of parseRichText(t)) if (seg.kind === 'icon' && seg.sprite) out[seg.sprite].push(seg.name);
+		for (const seg of parseRichText(t)) if (seg.kind === 'icon' && seg.icon) (out[seg.icon] ??= []).push(seg.name);
 	}
 	return out;
 };

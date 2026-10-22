@@ -13,7 +13,7 @@
 	const blueprints = $derived(data.pages.filter((n) => n.kind === 'blueprint'));
 
 	const select = (path: string) => goto(`?page=${encodeURIComponent(path)}`, { reset: false });
-	const index = $derived(blueprints.findIndex((n) => n.path === page?.path));
+	const index = $derived(blueprints.findIndex((n) => n.path === data.path));
 	const step = (by: number) => {
 		const next = blueprints[index + by];
 		if (next) select(next.path);
@@ -26,7 +26,7 @@
 		const summary = data.info[n.path]?.summary;
 		return `${indent}${Number(n.path.split('/').at(-1)) + 1}. ${titleOf(n.path, n.label)}${summary ? ` — ${summary}` : ''}`;
 	};
-	const here = $derived(page ? data.info[page.path] : undefined);
+	const here = $derived(data.path !== null ? data.info[data.path] : undefined);
 </script>
 
 <svelte:head><title>Render · {plainText(p.title)} · Blueprint Atlas</title></svelte:head>
@@ -42,7 +42,7 @@
 				>
 				<select
 					class="max-w-[60vw] rounded border border-stone-700 bg-stone-950 px-2 py-0.5 text-xs sm:max-w-md"
-					value={page?.path ?? ''}
+					value={data.path ?? ''}
 					onchange={(e) => select(e.currentTarget.value)}
 					aria-label="Book page"
 				>
@@ -66,7 +66,7 @@
 			{/if}
 		</span>
 	</header>
-	{#if page}
+	{#if data.path !== null}
 		<!-- What this page is: its in-game icons, name, what it makes and how it's built. -->
 		<div class="flex items-center gap-3 border-b border-stone-800 bg-stone-900/70 px-3 py-2 text-sm">
 			{#if here?.icons.length}<BlueprintIcons icons={data.icons} signals={here.icons} size={40} />{/if}
@@ -75,10 +75,16 @@
 					class="truncate font-medium {here?.title.derived ? 'text-stone-300 italic' : 'text-stone-100'}"
 					title={here?.title.derived ? 'Untitled page, named from its icons' : undefined}
 				>
-					<RichText text={here?.title.text ?? page.label ?? 'Untitled'} icons={data.icons} size={16} />
+					<RichText text={here?.title.text ?? here?.label ?? 'Untitled'} icons={data.icons} size={16} />
 				</p>
 				<p class="truncate text-xs text-stone-400">
-					{[here?.summary, here?.setup, here?.size, `${page.entities.length} entities`, page.gameVersion && `Factorio ${page.gameVersion}`]
+					{[
+						here?.summary,
+						here?.setup,
+						here?.size,
+						here?.entities != null && `${here.entities} entities`,
+						here?.gameVersion && `Factorio ${here.gameVersion}`
+					]
 						.filter(Boolean)
 						.join(' · ')}
 				</p>
@@ -86,8 +92,15 @@
 		</div>
 	{/if}
 	<div class="min-h-0 flex-1">
-		{#if page}
-			<BlueprintViewer {page} render={data.render ? { sidecar: data.render, base: `/prints/${p.id}/render` } : null} />
+		{#if page && data.render}
+			<svelte:boundary onerror={(e) => console.error('viewer failed:', e)}>
+				<BlueprintViewer {page} render={{ sidecar: data.render, base: data.base }} tooltip={data.tooltip} />
+				{#snippet failed()}
+					<p class="p-6 text-stone-400">Could not show this render.</p>
+				{/snippet}
+			</svelte:boundary>
+		{:else if data.path !== null}
+			<p class="p-6 text-stone-400">This page has no render yet.</p>
 		{:else}
 			<p class="p-6 text-stone-400">This print has no blueprint pages to draw.</p>
 		{/if}

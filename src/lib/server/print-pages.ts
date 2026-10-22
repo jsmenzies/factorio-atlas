@@ -1,15 +1,19 @@
 /**
  * Viewer pages and per-page strings for the print page's inline viewer, the full-screen render
- * page and the string endpoint. They read the files made at ingest (`viewer/<id>/` in the RAW
- * bucket, see pipeline/viewer-files.ts), so no request inflates a blueprint.
+ * page and the string endpoint. The page list and strings are files made at ingest (`viewer/<id>/`
+ * in the RAW bucket, see pipeline/viewer-files.ts); a page's entity data comes with its game
+ * render (renders.ts). No request inflates a blueprint.
  */
 import { env } from 'cloudflare:workers';
+import { iconSet } from '#lib/server/icon-set.js';
+import { gameData } from '#lib/server/pipeline/game-data.js';
 import { rawKey } from '#lib/server/pipeline/pipeline.js';
-import { pageStringKey, parseViewerIndex, viewerIndexKey, viewerPageKey } from '#lib/server/pipeline/viewer-files.js';
-import { getRenderSidecar } from '#lib/server/renders.js';
+import { pageStringKey, parseViewerIndex, viewerIndexKey } from '#lib/server/pipeline/viewer-files.js';
+import { getRenderPageData, getRenderSidecar, renderedPages } from '#lib/server/renders.js';
 import { firstPagePath } from '#lib/viewer/extract.js';
 import { pageBase } from '#lib/viewer/game-render.js';
-import type { CompactPage } from '#lib/viewer/types.js';
+import { parseModule } from '#lib/viewer/describe.js';
+import type { CompactPage, PageRef, TooltipData } from '#lib/viewer/types.js';
 
 const read = async (key: string) => (await (await env.RAW.get(key))?.text()) ?? null;
 
@@ -32,18 +36,60 @@ export const loadString = async (id: string): Promise<string | null> => {
 export const loadPageString = (id: string, path: string): Promise<string | null> =>
 	path === '' || BOOK_PATH.test(path) ? read(pageStringKey(id, path)) : Promise.resolve(null);
 
+/** Icons, English names and module slot counts for the names one page uses. */
+export const tooltipData = (page: CompactPage): TooltipData => {
+	const recipes = new Set<string>();
+	const items = new Set<string>();
+	const qualities = new Set<string>();
+	for (const [, , , , x] of page.entities) {
+		if (!x) continue;
+		if (x.recipe) recipes.add(x.recipe);
+		for (const q of [x.quality, x.recipeQuality]) if (q) qualities.add(q);
+		for (const m of (x.modules ?? []).map(parseModule)) {
+			items.add(m.name);
+			if (m.quality) qualities.add(m.quality);
+		}
+		for (const f of x.filters ?? []) items.add(f);
+	}
+	const entities = page.names.map((n) => n.proto);
+	const labels: Record<string, string> = {};
+	for (const n of [...entities, ...recipes, ...items]) {
+		const label = gameData.entities[n]?.label ?? gameData.recipes[n]?.label ?? gameData.itemInfo[n]?.label;
+		if (label) labels[n] = label;
+	}
+	const slots: Record<string, number> = {};
+	for (const n of page.names) {
+		const s = gameData.entities[n.proto]?.moduleSlots;
+		if (s) slots[n.name] = s;
+	}
+	return { icons: iconSet({ entity: entities, recipe: recipes, item: items, quality: qualities }), labels, slots };
+};
+
 /**
- * One book page as a compact entity list plus its game render, for the viewer. `requested`
- * is a book path (`print_nodes.path`); anything else falls back to the first blueprint.
- * Null when the print has no viewer files.
+ * The print's pages: the page list made at ingest, or when that's missing (or from another
+ * VIEWER_VERSION) the pages its render index lists, so rendered pages still have a viewer.
+ */
+const pagesOf = async (id: string): Promise<PageRef[] | null> => {
+	const index = parseViewerIndex(await read(viewerIndexKey(id)));
+	if (index) return index.pages;
+	const rendered = await renderedPages(id);
+	if (!rendered.length) return null;
+	return rendered.map((path) => ({ path, kind: 'blueprint', label: null, depth: path ? path.split('/').length : 0, entities: 0 }));
+};
+
+/**
+ * One book page's game render with its entity data for hover tooltips (both made by the render
+ * run, so their coordinates match). `requested` is a book path (as `listPages` writes it); anything
+ * else falls back to the first blueprint. `page` and `render` are null when the page has no
+ * render (or its data and sidecar are from different renders, mid-run). Null when the print has
+ * no page list at all.
  */
 export const loadViewerPage = async (id: string, requested: string | null) => {
-	const index = parseViewerIndex(await read(viewerIndexKey(id)));
-	if (index === null) return null;
-	const { pages } = index;
+	const pages = await pagesOf(id);
+	if (pages === null) return null;
 	const path = requested !== null && pages.some((p) => p.path === requested && p.kind === 'blueprint') ? requested : firstPagePath(pages);
-	if (path === null) return { pages, page: null, render: null };
-	const [text, render] = await Promise.all([read(viewerPageKey(id, path)), getRenderSidecar(id, pageBase(path))]);
-	const page = text === null ? null : (JSON.parse(text) as CompactPage);
-	return { pages, page, render: page ? render : null };
+	if (path === null) return { pages, path, page: null, render: null, tooltip: null };
+	const [data, render] = await Promise.all([getRenderPageData(id, pageBase(path)), getRenderSidecar(id, pageBase(path))]);
+	if (!data || !render || data.stamp !== render.stamp) return { pages, path, page: null, render: null, tooltip: null };
+	return { pages, path, page: data.page, render, tooltip: tooltipData(data.page) };
 };

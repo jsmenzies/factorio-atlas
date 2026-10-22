@@ -17,6 +17,11 @@
 		class={page.url.pathname.startsWith('/admin/pipeline') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
 		aria-current={page.url.pathname === '/admin/pipeline' ? 'page' : undefined}>Pipeline</a
 	>
+	<a
+		href="/admin/render"
+		class={page.url.pathname.startsWith('/admin/render') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
+		aria-current={page.url.pathname === '/admin/render' ? 'page' : undefined}>Render</a
+	>
 </nav>
 
 {@render children()}

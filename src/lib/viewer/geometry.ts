@@ -1,7 +1,7 @@
 /**
- * Pure geometry for the schematic blueprint renderer: direction handling, belt curves,
- * underground pairing, pipe connectivity, inserter hands and rail shapes. No DOM, no
- * Svelte, no game data beyond the small tables in prototypes.ts, so `bun test` can run it.
+ * Pure geometry behind the viewer's hover tooltips over game renders: direction handling, belt
+ * curves, underground pairing, pipe connectivity and inserter hands. No DOM, no Svelte, no game
+ * data beyond the small tables in prototypes.ts, so `bun test` can run it.
  *
  * Coordinates are blueprint tiles: x grows east, y grows south, entity positions are
  * centres. Directions are 16-way (N = 0, E = 4, S = 8, W = 12) after normalisation.
@@ -58,6 +58,13 @@ export const footprint = (w: number, h: number, d: number): Vec => (isSideways(d
 /** Pack a tile coordinate into a number key (valid to about ±1M tiles). */
 export const tileKey = (tx: number, ty: number) => (tx + 1048576) * 2097152 + (ty + 1048576);
 const cellOf = (x: number, y: number): Vec => [Math.floor(x), Math.floor(y)];
+
+/** Append `value` to the list at `key`. */
+const addTo = <V>(map: Map<number, V[]>, key: number, value: V) => {
+	const list = map.get(key);
+	if (list) list.push(value);
+	else map.set(key, [value]);
+};
 
 /** Minimal per-entity view the geometry functions need. */
 export interface GeoEntity {
@@ -173,10 +180,7 @@ export const pairUndergrounds = (ents: GeoEntity[], maxOf: (name: string) => num
 	ents.forEach((e, i) => {
 		if (e.kind !== 'underground') return;
 		const [tx, ty] = cellOf(e.x, e.y);
-		const k = tileKey(tx, ty);
-		const list = at.get(k);
-		if (list) list.push(i);
-		else at.set(k, [i]);
+		addTo(at, tileKey(tx, ty), i);
 	});
 	const partner = new Int32Array(ents.length).fill(-1);
 	ents.forEach((e, i) => {
@@ -286,12 +290,7 @@ export const pipeNetwork = (ents: GeoEntity[]): PipeNetwork => {
 		}
 	});
 	const byTile = new Map<number, number[]>();
-	ports.forEach((p, i) => {
-		const k = tileKey(p.tx, p.ty);
-		const list = byTile.get(k);
-		if (list) list.push(i);
-		else byTile.set(k, [i]);
-	});
+	ports.forEach((p, i) => addTo(byTile, tileKey(p.tx, p.ty), i));
 	ports.forEach((p, i) => {
 		if (p.joined !== -1) return;
 		const [vx, vy] = dirVec(p.dir);
@@ -316,10 +315,7 @@ export const pipeNetwork = (ents: GeoEntity[]): PipeNetwork => {
 	ents.forEach((e, i) => {
 		if (e.kind !== 'pipe-to-ground') return;
 		const [tx, ty] = cellOf(e.x, e.y);
-		const k = tileKey(tx, ty);
-		const list = ptgAt.get(k);
-		if (list) list.push(i);
-		else ptgAt.set(k, [i]);
+		addTo(ptgAt, tileKey(tx, ty), i);
 	});
 	const underground = new Int32Array(ents.length).fill(-1);
 	ents.forEach((e, i) => {
@@ -380,110 +376,3 @@ export const guessUnknownSizes = (ents: GeoEntity[]): void => {
 		if (isSideways(e.dir)) [e.w, e.h] = [h, w];
 	});
 };
-
-// ---------------------------------------------------------------------------------------
-// Rails (approximate: shapes read as track, not exact game geometry)
-
-/** Cubic Bézier between two points with unit tangents, sampled. */
-const curve = (p0: Vec, t0: Vec, p1: Vec, t1: Vec, steps = 10): Vec[] => {
-	const len = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) / 3;
-	const c0: Vec = [p0[0] + t0[0] * len, p0[1] + t0[1] * len];
-	const c1: Vec = [p1[0] - t1[0] * len, p1[1] - t1[1] * len];
-	const out: Vec[] = [];
-	for (let i = 0; i <= steps; i++) {
-		const t = i / steps;
-		const u = 1 - t;
-		out.push([
-			u * u * u * p0[0] + 3 * u * u * t * c0[0] + 3 * u * t * t * c1[0] + t * t * t * p1[0],
-			u * u * u * p0[1] + 3 * u * u * t * c0[1] + 3 * u * t * t * c1[1] + t * t * t * p1[1]
-		]);
-	}
-	return out;
-};
-
-const S225 = Math.sin(Math.PI / 8);
-const C225 = Math.cos(Math.PI / 8);
-const R2 = Math.SQRT1_2;
-
-/** Local (north-frame) centre line of each rail kind, before rotation. */
-const RAIL_LOCAL: Partial<Record<Kind, (d: number) => { pts: Vec[]; rot: number; mirror: boolean }>> = {
-	'rail-straight': (d) =>
-		isCardinal(d)
-			? {
-					pts: [
-						[0, -1],
-						[0, 1]
-					],
-					rot: d,
-					mirror: false
-				}
-			: {
-					pts: [
-						[0, -Math.SQRT2],
-						[0, Math.SQRT2]
-					],
-					rot: d,
-					mirror: false
-				},
-	'rail-half-diagonal': (d) => ({
-		pts: [rotate(0, -2.6, 1), rotate(0, 2.6, 1)],
-		rot: d,
-		mirror: false
-	}),
-	'rail-curve-a': (d) => ({
-		pts: curve([0.5, 3], [0, -1], [-0.6, -3], [-S225, -C225]),
-		rot: Math.floor(d / 2) * 2,
-		mirror: d % 2 === 1
-	}),
-	'rail-curve-b': (d) => ({
-		pts: curve([1.2, 2.2], [-S225, -C225], [-1.2, -2.2], [-R2, -R2]),
-		rot: Math.floor(d / 2) * 2,
-		mirror: d % 2 === 1
-	}),
-	// 1.x: 8 directions; diagonal pieces cut across one corner of their 2×2 cell.
-	'rail-legacy-straight': (d) =>
-		isCardinal(d)
-			? {
-					pts: [
-						[0, -1],
-						[0, 1]
-					],
-					rot: d,
-					mirror: false
-				}
-			: {
-					pts: [
-						[0, -1],
-						[1, 0]
-					],
-					rot: turn(d, -2),
-					mirror: false
-				},
-	'rail-legacy-curve': (d) => ({
-		pts: curve([1, 4], [0, -1], [-2, -3], [-R2, -R2]),
-		rot: Math.floor(d / 4) * 4,
-		mirror: (d / 2) % 2 === 1
-	})
-};
-
-/** Centre line of a rail piece in world coordinates, or null for non-rails. */
-export const railLine = (e: Pick<GeoEntity, 'kind' | 'x' | 'y' | 'dir'>): Vec[] | null => {
-	const f = RAIL_LOCAL[e.kind];
-	if (!f) return null;
-	const { pts, rot, mirror } = f(e.dir);
-	return pts.map(([x, y]) => {
-		const [rx, ry] = rotate(mirror ? -x : x, y, rot);
-		return [e.x + rx, e.y + ry];
-	});
-};
-
-/** Offset a polyline sideways by `d` (positive = right of travel). */
-export const offsetLine = (pts: Vec[], d: number): Vec[] =>
-	pts.map((p, i) => {
-		const a = pts[Math.max(0, i - 1)];
-		const b = pts[Math.min(pts.length - 1, i + 1)];
-		const dx = b[0] - a[0];
-		const dy = b[1] - a[1];
-		const l = Math.hypot(dx, dy) || 1;
-		return [p[0] - (dy / l) * d, p[1] + (dx / l) * d];
-	});

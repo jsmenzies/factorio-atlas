@@ -1,5 +1,5 @@
 /**
- * Remote D1 and R2 for dev/prod, through the Node sidecar in remote-bindings.mjs (why: see there).
+ * Remote D1 and R2 for a deployed stage (prod), through the Node sidecar in remote-bindings.mjs (why: see there).
  * The shims implement only what the pipeline and runs.ts use: `prepare().bind().first/all/run`,
  * `batch`, and R2 `put`/`get().text()`/`delete` with string bodies.
  */

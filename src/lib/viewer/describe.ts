@@ -2,9 +2,29 @@ import { directionName, inserterHands, type BeltShape, type GeoEntity, type Pipe
 import type { CompactPage } from './types.js';
 
 export interface Description {
+	/** As written in the blueprint. */
 	title: string;
+	/** 2.0 prototype name, for the icon and English name. */
+	proto: string;
+	quality: string | null;
+	recipe: { name: string; quality: string | null } | null;
+	modules: ModuleStack[];
+	/** Inserter filters. */
+	filters: string[];
 	rows: [string, string][];
 }
+
+/** One module stack from the viewer files' `modules` strings: "speed-module-3 (rare) ×4". */
+export interface ModuleStack {
+	name: string;
+	quality: string | null;
+	count: number;
+}
+
+export const parseModule = (s: string): ModuleStack => {
+	const m = /^(.+?)(?: \(([^)]+)\))? ×(\d+)$/.exec(s);
+	return m ? { name: m[1], quality: m[2] ?? null, count: Number(m[3]) } : { name: s, quality: null, count: 1 };
+};
 
 const fmt = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
 
@@ -26,9 +46,6 @@ export const describe = (
 	rows.push(['category', info.known ? `${info.category} · ${info.type}` : 'unknown (modded or renamed)']);
 	if (!info.known && e.kind === 'box') rows.push(['size', `${e.w}×${e.h}, guessed from free space`]);
 	else if (info.w * info.h > 1) rows.push(['size', `${info.w}×${info.h}`]);
-	if (extra?.recipe) rows.push(['recipe', extra.recipe + (extra.recipeQuality ? ` (${extra.recipeQuality})` : '')]);
-	if (extra?.modules?.length) rows.push(['modules', extra.modules.join(', ')]);
-	if (extra?.quality) rows.push(['quality', extra.quality]);
 	if (extra?.mirror) rows.push(['mirrored', 'yes']);
 	if (e.kind === 'belt') {
 		const s = ctx.shapes[i];
@@ -56,12 +73,19 @@ export const describe = (
 		const { pickup, drop } = inserterHands(e);
 		rows.push(['picks up', `${fmt(pickup[0])}, ${fmt(pickup[1])}${extra?.pickup ? ' (custom)' : ''}`]);
 		rows.push(['drops', `${fmt(drop[0])}, ${fmt(drop[1])}${extra?.drop ? ' (custom)' : ''}`]);
-		if (extra?.filters?.length) rows.push(['filters', extra.filters.join(', ')]);
 	}
 	if (extra?.text) rows.push(['text', extra.text]);
 	const ports = ctx.pipes.portsOf[i].map((p) => ctx.pipes.ports[p]);
 	if (ports.length && e.kind !== 'pipe' && e.kind !== 'pipe-to-ground') {
 		rows.push(['fluid ports', `${ports.filter((p) => p.joined !== -1).length} of ${ports.length} connected`]);
 	}
-	return { title: info.name, rows };
+	return {
+		title: info.name,
+		proto: info.proto,
+		quality: extra?.quality ?? null,
+		recipe: extra?.recipe ? { name: extra.recipe, quality: extra.recipeQuality ?? null } : null,
+		modules: (extra?.modules ?? []).map(parseModule),
+		filters: e.kind === 'inserter' ? (extra?.filters ?? []) : [],
+		rows
+	};
 };

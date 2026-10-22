@@ -5,8 +5,9 @@ import { Schema } from 'effect';
  * motlin/factorio-blueprint-firebase-cdn. Mirrors the frontend's zod schema in
  * FactorioBlueprints/factorio-prints src/schemas.ts.
  *
- * Unknown keys are dropped on decode, which is how `favorites` (who favourited)
- * and `image.deletehash` (an Imgur deletion secret) are kept out of our store.
+ * Unknown keys are dropped on decode, so the decoded record never holds `favorites` (who
+ * favourited) or `image.deletehash`; the archived raw text is stripped of them by
+ * `stripPrivateFields` before it is stored.
  */
 const Timestamp = Schema.Union([Schema.Number, Schema.String]);
 
@@ -40,4 +41,17 @@ export const toEpochMs = (t: number | string | undefined): number | null => {
 	if (typeof t === 'number') return t;
 	const ms = Date.parse(t);
 	return Number.isNaN(ms) ? null : ms;
+};
+
+/**
+ * A record's JSON text without the fields we must never store or republish: `favorites` maps the
+ * user ids of everyone who favourited the print, and `image.deletehash` (an Imgur deletion secret)
+ * isn't ours to keep. Throws when the text isn't JSON.
+ */
+export const stripPrivateFields = (text: string): string => {
+	const record = JSON.parse(text) as Record<string, unknown>;
+	delete record.favorites;
+	const image = record.image as Record<string, unknown> | undefined;
+	if (image && typeof image === 'object') delete image.deletehash;
+	return JSON.stringify(record);
 };

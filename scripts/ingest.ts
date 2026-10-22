@@ -53,13 +53,35 @@ const withLocalCopy = Layer.effect(
 	})
 );
 
+const USAGE = 'usage: bun run ingest <id>... | --top N | --reanalyze <id>... | --from-disk [dir]   [--force] [--retry-failed]';
+const usage = (problem?: string): never => {
+	if (problem) console.error(problem);
+	console.error(USAGE);
+	process.exit(1);
+};
+/** A factorioprints id (a Firebase push id): ids may start with "-", even "--", so this tells them from flags. */
+const PRINT_ID = /^[-_0-9A-Za-z]{20}$/;
+
 const argv = process.argv.slice(2);
+if (argv.includes('--help') || argv.includes('-h')) {
+	console.log(USAGE);
+	process.exit(0);
+}
 const options: IngestOptions = {
 	force: argv.includes('--force'),
 	retryFailed: argv.includes('--retry-failed'),
 	maxInflatedBytes: OFFLINE_MAX_INFLATED_BYTES
 };
 const args = argv.filter((a) => a !== '--force' && a !== '--retry-failed');
+// Checked before the platform proxy starts: a mode flag comes first, and nothing else may look like one.
+const mode = ['--top', '--reanalyze', '--from-disk'].includes(args[0]) ? args[0] : null;
+const rest = mode ? args.slice(1) : args;
+const stray = rest.find((a) => a.startsWith('--') && !PRINT_ID.test(a));
+if (stray) usage(`unknown argument: ${stray}`);
+if (!mode && !rest.length) usage();
+if (mode === '--reanalyze' && !rest.length) usage('--reanalyze needs at least one id');
+if ((mode === '--top' || mode === '--from-disk') && rest.length > 1) usage(`${mode} takes one value`);
+if (mode === '--top' && !(Number.isInteger(Number(rest[0] ?? 1)) && Number(rest[0] ?? 1) >= 1)) usage('--top needs a whole number');
 
 const counts: Record<IngestOutcome['status'], number> = {
 	analysed: 0,
@@ -135,8 +157,6 @@ const program = Effect.gen(function* () {
 	} else {
 		ids = args;
 	}
-	if (ids.length === 0) return yield* Effect.logError('usage: ingest --top N | --from-disk [dir] | --reanalyze <id>... | <id>...');
-
 	for (const id of ids) {
 		const result = yield* (reanalyze ? reanalyzePrint(id, options) : ingestPrint(id, options)).pipe(
 			Effect.catch((e) => Effect.logError(`error ${id}: ${e._tag}`, e).pipe(Effect.as(null)))

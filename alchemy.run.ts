@@ -1,26 +1,30 @@
 /**
  * Cloudflare infrastructure, provisioned by Alchemy (https://alchemy.run). Runbook: docs/deploy.md.
  *
- *   bun run deploy:dev     # vite build, then `alchemy deploy --stage dev`
- *   bun run deploy:prod
- *   bun run plan:dev       # preview the changes (needs Cloudflare credentials)
+ *   bun run plan:prod      # vite build, then `alchemy plan --stage prod`: preview the changes
+ *   bun run deploy:prod    # vite build, then `alchemy deploy --stage prod`
  *
- * Two stages, `dev` and `prod`, each with its own Worker (the SvelteKit app, built by
- * adapter-cloudflare exactly as `bun run preview` runs it), D1 database and two R2 buckets.
- * Binding names (DB, RAW, RENDERS), vars, compatibility date and flags come from wrangler.jsonc,
+ * One deployed stage, `prod` (STAGES in infra/databases.ts; local development runs on miniflare
+ * with `bun run dev`), with its own Worker (the SvelteKit app, built by adapter-cloudflare exactly
+ * as `bun run preview` runs it), D1 database and two R2 buckets. Prod also owns the one sprites
+ * bucket. A staging stage can be added to STAGES; it gets the same resources and links to prod's
+ * sprites bucket.
+ * Binding names (DB, RAW, RENDERS, SPRITES), vars, compatibility date and flags come from wrangler.jsonc,
  * which stays the config for local tooling (`vite dev`, `wrangler d1 --local`, `wrangler types`,
  * scripts/ingest.ts), so local and deployed Workers can't drift apart. Alchemy adds ASSETS.
  *
  * Physical names include the stage: Worker `factorio-prints-<stage>`, D1
- * `factorio-prints-<stage>-db-<generation>`, R2 `factorio-prints-<stage>-raw` and `-renders`.
+ * `factorio-prints-<stage>-db-<generation>`, R2 `factorio-prints-<stage>-raw` and `-renders`, and the
+ * shared R2 `factorio-prints-sprites`.
  * The prefix is fixed and also names the Alchemy stack, so renaming the site or the repo never
  * replaces resources.
  */
+import * as rulesets from '@distilled.cloud/cloudflare/rulesets';
 import * as Alchemy from 'alchemy';
 import * as Cloudflare from 'alchemy/Cloudflare';
 import { Config, Effect, Option } from 'effect';
 import { unstable_readConfig } from 'wrangler';
-import { DATABASES, PREFIX, STAGES, type Stage } from './infra/databases';
+import { DATABASES, PREFIX, SPRITES_BUCKET, STAGES, type Stage } from './infra/databases';
 
 /** The parts of wrangler.jsonc used here (wrangler's own config type isn't exported). */
 interface LocalConfig {
@@ -33,11 +37,14 @@ interface LocalConfig {
 const local: LocalConfig = unstable_readConfig({ config: 'wrangler.jsonc' }, { hideWarnings: true });
 
 // Fail fast if wrangler.jsonc gains a binding this file doesn't provision.
-const expected = { d1: ['DB'], r2: ['RAW', 'RENDERS'] };
+const expected = { d1: ['DB'], r2: ['RAW', 'RENDERS', 'SPRITES'] };
 const actual = { d1: local.d1_databases.map((d) => d.binding), r2: local.r2_buckets.map((b) => b.binding) };
 if (JSON.stringify(actual) !== JSON.stringify(expected)) {
 	throw new Error(`wrangler.jsonc bindings ${JSON.stringify(actual)} differ from alchemy.run.ts ${JSON.stringify(expected)}`);
 }
+/** Names our one cache rule; every other rule in the zone's cache-rules phase stops a deploy. */
+const CACHE_RULE = 'Cache sprites and renders, keeping their own cache-control';
+
 const vars = Object.fromEntries(
 	Object.entries(local.vars).map(([key, value]) => {
 		if (typeof value !== 'string') throw new Error(`wrangler.jsonc var ${key} must be a string`);
@@ -56,14 +63,15 @@ export default Alchemy.Stack(
 	Effect.gen(function* () {
 		const stage = yield* Alchemy.Stage;
 		if (!STAGES.includes(stage as Stage)) {
-			return yield* Effect.die(new Error(`Unknown stage "${stage}": pass --stage dev or --stage prod`));
+			return yield* Effect.die(new Error(`Unknown stage "${stage}": pass --stage ${STAGES.join(' or --stage ')} (infra/databases.ts)`));
 		}
 		const name = `${PREFIX}-${stage}`;
 		const { bound, importTarget } = DATABASES[stage as Stage];
 
 		// Data-bearing resources are retained: deleting them from this file, `alchemy destroy` or a
-		// generation swap only makes Alchemy forget them. Delete them by hand when sure. Dev D1 is
-		// the exception, so `destroy:dev` cleans up and swapped-out dev generations go away.
+		// generation swap only makes Alchemy forget them. Delete them by hand when sure. The D1 of any
+		// stage other than prod (a staging stage added to STAGES) is the exception, so `alchemy
+		// destroy` cleans it up and its swapped-out generations go away.
 		const database = (generation: number) =>
 			Cloudflare.D1.Database(`Db${generation}`, {
 				name: `${name}-db-${generation}`,
@@ -75,12 +83,87 @@ export default Alchemy.Stack(
 		if (importTarget !== undefined) yield* database(importTarget);
 
 		const raw = yield* Cloudflare.R2.Bucket('Raw', { name: `${name}-raw` }).pipe(Alchemy.RemovalPolicy.retain());
-		const renders = yield* Cloudflare.R2.Bucket('Renders', { name: `${name}-renders` }).pipe(Alchemy.RemovalPolicy.retain());
 
-		// Optional custom domain, e.g. SITE_DOMAIN_PROD=example.com, SITE_DOMAIN_DEV=dev.example.com
-		// (in .env or the shell). The zone must already be in the account. Unset leaves domains
+		// Game renders (`bun run render --upload`). With RENDERS_DOMAIN_<STAGE> (e.g. renders.example.com,
+		// a zone in the account) the bucket is public on that hostname only, so the viewer's images come
+		// through Cloudflare's cache and never invoke the Worker. Every image's name changes when its
+		// pixels do (tiles by pixel hash, overviews by render stamp), so they are uploaded with
+		// `cache-control: immutable` and never need purging. Unset, the Worker serves them at
+		// /prints/<id>/render/<file>.
+		const rendersDomain = Option.getOrUndefined(yield* Config.option(Config.String(`RENDERS_DOMAIN_${stage.toUpperCase()}`)));
+		const renders = yield* Cloudflare.R2.Bucket('Renders', {
+			name: `${name}-renders`,
+			domains: rendersDomain === undefined ? [] : [{ name: rendersDomain, minTLS: '1.2' }],
+			cors: [{ allowedMethods: ['GET', 'HEAD'], allowedOrigins: ['*'], maxAgeSeconds: 86400 }]
+		}).pipe(Alchemy.RemovalPolicy.retain());
+
+		// Optional custom domain, SITE_DOMAIN_<STAGE>, e.g. SITE_DOMAIN_PROD=example.com (in .env or
+		// the shell). The zone must already be in the account. Unset leaves domains
 		// unmanaged; it never detaches one.
 		const domain = Option.getOrUndefined(yield* Config.option(Config.String(`SITE_DOMAIN_${stage.toUpperCase()}`)));
+
+		// Game art served as static files (icons from `bun run icons`; sprite atlases later), in ONE
+		// bucket shared by every stage: keys are content-hashed and never change, so stages can't
+		// disturb each other. Prod owns it (only prod declares it, so two stacks never fight over
+		// it); other stages just link to SPRITES_DOMAIN. With SPRITES_DOMAIN (e.g. sprites.example.com,
+		// a zone in the account) the bucket is public on that hostname only, so browsers fetch
+		// through Cloudflare's cache and never invoke the Worker; objects carry `cache-control:
+		// immutable`. Unset, prod's Worker serves the files at /sprites/<key> and other stages have
+		// no icons. CORS lets a canvas or WebGL viewer on the site read the pixels.
+		const spritesDomain = Option.getOrUndefined(yield* Config.option(Config.String('SPRITES_DOMAIN')));
+		const sprites =
+			stage === 'prod'
+				? yield* Cloudflare.R2.Bucket('Sprites', {
+						name: SPRITES_BUCKET,
+						domains: spritesDomain === undefined ? [] : [{ name: spritesDomain, minTLS: '1.2' }],
+						cors: [{ allowedMethods: ['GET', 'HEAD'], allowedOrigins: ['*'], maxAgeSeconds: 86400 }]
+					}).pipe(Alchemy.RemovalPolicy.retain())
+				: undefined;
+
+		// Cloudflare caches only some file types by default (not .json, for one). One cache rule makes everything on
+		// the sprites and renders hostnames eligible, keeping each object's own cache-control (a year
+		// and immutable for images, minutes for index.json), and Smart Tiered Cache sends misses to one
+		// upper-tier data centre before R2. Prod owns these: the rule list is the zone's whole
+		// cache-rules phase, and the zone's tiered-cache setting. A deploy would delete any cache rule
+		// made elsewhere on the zone, so it stops first when the phase holds a rule other than ours.
+		const cachedHosts = [stage === 'prod' ? spritesDomain : undefined, rendersDomain].filter((h): h is string => h !== undefined);
+		if (stage === 'prod' && cachedHosts.length > 0) {
+			const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
+			const zoneIds = yield* Effect.forEach(cachedHosts, (hostname) =>
+				Cloudflare.Zone.resolveZoneId({ accountId, zone: undefined, hostname }).pipe(Effect.orDie)
+			);
+			const zoneId = zoneIds[0];
+			if (zoneIds.some((z) => z !== zoneId)) {
+				return yield* Effect.die(new Error(`${cachedHosts.join(' and ')} must be in one zone for the cache rule`));
+			}
+			const existing = yield* rulesets.getPhasForZone({ zoneId, rulesetPhase: 'http_request_cache_settings' }).pipe(
+				Effect.map((ruleset) => ruleset.rules ?? []),
+				Effect.catchTag('RulesetNotFound', () => Effect.succeed([])),
+				Effect.orDie
+			);
+			const foreign = existing.filter((rule) => rule.description !== CACHE_RULE);
+			if (foreign.length > 0) {
+				const list = foreign.map((rule) => `"${rule.description ?? ''}" (${rule.expression ?? ''})`).join(', ');
+				return yield* Effect.die(
+					new Error(
+						`The zone's cache rules include ${list}, which this deploy would delete. Add them to the CacheRules ruleset in alchemy.run.ts, or remove them from the zone, then deploy again.`
+					)
+				);
+			}
+			yield* Cloudflare.Ruleset.Ruleset('CacheRules', {
+				zone: { zoneId } as unknown as Cloudflare.Zone.Zone,
+				phase: 'http_request_cache_settings',
+				rules: [
+					{
+						description: CACHE_RULE,
+						expression: `(http.host in {${cachedHosts.map((h) => JSON.stringify(h)).join(' ')}})`,
+						action: 'set_cache_settings',
+						actionParameters: { cache: true, edgeTtl: { mode: 'respect_origin' }, browserTtl: { mode: 'respect_origin' } }
+					}
+				]
+			});
+			yield* Cloudflare.Cache.SmartTieredCache('TieredCache', { zoneId });
+		}
 
 		// /admin (docs/deploy.md, "Admin page"): a Cloudflare Access application on `<domain>/admin*`
 		// that lets in only ADMIN_EMAIL, and the Worker re-checks Access's JWT against the team domain
@@ -123,7 +206,10 @@ export default Alchemy.Stack(
 				DB: db,
 				RAW: raw,
 				RENDERS: renders,
+				...(sprites ? { SPRITES: sprites } : {}),
 				...vars,
+				SPRITES_URL: spritesDomain === undefined ? '' : `https://${spritesDomain}`,
+				RENDERS_URL: rendersDomain === undefined ? '' : `https://${rendersDomain}`,
 				// Empty (in wrangler.jsonc) means /admin is a 404 on this stage.
 				ACCESS_TEAM_DOMAIN: admin ? (teamDomain ?? '') : '',
 				ACCESS_AUD: admin ? admin.aud : ''
@@ -134,7 +220,9 @@ export default Alchemy.Stack(
 			url: worker.url,
 			database: db.databaseName,
 			importTarget: importTarget === undefined ? undefined : `${name}-db-${importTarget}`,
-			buckets: [raw.bucketName, renders.bucketName],
+			buckets: [raw.bucketName, renders.bucketName, ...(sprites ? [sprites.bucketName] : [])],
+			sprites: spritesDomain === undefined ? undefined : `https://${spritesDomain}`,
+			renders: rendersDomain === undefined ? undefined : `https://${rendersDomain}`,
 			admin: admin === undefined ? undefined : `https://${domain}/admin/pipeline`
 		};
 	})

@@ -4,7 +4,7 @@
  */
 import { decodeGameVersion } from '#lib/server/pipeline/decode.js';
 import { normalizeDirection } from './geometry.js';
-import type { Category, CompactEntity, CompactPage, CompactTiles, CompactWire, EntityExtra, Kind, NameInfo, PageRef } from './types.js';
+import type { Category, CompactEntity, CompactPage, EntityExtra, Kind, NameInfo, PageRef } from './types.js';
 
 type Json = Record<string, unknown>;
 type Version = [number, number, number, number];
@@ -102,12 +102,16 @@ const ROLLING_STOCK_SIZE: [number, number] = [2, 6];
 
 const versionString = (v: Version | null) => (v ? `${v[0]}.${v[1]}.${v[2]}` : null);
 
-/** Walk a decoded payload the same way analyze.ts does, so paths match `print_nodes.path`. */
-function* walkNodes(
-	obj: Json,
-	path: number[],
-	inherited: Version | null
-): Generator<{ path: string; kind: PageRef['kind']; body: Json; version: Version | null; depth: number }> {
+interface WalkedNode {
+	path: string;
+	kind: PageRef['kind'];
+	body: Json;
+	version: Version | null;
+	depth: number;
+}
+
+/** Walk a decoded payload the same way analyze.ts does, so paths match the analysis' `nodes[].path`. */
+function* walkNodes(obj: Json, path: number[], inherited: Version | null): Generator<WalkedNode> {
 	if (path.length > MAX_DEPTH) return;
 	const kind = KINDS.find((k) => k in obj);
 	if (!kind) return;
@@ -122,42 +126,44 @@ function* walkNodes(
 	}
 }
 
-/** One node's own JSON (`{label, entities, ...}`) and kind, by book path; null when there's no such node. */
-export const nodeAt = (decoded: unknown, path: string): { kind: PageRef['kind']; body: Json } | null => {
-	const n = [...walkNodes((decoded ?? {}) as Json, [], null)].find((x) => x.path === path);
+/** The first node at a book path (paths can repeat when a book's `index`es do), walking no further than it. */
+const findNode = (decoded: unknown, path: string): WalkedNode | null => {
+	for (const n of walkNodes((decoded ?? {}) as Json, [], null)) if (n.path === path) return n;
+	return null;
+};
+
+/** A node's kind and own JSON (`{label, entities, ...}`). */
+export interface NodeBody {
+	kind: PageRef['kind'];
+	body: Json;
+}
+
+/** One node's own JSON and kind, by book path; null when there's no such node. */
+export const nodeAt = (decoded: unknown, path: string): NodeBody | null => {
+	const n = findNode(decoded, path);
 	return n ? { kind: n.kind, body: n.body } : null;
 };
 
-/** Every node in the payload, books included, in book order. */
-export const listPages = (decoded: unknown): PageRef[] =>
-	[...walkNodes((decoded ?? {}) as Json, [], null)].map((n) => ({
-		path: n.path,
-		kind: n.kind,
-		label: str(n.body.label) ?? null,
-		depth: n.depth,
-		entities: n.kind === 'blueprint' ? asArray(n.body.entities).length : 0
-	}));
+const pageRef = (n: WalkedNode): PageRef => ({
+	path: n.path,
+	kind: n.kind,
+	label: str(n.body.label) ?? null,
+	depth: n.depth,
+	entities: n.kind === 'blueprint' ? asArray(n.body.entities).length : 0
+});
 
-/** 1.x per-entity circuit ids hold `{red: [...], green: [...]}`; `Cu0`/`Cu1` hold copper. */
-const legacyConnections = (e: Json): { id: number; colour: 0 | 1 | 2 }[] => {
-	const out: { id: number; colour: 0 | 1 | 2 }[] = [];
-	const conns = e.connections;
-	if (conns && typeof conns === 'object') {
-		for (const c of Object.values(conns as Json)) {
-			if (Array.isArray(c)) {
-				for (const t of c as Json[]) if (typeof t.entity_id === 'number') out.push({ id: t.entity_id, colour: 2 });
-			} else if (c && typeof c === 'object') {
-				for (const [colour, key] of [
-					[0, 'red'],
-					[1, 'green']
-				] as const) {
-					for (const t of asArray((c as Json)[key])) if (typeof t.entity_id === 'number') out.push({ id: t.entity_id, colour });
-				}
-			}
-		}
-	}
-	for (const n of Array.isArray(e.neighbours) ? e.neighbours : []) if (typeof n === 'number') out.push({ id: n, colour: 2 });
-	return out;
+/** Every node in the payload, books included, in book order. */
+export const listPages = (decoded: unknown): PageRef[] => [...walkNodes((decoded ?? {}) as Json, [], null)].map(pageRef);
+
+/**
+ * `listPages`, and `nodeAt` for every path, from one walk: calling `nodeAt` per page walks the
+ * whole book each time, which took seconds for books of 2,000 pages.
+ */
+export const listPagesWithNodes = (decoded: unknown): { pages: PageRef[]; nodes: Map<string, NodeBody> } => {
+	const walked = [...walkNodes((decoded ?? {}) as Json, [], null)];
+	const nodes = new Map<string, NodeBody>();
+	for (const n of walked) if (!nodes.has(n.path)) nodes.set(n.path, { kind: n.kind, body: n.body });
+	return { pages: walked.map(pageRef), nodes };
 };
 
 const moduleStrings = (items: unknown): string[] => {
@@ -193,30 +199,6 @@ const filterNames = (e: Json): string[] | undefined => {
 	return names.length ? names.slice(0, 5) : undefined;
 };
 
-/** Group tiles by name into horizontal runs. */
-const tileRuns = (tiles: Json[], rename: (n: string) => string): CompactTiles[] => {
-	const byName = new Map<string, [number, number][]>();
-	for (const t of tiles) {
-		const p = vec(t.position);
-		const name = str(t.name);
-		if (!p || !name) continue;
-		const key = rename(name);
-		let list = byName.get(key);
-		if (!list) byName.set(key, (list = []));
-		list.push([Math.floor(p[0]), Math.floor(p[1])]);
-	}
-	return [...byName].map(([name, cells]) => {
-		cells.sort((a, b) => a[1] - b[1] || a[0] - b[0]);
-		const runs: number[] = [];
-		for (const [x, y] of cells) {
-			const n = runs.length;
-			if (n && runs[n - 2] === y && runs[n - 3] + runs[n - 1] === x) runs[n - 1]++;
-			else if (!(n && runs[n - 2] === y && x < runs[n - 3] + runs[n - 1])) runs.push(x, y, 1);
-		}
-		return { name, runs };
-	});
-};
-
 /**
  * Pre-1.0 exports (0.15 to 0.18 here) put entity positions half a tile off: a 1×1 belt sits
  * at (0, -1) instead of (0.5, -0.5), a 5×5 refinery at whole numbers. Vote with every known
@@ -245,7 +227,7 @@ export const alignToGrid = (entities: CompactEntity[], names: NameInfo[]): [numb
 
 /** The compact page at `path`, or null when it isn't a blueprint. */
 export const extractPage = (decoded: unknown, path: string, catalog: Catalog): CompactPage | null => {
-	const node = [...walkNodes((decoded ?? {}) as Json, [], null)].find((n) => n.path === path);
+	const node = findNode(decoded, path);
 	if (!node || node.kind !== 'blueprint') return null;
 	const bp = node.body;
 	const major = node.version?.[0] ?? 2;
@@ -265,8 +247,6 @@ export const extractPage = (decoded: unknown, path: string, catalog: Catalog): C
 	};
 
 	const entities: CompactEntity[] = [];
-	const byNumber = new Map<number, number>();
-	const legacyWires: { from: number; to: number; colour: 0 | 1 | 2 }[] = [];
 	for (const e of asArray(bp.entities)) {
 		const name = str(e.name);
 		const p = vec(e.position);
@@ -300,43 +280,16 @@ export const extractPage = (decoded: unknown, path: string, catalog: Catalog): C
 		if (filter) extra.filter = filter;
 		const text = str(e.station) ?? str(e.text);
 		if (text) extra.text = text;
-		const orientation = num(e.orientation);
-		if (info.kind === 'vehicle' && orientation !== undefined) extra.orientation = orientation;
 		if (info.kind === 'inserter') {
 			const f = filterNames(e);
 			if (f) extra.filters = f;
 		}
-		const idx = entities.length;
 		const row: CompactEntity = [n, p[0], p[1], normalizeDirection(num(e.direction), major)];
 		if (Object.keys(extra).length) row.push(extra);
 		entities.push(row);
-		if (typeof e.entity_number === 'number') {
-			byNumber.set(e.entity_number, idx);
-			for (const c of legacyConnections(e)) legacyWires.push({ from: e.entity_number, to: c.id, colour: c.colour });
-		}
 	}
 
 	const [sx, sy] = alignToGrid(entities, names);
-
-	const wires: CompactWire[] = [];
-	const seen = new Set<string>();
-	const addWire = (a: number | undefined, b: number | undefined, colour: 0 | 1 | 2) => {
-		if (a === undefined || b === undefined || a === b) return;
-		const key = `${Math.min(a, b)}:${Math.max(a, b)}:${colour}`;
-		if (seen.has(key)) return;
-		seen.add(key);
-		wires.push([a, b, colour]);
-	};
-	if (Array.isArray(bp.wires)) {
-		// 2.0: [entity, connector, entity, connector]; connectors 1/3 red, 2/4 green, 5+ copper.
-		for (const w of bp.wires as unknown[]) {
-			if (!Array.isArray(w)) continue;
-			const id = w[1];
-			const colour = id === 1 || id === 3 ? 0 : id === 2 || id === 4 ? 1 : 2;
-			addWire(byNumber.get(w[0] as number), byNumber.get(w[2] as number), colour);
-		}
-	}
-	for (const w of legacyWires) addWire(byNumber.get(w.from), byNumber.get(w.to), w.colour);
 
 	return {
 		path: node.path,
@@ -346,9 +299,7 @@ export const extractPage = (decoded: unknown, path: string, catalog: Catalog): C
 		sourceDirections: major < 2 ? 8 : 16,
 		...(sx || sy ? { offset: [sx, sy] as [number, number] } : {}),
 		names,
-		entities,
-		tiles: tileRuns(asArray(bp.tiles), (n) => n),
-		wires
+		entities
 	};
 };
 

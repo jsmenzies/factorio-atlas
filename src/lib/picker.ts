@@ -68,8 +68,8 @@ export const printCount = (n: number) => (n ? `${n} print${n === 1 ? '' : 's'}` 
 
 /**
  * Crafting-menu tabs for the empty search box, in display order, each with an item icon that
- * stands for it (the game's own group icons aren't in the sprite sheet). The last, Buildings,
- * picks what prints are built with rather than what they make.
+ * stands for it (the sections don't match the game's item groups one to one). The last,
+ * Buildings, picks what prints are built with rather than what they make.
  */
 export const TABS: readonly { section: (typeof SECTIONS)[number]; icon: string }[] = [
 	{ section: 'Logistics', icon: 'transport-belt' },

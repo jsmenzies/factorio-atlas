@@ -14,11 +14,16 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Env
+# Env and wrangler's local secrets
 .env
 .env.*
 !.env.example
 !.env.test
+.dev.vars*
+
+# Logs
+*.log
+logs/
 
 # Vite
 vite.config.js.timestamp-*
@@ -32,6 +37,8 @@ vite.config.ts.timestamp-*
 # Game renders and fpsr asset bundles. Renders made from real sprites derive from Wube's
 # art and must never be committed; atlases (assets-out) stay on the machine that made them.
 /data/renders/
+# Game icons and other sprite files from `bun run icons`: Wube's art, never committed.
+/data/sprites/
 /.cache/
 assets-out/
 fpsr-assets/

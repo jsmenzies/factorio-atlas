@@ -1,5 +1,5 @@
 /**
- * Prototype facts the schematic renderer needs and `data/game/game-data-*.json` lacks.
+ * Prototype facts the viewer's hover tooltips need and `data/game/game-data-*.json` lacks.
  *
  * Source: wube/factorio-data at tags 2.0.55, 1.1.110, 0.17.79 and 0.16.51
  * (base/prototypes/entity/entities.lua, transport-belts.lua, mining-drill.lua and
@@ -120,13 +120,4 @@ export const FLUID_SPECS: Record<string, FluidSpec> = {
 		]
 	},
 	thruster: { connections: [c(-1.5, -2, W, 'in'), c(1.5, 0, E, 'in'), c(1.5, -2, E, 'in'), c(-1.5, 0, W, 'in')] }
-};
-
-/** Belt tier from a belt-family entity name, for colour. */
-export const beltTier = (name: string): 'basic' | 'fast' | 'express' | 'turbo' | 'other' => {
-	if (name.startsWith('turbo-')) return 'turbo';
-	if (name.startsWith('express-')) return 'express';
-	if (name.startsWith('fast-')) return 'fast';
-	if (/^(transport-belt|underground-belt|splitter|loader|loader-1x1)$/.test(name)) return 'basic';
-	return 'other';
 };

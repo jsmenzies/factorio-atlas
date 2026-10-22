@@ -1,7 +1,8 @@
 /**
- * `bun run backfill --stage local|dev|prod`: stream every print from the GitHub mirror, pinned at its
- * current commit, through the pipeline into the stage's D1 and R2. Nothing is kept on local disk
- * except what the local stage itself stores.
+ * `bun run backfill --stage local|prod`: stream every print from the mirror, pinned at one commit,
+ * through the pipeline into the stage's D1 and R2. The mirror is read from GitHub at its current
+ * commit, or from a local clone of it with `--from-clone <dir>` (no requests, the clone's commit).
+ * Nothing is kept on local disk except what the local stage itself stores.
  *
  * - The parent fetches records and does every D1/R2 write; a pool of Bun Workers runs `planIngest`
  *   (decode, analyse, build viewer files) with a per-print timeout. A print that times out is recorded
@@ -34,24 +35,26 @@ import {
 	type PipelineRun,
 	type RunControl
 } from '#lib/server/pipeline/runs.js';
-import { listMirror, MirrorFetcher, rawUrl, resolveCommit, type MirrorEntry } from './backfill/mirror';
 import { ComputePool, ComputeTimeout } from './backfill/pool';
+import { cloneSource, githubSource, type RecordSource, type SourceEntry } from './backfill/records';
 import { openTarget, STAGES, TargetError, type Stage, type Target } from './backfill/stage';
 import { Terminal, type Key } from './backfill/terminal';
 
-const USAGE = `usage: bun run backfill --stage local|dev|prod [options]
-       bun run backfill:status --stage local|dev|prod [--runs N]
+const USAGE = `usage: bun run backfill --stage local|prod [options]
+       bun run backfill:status --stage local|prod [--runs N]
 
-  --stage S          local = the miniflare state \`bun run dev\` uses; dev/prod = the deployed stage (docs/deploy.md)
+  --stage S          local = the miniflare state \`bun run dev\` uses; prod = the deployed stage (docs/deploy.md)
+  --from-clone DIR   read records from a local clone of the mirror (git clone --depth 1) at its checked-out
+                     commit, instead of fetching each one from GitHub
   --limit N          a test sample of N prints spread evenly over the mirror sorted by size, so it always includes
                      the smallest and the largest record (deterministic for a given mirror commit)
-  --ids a,b,c        just these prints (must be in the mirror)
+  --ids a,b,c        just these prints (must be in the mirror or clone)
   --concurrency N    prints in flight (fetch → compute → write), default 8
   --workers N        compute workers, default min(concurrency, cores − 2)
   --timeout S        seconds of compute per print before it's killed and recorded as failed (timeout), default 10
   --force            re-analyse even unchanged prints
   --retry-failed     retry prints that failed before, even if unchanged
-  --db N             D1 generation for dev/prod (default: DATABASES.<stage>.bound in alchemy.run.ts)
+  --db N             D1 generation for prod (default: DATABASES.<stage>.bound in infra/databases.ts)
   --yes              don't ask before writing to prod
 
 keys (TTY): p pause · r resume · s stop after in-flight · q quit now · Ctrl-C stop, twice quit now`;
@@ -64,7 +67,7 @@ const fail = (message: string): never => {
 	process.exit(2);
 };
 
-const STRING_FLAGS = ['stage', 'limit', 'ids', 'concurrency', 'workers', 'timeout', 'db', 'runs'];
+const STRING_FLAGS = ['stage', 'from-clone', 'limit', 'ids', 'concurrency', 'workers', 'timeout', 'db', 'runs'];
 /** `--ids -KYp…` as `--ids=-KYp…`: print ids often start with "-", which parseArgs would take for a flag. */
 const argv: string[] = [];
 for (const [i, arg] of process.argv.slice(2).entries()) {
@@ -72,37 +75,50 @@ for (const [i, arg] of process.argv.slice(2).entries()) {
 	if (i > 0 && previous?.startsWith('--') && STRING_FLAGS.includes(previous.slice(2))) argv[argv.length - 1] = `${previous}=${arg}`;
 	else argv.push(arg);
 }
-const { values: flags } = parseArgs({
-	args: argv,
-	options: {
-		stage: { type: 'string' },
-		limit: { type: 'string' },
-		ids: { type: 'string' },
-		concurrency: { type: 'string' },
-		workers: { type: 'string' },
-		timeout: { type: 'string' },
-		db: { type: 'string' },
-		runs: { type: 'string' },
-		force: { type: 'boolean', default: false },
-		'retry-failed': { type: 'boolean', default: false },
-		yes: { type: 'boolean', default: false },
-		status: { type: 'boolean', default: false },
-		help: { type: 'boolean', short: 'h', default: false }
-	},
-	strict: true
-});
+const { values: flags } = (() => {
+	try {
+		return parseArgs({
+			args: argv,
+			options: {
+				stage: { type: 'string' },
+				'from-clone': { type: 'string' },
+				limit: { type: 'string' },
+				ids: { type: 'string' },
+				concurrency: { type: 'string' },
+				workers: { type: 'string' },
+				timeout: { type: 'string' },
+				db: { type: 'string' },
+				runs: { type: 'string' },
+				force: { type: 'boolean', default: false },
+				'retry-failed': { type: 'boolean', default: false },
+				yes: { type: 'boolean', default: false },
+				status: { type: 'boolean', default: false },
+				help: { type: 'boolean', short: 'h', default: false }
+			},
+			strict: true
+		});
+	} catch (e) {
+		// An unknown flag, or a flag without its value.
+		return fail(`${e instanceof Error ? e.message : String(e)}\n\n${USAGE}`);
+	}
+})();
 if (flags.help) {
 	console.log(USAGE);
 	process.exit(0);
 }
 const stage = flags.stage as Stage;
-if (!STAGES.includes(stage)) fail(`--stage local|dev|prod is required\n\n${USAGE}`);
+if (!STAGES.includes(stage)) fail(`--stage ${STAGES.join('|')} is required\n\n${USAGE}`);
 const positive = (name: string, value: string | undefined, fallback: number) => {
 	if (value === undefined) return fallback;
 	const n = Number(value);
 	return Number.isFinite(n) && n > 0 ? n : fail(`--${name} must be a positive number`);
 };
-const generation = flags.db === undefined ? undefined : positive('db', flags.db, 1);
+/** A count: a positive whole number. */
+const whole = (name: string, value: string | undefined, fallback: number) => {
+	const n = positive(name, value, fallback);
+	return Number.isInteger(n) ? n : fail(`--${name} must be a whole number`);
+};
+const generation = flags.db === undefined ? undefined : whole('db', flags.db, 1);
 
 const term = new Terminal();
 const now = () => Date.now();
@@ -113,7 +129,7 @@ const now = () => Date.now();
 if (flags.status) {
 	const target = await openTarget(stage, { generation }).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
 	try {
-		const runs = await latestRuns(target.env.DB, positive('runs', flags.runs, 1));
+		const runs = await latestRuns(target.env.DB, whole('runs', flags.runs, 1));
 		if (runs.length === 0) console.log(`no pipeline runs in ${target.database}`);
 		for (const run of runs) {
 			const stale = isStale(run)
@@ -130,10 +146,10 @@ if (flags.status) {
 // ---------------------------------------------------------------------------------------------
 // backfill
 
-const concurrency = positive('concurrency', flags.concurrency, 8);
-const workers = positive('workers', flags.workers, Math.max(1, Math.min(concurrency, cpus().length - 2)));
+const concurrency = whole('concurrency', flags.concurrency, 8);
+const workers = whole('workers', flags.workers, Math.max(1, Math.min(concurrency, cpus().length - 2)));
 const timeoutMs = Math.round(positive('timeout', flags.timeout, 10) * 1000);
-const limit = flags.limit === undefined ? undefined : positive('limit', flags.limit, 1);
+const limit = flags.limit === undefined ? undefined : whole('limit', flags.limit, 1);
 const ids = flags.ids
 	?.split(',')
 	.map((s) => s.trim())
@@ -156,29 +172,32 @@ try {
 }
 term.log(`target: ${stage} · D1 ${target.database} · R2 ${target.bucket}`);
 
-// Source: the mirror at one commit.
-const t = performance.now();
+// Source: the mirror at one commit, from GitHub or a local clone.
+const listStart = performance.now();
+const fromClone = flags['from-clone'];
 const listing = await (async () => {
-	const sha = await resolveCommit();
-	const entries = await listMirror(sha);
-	const source = `mirror@${sha.slice(0, 7)}`;
-	term.log(`${source}: ${entries.length.toLocaleString('en-US')} prints listed in ${((performance.now() - t) / 1000).toFixed(1)} s`);
+	const records: RecordSource = fromClone === undefined ? await githubSource() : await cloneSource(fromClone);
+	const { entries, label: source } = records;
+	term.log(
+		`${source}: ${entries.length.toLocaleString('en-US')} prints listed in ${((performance.now() - listStart) / 1000).toFixed(1)} s`
+	);
 	if (ids) {
 		const byId = new Map(entries.map((e) => [e.id, e]));
 		const missing = ids.filter((id) => !byId.has(id));
 		if (missing.length) throw new Error(`not in ${source}: ${missing.join(', ')} (the backfill never reads Firebase)`);
-		return { sha, entries, source, targets: ids.map((id) => byId.get(id)!) };
+		return { records, targets: ids.map((id) => byId.get(id)!) };
 	}
-	if (limit === undefined) return { sha, entries, source, targets: entries };
+	if (limit === undefined) return { records, targets: entries };
 	const targets = sampleBySize(entries, limit);
 	const sizes = targets.map((e) => e.size).sort((a, b) => a - b);
 	term.log(`sample: ${targets.length} prints spread by size, ${fmtBytes(sizes[0] ?? 0)} … ${fmtBytes(sizes[sizes.length - 1] ?? 0)}`);
-	return { sha, entries, source, targets };
+	return { records, targets };
 })().catch(async (e: unknown) => {
 	await target.dispose();
 	return fail(`✗ ${e instanceof Error ? e.message : String(e)}`);
 });
-const { sha, entries, source, targets } = listing;
+const { records, targets } = listing;
+const { entries, label: source } = records;
 
 if (stage === 'prod' && !flags.yes) {
 	if (!term.tty) {
@@ -278,7 +297,6 @@ const ctl: { mode: Mode } = { mode: 'running' };
 let quitting = false;
 const rate = new RateWindow();
 rate.reset(startedAt, 0);
-const fetcher = new MirrorFetcher(sha);
 const abort = new AbortController();
 let slowest: { id: string; ms: number; bytes: number } | null = null;
 const inFlight = new Set<Promise<void>>();
@@ -308,7 +326,7 @@ const draw = () => {
 		statusLines(run, now(), {
 			slowest,
 			overheadRows: counters.overheadRows,
-			fetch: fetcher.describe(),
+			fetch: records.describe(),
 			inFlight: inFlight.size,
 			note
 		})
@@ -387,19 +405,19 @@ const message = (e: unknown): string => {
 	return e instanceof Error ? e.message : String(e);
 };
 
-const processOne = async (entry: MirrorEntry) => {
+const processOne = async (entry: SourceEntry) => {
 	const { id } = entry;
 	let text: string;
 	try {
-		({ text } = await fetcher.fetch(entry, abort.signal));
+		text = await records.read(entry, abort.signal);
 	} catch (e) {
-		if (!quitting) recordError(id, `fetch: ${message(e)}`);
+		if (!quitting) recordError(id, `${fromClone === undefined ? 'fetch' : 'read'}: ${message(e)}`);
 		return;
 	}
 	const state = states.get(id) ?? null;
 	let plan: IngestPlan;
 	try {
-		const result = await pool!.run({ id, text, sourceUrl: rawUrl(sha, entry.path), state, options: ingestOptions });
+		const result = await pool!.run({ id, text, sourceUrl: records.url(entry), state, options: ingestOptions });
 		if (!slowest || result.ms > slowest.ms) slowest = { id, ms: result.ms, bytes: entry.size };
 		if (!result.ok) return recordError(id, result.reason!);
 		plan = result.plan!;
@@ -461,8 +479,8 @@ const finish = async (state: 'finished' | 'stopped' | 'failed', error: string | 
 	} catch (e) {
 		term.log(`! couldn't write the final run row: ${message(e)}`);
 	}
-	if (term.tty) term.draw(statusLines(run, now(), { slowest, overheadRows: counters.overheadRows, fetch: fetcher.describe() }));
-	else console.log(statusLines(run, now(), { slowest, overheadRows: counters.overheadRows, fetch: fetcher.describe() }).join('\n'));
+	if (term.tty) term.draw(statusLines(run, now(), { slowest, overheadRows: counters.overheadRows, fetch: records.describe() }));
+	else console.log(statusLines(run, now(), { slowest, overheadRows: counters.overheadRows, fetch: records.describe() }).join('\n'));
 	term.freeze();
 	term.close();
 };

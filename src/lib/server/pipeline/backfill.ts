@@ -3,7 +3,7 @@
  * and ETA, and the status lines shared by the live terminal view and `bun run backfill:status`.
  */
 import { D1_MONTHLY_ROWS, fullRunEstimate, R2_FREE_CLASS_A, writers } from '#lib/run-estimate.js';
-import type { PipelineRun } from './runs';
+import { LIVE_STATES, type PipelineRun } from './runs';
 
 /**
  * `--limit n`: n records spread evenly over the source sorted by size (ties by id), so a small test
@@ -101,7 +101,7 @@ export interface LiveExtras {
 export const statusLines = (run: PipelineRun, now: number, extras: LiveExtras = {}): string[] => {
 	const left = Math.max(0, run.total - run.done);
 	const elapsed = ((run.finished_at ?? now) - run.started_at) / 1000;
-	const live = ['starting', 'running', 'paused', 'stopping'].includes(run.state);
+	const live = LIVE_STATES.includes(run.state);
 	const lines: string[] = [];
 	lines.push(`backfill → ${run.stage} · ${run.source} · run ${run.id} · ${extras.note ?? run.state}${run.error ? ` (${run.error})` : ''}`);
 	const pct = run.total ? Math.floor((run.done / run.total) * 100) : 100;
@@ -159,9 +159,10 @@ export const statusLines = (run: PipelineRun, now: number, extras: LiveExtras = 
 export const statusLine = (run: PipelineRun, now: number) => {
 	const pct = run.total ? Math.floor((run.done / run.total) * 100) : 100;
 	const failures = Object.entries(run.failures).map(([k, v]) => `${k} ${v}`);
+	const updated = run.viewer + (run.reindexed ?? 0) + run.favorites;
 	return (
 		`[${run.stage} ${run.state}] ${fmtInt(run.done)}/${fmtInt(run.total)} ${pct}% · ✓${run.analysed} ✗${run.failed} ↷${run.unchanged + run.skipped_failed}` +
-		(run.viewer + (run.reindexed ?? 0) + run.favorites ? ` ↻${run.viewer + (run.reindexed ?? 0) + run.favorites}` : '') +
+		(updated ? ` ↻${updated}` : '') +
 		` · ${fmtRate(run.rate)}` +
 		(run.eta_seconds !== null ? ` · ETA ${fmtDuration(run.eta_seconds)} (${clock(now + run.eta_seconds * 1000)})` : '') +
 		` · D1 ${fmtInt(run.rows_written)} rows · R2 ${fmtInt(run.r2_objects)} obj ${fmtBytes(run.r2_bytes)}` +

@@ -1,15 +1,16 @@
 <script lang="ts">
 	import BlueprintViewer from '#lib/components/BlueprintViewer.svelte';
 	import type { RenderSidecar } from '#lib/viewer/game-render.js';
-	import type { CompactPage } from '#lib/viewer/types.js';
+	import type { CompactPage, TooltipData } from '#lib/viewer/types.js';
 
 	/**
-	 * The viewer embedded in the print page. Its data (up to ~1 MB for a 12,000-entity page) is
-	 * fetched after the page loads, so the rest of the page never waits for it.
+	 * The viewer embedded in the print page, for pages that have a game render. Its data (up to
+	 * ~1 MB for a 12,000-entity page) is fetched after the page loads, so the rest of the page
+	 * never waits for it.
 	 */
 	let { printId, path }: { printId: string; path: string } = $props();
 
-	let data = $state.raw<{ page: CompactPage | null; render: RenderSidecar | null } | null>(null);
+	let data = $state.raw<{ page: CompactPage | null; render: RenderSidecar | null; base: string; tooltip: TooltipData | null } | null>(null);
 	let failed = $state(false);
 
 	$effect(() => {
@@ -29,13 +30,19 @@
 </script>
 
 <div class="relative h-[28rem] overflow-hidden rounded-lg border border-stone-800 bg-stone-950">
-	{#if data?.page}
+	{#if data?.page && data.render}
 		{#key path}
-			<BlueprintViewer page={data.page} render={data.render ? { sidecar: data.render, base: `/prints/${printId}/render` } : null} />
+			<!-- A viewer that throws (bad page data, a tooltip bug) loses only itself, not the print page. -->
+			<svelte:boundary onerror={(e) => console.error('viewer failed:', e)}>
+				<BlueprintViewer page={data.page} render={{ sidecar: data.render, base: data.base }} tooltip={data.tooltip} />
+				{#snippet failed()}
+					<div class="grid h-full place-items-center text-sm text-stone-500">Could not show this render.</div>
+				{/snippet}
+			</svelte:boundary>
 		{/key}
 	{:else}
-		<div class="grid h-full place-items-center bg-[radial-gradient(circle,rgb(68_64_60/0.6)_1px,transparent_1px)] bg-size-[14px_14px] text-sm text-stone-500">
-			{failed ? 'Could not load this page.' : data ? 'Nothing to draw on this page.' : 'Loading blueprint…'}
+		<div class="grid h-full place-items-center text-sm text-stone-500">
+			{failed ? 'Could not load this page.' : data ? 'No render for this page.' : 'Loading render…'}
 		</div>
 	{/if}
 	<a

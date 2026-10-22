@@ -1,12 +1,12 @@
 /**
  * Compact per-page payload the server sends the blueprint viewer. Decoded blueprints can
- * be megabytes; this keeps only what the schematic renderer draws and the tooltip shows.
+ * be megabytes; this keeps only what the hover tooltips over a game render show.
  */
 
 /** Colour group for boxes, from the prototype type. `unknown` means a modded or renamed name. */
 export type Category = 'belts' | 'inserters' | 'production' | 'power' | 'logistics' | 'circuits' | 'rail' | 'defence' | 'other' | 'unknown';
 
-/** Which drawing routine an entity gets. */
+/** How the tooltip geometry treats an entity (belt curves, underground pairs, pipes, rails). */
 export type Kind =
 	| 'belt'
 	| 'underground'
@@ -62,8 +62,6 @@ export interface EntityExtra {
 	filter?: string;
 	/** Train stop name, display panel or other text. */
 	text?: string;
-	/** Rolling stock orientation, 0..1 clockwise from north. */
-	orientation?: number;
 	/** Entity filter list (inserters), shortened. */
 	filters?: string[];
 }
@@ -71,17 +69,17 @@ export interface EntityExtra {
 /** [name index, x, y, direction (16-way, normalised), extra?] */
 export type CompactEntity = [number, number, number, number, EntityExtra?];
 
-export interface CompactTiles {
-	name: string;
-	/** Flat [x, y, length] runs along rows; a tile covers [x, x+1) × [y, y+1). */
-	runs: number[];
+/** What the hover tooltip needs beyond the page itself, resolved on the server for the names the page uses. */
+export interface TooltipData {
+	icons: import('#lib/icons.js').IconSet;
+	/** Prototype name → English name, where the game has one. */
+	labels: Record<string, string>;
+	/** Entity name (as in the blueprint) → module slots, for entities that have any. */
+	slots: Record<string, number>;
 }
 
-/** [entity index, entity index, colour] where 0 = red, 1 = green, 2 = copper. */
-export type CompactWire = [number, number, 0 | 1 | 2];
-
 export interface PageRef {
-	/** Book path, matches `print_nodes.path` (e.g. "", "3", "3/1"). */
+	/** Book path, matches the analysis' `nodes[].path` (e.g. "", "3", "3/1"). */
 	path: string;
 	kind: 'blueprint' | 'blueprint_book' | 'upgrade_planner' | 'deconstruction_planner';
 	label: string | null;
@@ -101,6 +99,4 @@ export interface CompactPage {
 	offset?: [number, number];
 	names: NameInfo[];
 	entities: CompactEntity[];
-	tiles: CompactTiles[];
-	wires: CompactWire[];
 }

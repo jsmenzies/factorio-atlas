@@ -1,28 +1,38 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import type { Attachment } from 'svelte/attachments';
+	import Icon from '#lib/components/Icon.svelte';
 	import { describe } from '#lib/viewer/describe.js';
 	import { footprint } from '#lib/viewer/geometry.js';
-	import { BUCKET, BUCKET_MARGIN, CATEGORY_COLOURS, buildScene, type Scene, type Toggle } from '#lib/viewer/scene.js';
-	import { overviewFile, pickLevel, tileFile, tileRect, visibleTiles, type RenderSidecar } from '#lib/viewer/game-render.js';
-	import type { CompactPage } from '#lib/viewer/types.js';
+	import { buildInspector, type Inspector } from '#lib/viewer/inspect.js';
+	import { pickLevel, tileFile, tileRect, visibleTiles, type RenderSidecar } from '#lib/viewer/game-render.js';
+	import type { CompactPage, TooltipData } from '#lib/viewer/types.js';
 
-	/** `render`: the page's game-look render (sidecar + URL base for its files), if any. */
-	let { page, render = null }: { page: CompactPage; render?: { sidecar: RenderSidecar; base: string } | null } = $props();
+	/**
+	 * A page's game render (made offline by fpsr): the overview, then the sharpest tile level the
+	 * zoom needs. `page` is the same page's entity data, in the render's world coordinates, for
+	 * hover tooltips and outlines of modded entities fpsr can't draw. `tooltip` has the icons,
+	 * English names and module slot counts for the names the page uses.
+	 */
+	let {
+		page,
+		render,
+		tooltip = null
+	}: { page: CompactPage; render: { sidecar: RenderSidecar; base: string }; tooltip?: TooltipData | null } = $props();
 
-	let container = $state<HTMLDivElement>();
+	const NO_ICONS = { base: '', of: {} };
+	const icons = $derived(tooltip?.icons ?? NO_ICONS);
+	/** English name where the game has one, else the prototype name. */
+	const labelOf = (name: string) => tooltip?.labels[name] ?? name;
+
 	let canvas = $state<HTMLCanvasElement>();
-	let scene = $state.raw<Scene | null>(null);
-	let toggles = $state<Record<Toggle, boolean>>({ tiles: true, wires: false, grid: true, labels: true });
+	let inspector = $state.raw<Inspector | null>(null);
 	let hovered = $state<number | null>(null);
-	let tip = $state({ x: 0, y: 0 });
-	let buildMs = $state(0);
+	let tip = $state.raw({ x: 0, y: 0 });
 	let zoomPct = $state(100);
-	/** Game draws the offline render (same world coordinates); schematic draws shapes. */
-	let mode = $state<'schematic' | 'game'>('schematic');
-	let gameFailed = $state(false);
-	let gameLevel = $state<number | null>(null);
-	const game = $derived(mode === 'game' && !!render && !gameFailed);
-	const unknownNames = $derived(new Set(Object.keys(render?.sidecar.stats.unknown ?? {})));
+	let failed = $state(false);
+	let level = $state<number | null>(null);
+	const unknownNames = $derived(new Set(Object.keys(render.sidecar.stats.unknown)));
 
 	/** screen = world × s + t, in CSS pixels. Not reactive: drawing is imperative. */
 	const view = { s: 16, tx: 0, ty: 0 };
@@ -38,8 +48,10 @@
 	};
 
 	const fit = () => {
-		if (!scene || !size.w || !size.h) return;
-		const { x0, y0, x1, y1 } = scene.bounds;
+		if (!size.w || !size.h) return;
+		// The entities, not the render's frame: fpsr's frame also holds the snap-grid box.
+		const { minX, minY, maxX, maxY } = render.sidecar.frame;
+		const { x0, y0, x1, y1 } = inspector?.bounds ?? { x0: minX, y0: minY, x1: maxX, y1: maxY };
 		const bw = Math.max(4, x1 - x0 + 2);
 		const bh = Math.max(4, y1 - y0 + 2);
 		view.s = Math.min(MAX_S, Math.max(MIN_S, Math.min(size.w / bw, size.h / bh)));
@@ -60,12 +72,13 @@
 		requestDraw();
 	};
 
-	// Game images by URL; 'error' marks a failed load so it isn't retried every frame.
+	// Render images by URL; 'error' marks a failed load so it isn't retried every frame. Every image's
+	// name changes with its pixels (tiles by hash, the overview by the render's stamp), so URLs never
+	// need a version.
 	let images = new Map<string, HTMLImageElement | 'loading' | 'error'>();
 	const image = (file: string, overview = false): HTMLImageElement | null => {
 		const r = render;
-		if (!r) return null;
-		const url = `${r.base}/${file}?v=${r.sidecar.stamp}`;
+		const url = `${r.base}/${file}`;
 		const got = images.get(url);
 		if (got instanceof HTMLImageElement) return got;
 		if (got) return null;
@@ -78,30 +91,20 @@
 		};
 		img.onerror = () => {
 			images.set(url, 'error');
-			if (overview) gameFailed = true;
+			if (overview) failed = true;
 		};
 		img.src = url;
 		return null;
 	};
 
-	// New page or render: default to Game when there is one.
-	$effect(() => {
-		const r = render;
-		void page;
-		untrack(() => {
-			images = new Map();
-			gameFailed = false;
-			mode = r ? 'game' : 'schematic';
-		});
-	});
-
-	// Build the geometry once per page.
+	// New page or render: fresh images, hover geometry and fit.
 	$effect(() => {
 		const p = page;
+		void render;
 		untrack(() => {
-			const t0 = performance.now();
-			scene = buildScene(p);
-			buildMs = Math.round(performance.now() - t0);
+			images = new Map();
+			failed = false;
+			inspector = buildInspector(p);
 			hovered = null;
 			needsFit = true;
 			fit();
@@ -109,16 +112,16 @@
 	});
 
 	$effect(() => {
-		// Redraw when toggles or hover change.
-		void [toggles.tiles, toggles.wires, toggles.grid, toggles.labels, hovered, game];
+		// Redraw when the hover changes.
+		void hovered;
 		requestDraw();
 	});
 
-	$effect(() => {
-		const el = container;
-		const cv = canvas;
-		if (!el || !cv) return;
+	/** Keeps the canvas at the container's size in device pixels; the first fit waits for a size. */
+	const fitToContainer: Attachment<HTMLDivElement> = (el) => {
 		const ro = new ResizeObserver(() => {
+			const cv = canvas;
+			if (!cv) return;
 			const r = el.getBoundingClientRect();
 			size.w = r.width;
 			size.h = r.height;
@@ -129,7 +132,11 @@
 			requestDraw();
 		});
 		ro.observe(el);
-		// Non-passive so the page doesn't scroll while zooming.
+		return () => ro.disconnect();
+	};
+
+	/** Wheel zoom, non-passive (Svelte's `onwheel` is passive) so the page doesn't scroll while zooming. */
+	const wheelZoom: Attachment<HTMLCanvasElement> = (cv) => {
 		const onWheel = (e: WheelEvent) => {
 			e.preventDefault();
 			const r = cv.getBoundingClientRect();
@@ -138,37 +145,17 @@
 		};
 		cv.addEventListener('wheel', onWheel, { passive: false });
 		return () => {
-			ro.disconnect();
 			cv.removeEventListener('wheel', onWheel);
+			// The canvas is going: drop any frame still queued for it.
 			if (frame) cancelAnimationFrame(frame);
 			frame = 0;
 		};
-	});
-
-	const wrap = (ctx: CanvasRenderingContext2D, text: string, maxW: number, maxLines: number): string[] => {
-		const words = text.split(/\s+/);
-		const lines: string[] = [];
-		let cur = '';
-		for (const w of words) {
-			const next = cur ? `${cur} ${w}` : w;
-			if (ctx.measureText(next).width <= maxW || !cur) cur = next;
-			else {
-				lines.push(cur);
-				cur = w;
-			}
-		}
-		if (cur) lines.push(cur);
-		if (lines.length > maxLines) {
-			lines.length = maxLines;
-			lines[maxLines - 1] += '…';
-		}
-		return lines.filter((l) => ctx.measureText(l).width <= maxW * 1.15);
 	};
 
 	function draw() {
 		frame = 0;
 		const cv = canvas;
-		const sc = scene;
+		const ins = inspector;
 		if (!cv) return;
 		const ctx = cv.getContext('2d');
 		if (!ctx) return;
@@ -176,31 +163,23 @@
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.fillStyle = '#0c0a09';
 		ctx.fillRect(0, 0, w, h);
-		if (!sc) return;
 		const { s, tx, ty } = view;
 		const wx0 = -tx / s;
 		const wy0 = -ty / s;
 		const wx1 = (w - tx) / s;
 		const wy1 = (h - ty) / s;
-		const visible = sc.buckets.filter(
-			(b) =>
-				b.bx * BUCKET + BUCKET + BUCKET_MARGIN >= wx0 &&
-				b.bx * BUCKET - BUCKET_MARGIN <= wx1 &&
-				b.by * BUCKET + BUCKET + BUCKET_MARGIN >= wy0 &&
-				b.by * BUCKET - BUCKET_MARGIN <= wy1
-		);
-		if (game && render) drawGame(ctx, render.sidecar, wx0, wy0, wx1, wy1);
-		else drawSchematic(ctx, sc, visible, wx0, wy0, wx1, wy1);
+		drawRender(ctx, render.sidecar, wx0, wy0, wx1, wy1);
+		if (!ins) return;
 		ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * tx, dpr * ty);
 		ctx.globalAlpha = 1;
 		ctx.setLineDash([]);
 
 		// fpsr draws entities it has no sprites for (mods) as a 1×1 marker; show their footprint.
-		if (game && unknownNames.size) {
+		if (unknownNames.size) {
 			ctx.strokeStyle = '#f97316';
 			ctx.lineWidth = Math.max(0.04, 1.5 / s);
 			ctx.setLineDash([0.25, 0.15]);
-			for (const e of sc.geo) {
+			for (const e of ins.geo) {
 				if (!unknownNames.has(e.name) || e.x < wx0 - 8 || e.x > wx1 + 8 || e.y < wy0 - 8 || e.y > wy1 + 8) continue;
 				const [fw, fh] = footprint(e.w, e.h, e.dir);
 				ctx.strokeRect(e.x - fw / 2, e.y - fh / 2, fw, fh);
@@ -210,123 +189,54 @@
 
 		// Hover outline.
 		if (hovered !== null) {
-			const e = sc.geo[hovered];
+			const e = ins.geo[hovered];
 			const [fw, fh] = footprint(e.w, e.h, e.dir);
 			ctx.strokeStyle = '#fbbf24';
 			ctx.lineWidth = Math.max(0.06, 2 / s);
 			ctx.strokeRect(e.x - fw / 2, e.y - fh / 2, fw, fh);
 		}
-
-		// Labels in screen space so text stays crisp.
-		if (!game && toggles.labels && s >= 8) {
-			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-			const fontPx = Math.max(9, Math.min(13, s * 0.3));
-			ctx.font = `${fontPx}px ui-sans-serif, system-ui, sans-serif`;
-			ctx.textAlign = 'center';
-			ctx.textBaseline = 'middle';
-			const lh = fontPx * 1.15;
-			for (const b of visible) {
-				for (const l of b.labels) {
-					const pw = l.w * s - 6;
-					const ph = l.h * s - 4;
-					if (pw < 26 || ph < lh) continue;
-					const cx = l.x * s + tx;
-					const cy = l.y * s + ty;
-					if (cx < -pw || cx > w + pw || cy < -ph || cy > h + ph) continue;
-					const lines = wrap(ctx, l.text, pw, Math.max(1, Math.floor(ph / lh)));
-					ctx.fillStyle = l.colour;
-					lines.forEach((t, k) => ctx.fillText(t, cx, cy + (k - (lines.length - 1) / 2) * lh));
-				}
-			}
-		}
 	}
 
 	/**
-	 * The overview first (always loaded, so panning never shows holes), then the sharpest
-	 * tile level the zoom needs. Edges snap to device pixels so tiles don't seam.
+	 * The overview (always loaded, so panning never shows holes), then the sharpest tile level the
+	 * zoom needs. Under a level the overview fills in only tiles still loading: elsewhere its blur
+	 * would show through the tiles' transparent pixels. Edges snap to device pixels so tiles don't seam.
 	 */
-	function drawGame(ctx: CanvasRenderingContext2D, sc: RenderSidecar, wx0: number, wy0: number, wx1: number, wy1: number) {
+	function drawRender(ctx: CanvasRenderingContext2D, sc: RenderSidecar, wx0: number, wy0: number, wx1: number, wy1: number) {
 		const { s, tx, ty } = view;
 		const { dpr } = size;
 		ctx.setTransform(1, 0, 0, 1, 0, 0);
 		ctx.imageSmoothingEnabled = true;
 		ctx.imageSmoothingQuality = 'high';
-		const blit = (img: HTMLImageElement, x: number, y: number, w: number, h: number) => {
+		/** Draw `img` (or its source rect `src`) over the world rect x, y, w, h. */
+		const blit = (img: HTMLImageElement, x: number, y: number, w: number, h: number, src?: [number, number, number, number]) => {
 			const X0 = Math.round(dpr * (x * s + tx));
 			const Y0 = Math.round(dpr * (y * s + ty));
 			const X1 = Math.round(dpr * ((x + w) * s + tx));
 			const Y1 = Math.round(dpr * ((y + h) * s + ty));
-			ctx.drawImage(img, X0, Y0, X1 - X0, Y1 - Y0);
+			if (src) ctx.drawImage(img, src[0], src[1], src[2], src[3], X0, Y0, X1 - X0, Y1 - Y0);
+			else ctx.drawImage(img, X0, Y0, X1 - X0, Y1 - Y0);
 		};
 		const { frame, overview } = sc;
-		const ov = image(overviewFile(sc), true);
-		if (ov) blit(ov, frame.minX, frame.minY, overview.width / overview.ppt, overview.height / overview.ppt);
-		const level = pickLevel(sc, s * dpr);
-		gameLevel = level?.ppt ?? null;
-		if (!level) return;
-		for (const [c, r] of visibleTiles(sc, level, wx0, wy0, wx1, wy1)) {
-			const img = image(tileFile(sc, level.ppt, c, r));
-			if (!img) continue;
-			const t = tileRect(sc, level, c, r);
-			blit(img, t.x, t.y, t.w, t.h);
+		const ov = image(sc.overview.file, true);
+		const lv = pickLevel(sc, s * dpr);
+		level = lv?.ppt ?? null;
+		if (!lv) {
+			if (ov) blit(ov, frame.minX, frame.minY, overview.width / overview.ppt, overview.height / overview.ppt);
+			return;
 		}
-	}
-
-	function drawSchematic(
-		ctx: CanvasRenderingContext2D,
-		sc: Scene,
-		visible: Scene['buckets'],
-		wx0: number,
-		wy0: number,
-		wx1: number,
-		wy1: number
-	) {
-		const { s, tx, ty } = view;
-		const { dpr } = size;
-		ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * tx, dpr * ty);
-		ctx.lineJoin = 'round';
-		let gridDrawn = false;
-		const drawGrid = () => {
-			gridDrawn = true;
-			if (!toggles.grid || s < 5) return;
-			ctx.globalAlpha = 1;
-			ctx.setLineDash([]);
-			ctx.lineWidth = 1 / s;
-			ctx.strokeStyle = 'rgba(120,113,108,0.16)';
-			ctx.beginPath();
-			for (let x = Math.floor(wx0); x <= wx1; x++) {
-				ctx.moveTo(x, wy0);
-				ctx.lineTo(x, wy1);
+		for (const [c, r] of visibleTiles(sc, lv, wx0, wy0, wx1, wy1)) {
+			// Transparent tiles have no file, and the overview shows nothing there either.
+			const file = tileFile(lv, c, r);
+			if (!file) continue;
+			const t = tileRect(sc, lv, c, r);
+			const img = image(file);
+			if (img) blit(img, t.x, t.y, t.w, t.h);
+			else if (ov) {
+				const k = overview.ppt;
+				blit(ov, t.x, t.y, t.w, t.h, [(t.x - frame.minX) * k, (t.y - frame.minY) * k, t.w * k, t.h * k]);
 			}
-			for (let y = Math.floor(wy0); y <= wy1; y++) {
-				ctx.moveTo(wx0, y);
-				ctx.lineTo(wx1, y);
-			}
-			ctx.stroke();
-		};
-		for (const si of sc.order) {
-			const st = sc.styles[si];
-			if (!gridDrawn && (st.layer ?? 0) > 0) drawGrid();
-			if (st.toggle && !toggles[st.toggle]) continue;
-			ctx.globalAlpha = st.alpha ?? 1;
-			if (st.mode === 'fill') ctx.fillStyle = st.color;
-			else {
-				ctx.strokeStyle = st.color;
-				// Thin strokes stop growing past 3 px so close zoom stays legible.
-				const lw = st.width ?? 0.1;
-				ctx.lineWidth = lw < 0.2 ? Math.min(lw, 3 / s) : lw;
-				ctx.lineCap = st.cap ?? 'round';
-				ctx.setLineDash(st.dash ?? []);
-			}
-			const paint = (p: Path2D | undefined) => {
-				if (!p) return;
-				if (st.mode === 'fill') ctx.fill(p);
-				else ctx.stroke(p);
-			};
-			for (const b of visible) paint(b.paths[si]);
-			paint(sc.global[si]);
 		}
-		if (!gridDrawn) drawGrid();
 	}
 
 	// --- pointer interaction: drag to pan, pinch to zoom, hover/tap to inspect
@@ -340,11 +250,11 @@
 	};
 
 	const pick = (px: number, py: number) => {
-		if (!scene) return;
+		if (!inspector) return;
 		const wx = Math.floor((px - view.tx) / view.s);
 		const wy = Math.floor((py - view.ty) / view.s);
 		const key = (wx + 1048576) * 2097152 + (wy + 1048576);
-		hovered = scene.hit.get(key) ?? null;
+		hovered = inspector.hit.get(key) ?? null;
 		tip = { x: px, y: py };
 	};
 
@@ -412,68 +322,27 @@
 	};
 
 	const info = $derived(
-		scene && hovered !== null
-			? describe(page, scene.geo, hovered, {
-					shapes: scene.shapes,
-					undergroundPartner: scene.undergroundPartner,
-					pipes: scene.pipes
+		inspector && hovered !== null
+			? describe(page, inspector.geo, hovered, {
+					shapes: inspector.shapes,
+					undergroundPartner: inspector.undergroundPartner,
+					pipes: inspector.pipes
 				})
 			: null
-	);
-
-	const TOGGLES: [Toggle, string][] = [
-		['tiles', 'Tiles'],
-		['wires', 'Wires'],
-		['grid', 'Grid'],
-		['labels', 'Labels']
-	];
-	const LEGEND = (['production', 'power', 'logistics', 'circuits', 'rail', 'defence', 'other', 'unknown'] as const).map(
-		(c) => [c, CATEGORY_COLOURS[c]] as const
 	);
 </script>
 
 <div class="flex h-full min-h-0 flex-col">
 	<div class="flex flex-wrap items-center gap-2 border-b border-stone-800 bg-stone-900/80 px-3 py-1.5 text-xs">
-		<div class="flex overflow-hidden rounded border border-stone-700" role="group" aria-label="View">
-			<button
-				class="px-2 py-0.5 {mode === 'schematic' ? 'bg-amber-400 text-stone-950' : 'bg-stone-800 hover:bg-stone-700'}"
-				aria-pressed={mode === 'schematic'}
-				onclick={() => (mode = 'schematic')}>Schematic</button
-			>
-			<button
-				class="px-2 py-0.5 disabled:cursor-not-allowed disabled:opacity-40 {mode === 'game' ? 'bg-amber-400 text-stone-950' : 'bg-stone-800 hover:bg-stone-700'}"
-				aria-pressed={mode === 'game'}
-				disabled={!render || gameFailed}
-				title={render ? 'Rendered image of this page' : 'No game render for this page yet'}
-				onclick={() => (mode = 'game')}>Game</button
-			>
-		</div>
-		{#if game && render}
-			{#if render.sidecar.assets.placeholder}
-				<span
-					class="rounded bg-amber-900/60 px-1.5 py-0.5 text-amber-200"
-					title="Drawn with placeholder sprites (flat boxes and direction arrows), not Factorio's art">placeholder sprites</span
-				>
-			{/if}
-			{#if unknownNames.size}
-				<span class="text-orange-300" title={[...unknownNames].join(', ')}>{unknownNames.size} modded types outlined</span>
-			{/if}
-			<span class="text-stone-500" title="Rendered offline by fpsr {render.sidecar.fpsr} for Factorio {render.sidecar.assets.gameVersion}"
-				>{gameLevel ? `${gameLevel} px/tile tiles` : 'overview'}</span
-			>
-		{:else}
-			{#if !render}
-				<span class="text-stone-500">schematic only: no game render for this page yet</span>
-			{:else if gameFailed}
-				<span class="text-red-300">game render failed to load</span>
-			{/if}
-			{#each TOGGLES as [key, name] (key)}
-				<label class="flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 hover:bg-stone-800">
-					<input type="checkbox" class="accent-amber-400" bind:checked={toggles[key]} />
-					{name}
-				</label>
-			{/each}
+		{#if failed}
+			<span class="text-red-300">render failed to load</span>
 		{/if}
+		{#if unknownNames.size}
+			<span class="text-orange-300" title={[...unknownNames].join(', ')}>{unknownNames.size} modded types outlined</span>
+		{/if}
+		<span class="text-stone-500" title="Rendered offline by fpsr {render.sidecar.fpsr} for Factorio {render.sidecar.assets.gameVersion}"
+			>{level ? `${level} px/tile tiles` : 'overview'}</span
+		>
 		<span class="mx-1 h-4 w-px bg-stone-700"></span>
 		<button class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700" onclick={fit} title="Fit to view (F)">Fit</button>
 		<button class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700" onclick={() => zoomAt(size.w / 2, size.h / 2, 1.25)} title="Zoom in (+)"
@@ -483,17 +352,15 @@
 			>−</button
 		>
 		<span class="text-stone-500">{zoomPct} px/tile</span>
-		<span class="ml-auto text-stone-500">
-			{page.entities.length.toLocaleString()} entities{#if page.tiles.length}
-				· {page.tiles.reduce((n, t) => n + t.runs.length / 3, 0).toLocaleString()} tile runs{/if} · built in {buildMs} ms
-		</span>
+		<span class="ml-auto text-stone-500">{page.entities.length.toLocaleString()} entities</span>
 	</div>
-	<div bind:this={container} class="relative min-h-0 flex-1 overflow-hidden">
+	<div {@attach fitToContainer} class="relative min-h-0 flex-1 overflow-hidden">
 		<canvas
 			bind:this={canvas}
+			{@attach wheelZoom}
 			class="absolute inset-0 h-full w-full cursor-grab touch-none outline-none active:cursor-grabbing"
 			tabindex="0"
-			aria-label="Blueprint {game ? 'render' : 'schematic'}. Drag to pan, scroll or pinch to zoom, F to fit."
+			aria-label="Blueprint render. Drag to pan, scroll or pinch to zoom, F to fit."
 			{onpointerdown}
 			{onpointermove}
 			{onpointerup}
@@ -502,13 +369,54 @@
 			{onkeydown}
 		></canvas>
 		{#if info}
+			{@const slots = tooltip?.slots[info.title] ?? 0}
+			{@const filled = info.modules.reduce((n, m) => n + m.count, 0)}
 			<div
-				class="pointer-events-none absolute z-10 max-w-xs rounded border border-stone-700 bg-stone-900/95 px-2.5 py-2 text-xs shadow-lg"
-				style:left="{Math.min(tip.x + 14, size.w - 260)}px"
-				style:top="{Math.min(tip.y + 14, size.h - 200)}px"
+				class="pointer-events-none absolute z-10 w-72 rounded border border-stone-700 bg-stone-900/95 px-2.5 py-2 text-xs shadow-lg"
+				style:left="{Math.max(4, Math.min(tip.x + 14, size.w - 296))}px"
+				style:top="{Math.max(4, Math.min(tip.y + 14, size.h - 240))}px"
 			>
-				<div class="mb-1 font-semibold text-amber-300">{info.title}</div>
-				<dl class="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+				<div class="mb-1.5 flex items-center gap-2">
+					<Icon {icons} kind="entity" name={info.proto} label="" size={28} />
+					<div class="flex min-w-0 items-center gap-1 font-semibold text-amber-300">
+						<span class="truncate">{labelOf(info.proto)}</span>
+						{#if info.quality}<Icon {icons} kind="quality" name={info.quality} label={info.quality} size={14} />{/if}
+					</div>
+				</div>
+				<dl class="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
+					{#if info.recipe}
+						<dt class="text-stone-500">recipe</dt>
+						<dd class="flex min-w-0 items-center gap-1 text-stone-200">
+							<Icon {icons} kind="recipe" name={info.recipe.name} label="" size={18} />
+							<span class="truncate">{labelOf(info.recipe.name)}</span>
+							{#if info.recipe.quality}<Icon {icons} kind="quality" name={info.recipe.quality} label={info.recipe.quality} size={12} />{/if}
+						</dd>
+					{/if}
+					{#if slots || info.modules.length}
+						<dt class="text-stone-500">modules</dt>
+						<dd class="flex flex-wrap items-center gap-0.5">
+							{#each info.modules as m, i (i)}
+								{#each { length: m.count }, k (k)}
+									<span class="relative inline-grid size-6 place-items-center rounded-sm bg-stone-800 ring-1 ring-stone-700" title={labelOf(m.name)}>
+										<Icon {icons} name={m.name} label={labelOf(m.name)} size={20} />
+										{#if m.quality}
+											<span class="absolute -bottom-0.5 -left-0.5"><Icon {icons} kind="quality" name={m.quality} label={m.quality} size={10} /></span>
+										{/if}
+									</span>
+								{/each}
+							{/each}
+							{#each { length: Math.max(0, slots - filled) }, k (k)}
+								<span class="inline-block size-6 rounded-sm bg-stone-950 ring-1 ring-stone-700" title="empty slot"></span>
+							{/each}
+							{#if slots}<span class="ml-1 text-stone-500">{filled} of {slots}</span>{/if}
+						</dd>
+					{/if}
+					{#if info.filters.length}
+						<dt class="text-stone-500">filters</dt>
+						<dd class="flex flex-wrap items-center gap-0.5">
+							{#each info.filters as f (f)}<Icon {icons} name={f} label={labelOf(f)} size={18} />{/each}
+						</dd>
+					{/if}
 					{#each info.rows as [k, v] (k)}
 						<dt class="text-stone-500">{k}</dt>
 						<dd class="break-words text-stone-200">{v}</dd>
@@ -516,17 +424,5 @@
 				</dl>
 			</div>
 		{/if}
-		<div class:hidden={game} class="pointer-events-none absolute bottom-2 left-2 flex flex-wrap gap-x-3 gap-y-1 rounded bg-stone-950/80 px-2 py-1 text-[11px] text-stone-400">
-			<span class="flex items-center gap-1"><i class="h-2 w-3 rounded-sm bg-[#e3b341]"></i>belt</span>
-			<span class="flex items-center gap-1"><i class="h-2 w-3 rounded-sm bg-[#e5534b]"></i>fast</span>
-			<span class="flex items-center gap-1"><i class="h-2 w-3 rounded-sm bg-[#4aa8f0]"></i>express</span>
-			<span class="flex items-center gap-1"><i class="h-2 w-3 rounded-sm bg-[#6bd66f]"></i>turbo</span>
-			<span class="flex items-center gap-1"><i class="h-2 w-3 rounded-sm bg-[#7fa7c4]"></i>pipe</span>
-			<span class="flex items-center gap-1"><i class="h-2 w-3 rounded-sm bg-[#38bdf8]"></i>fluid in</span>
-			<span class="flex items-center gap-1"><i class="h-2 w-3 rounded-sm bg-[#fb923c]"></i>fluid out</span>
-			{#each LEGEND as [c, colour] (c)}
-				<span class="flex items-center gap-1"><i class="h-2 w-3 rounded-sm border" style:border-color={colour}></i>{c}</span>
-			{/each}
-		</div>
 	</div>
 </div>

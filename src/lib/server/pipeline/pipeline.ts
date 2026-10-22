@@ -5,7 +5,7 @@ import { BlueprintDecodeError, RecordParseError, StorageError } from './errors';
 import { gameData } from './game-data';
 import { analysisKey, parsePrintDoc, toPrintDoc } from './print-doc';
 import { RawStore } from './raw-store';
-import { FirebaseRecord } from './record';
+import { FirebaseRecord, stripPrivateFields } from './record';
 import { INDEX_VERSION, PrintRepository, type FailedPrint, type IngestState, type StoredPrint } from './repository';
 import { PrintSource } from './source';
 import { buildViewerFilesEffect, deleteViewerFiles, putViewerFiles, VIEWER_VERSION, type ViewerFiles } from './viewer-files';
@@ -136,6 +136,8 @@ export interface Reindex {
 	readonly sourceUrl: string;
 	readonly rawSha256: string;
 	readonly contentSha256: string;
+	/** The run's decode cap, for the full analysis a missing or stale document falls back to. */
+	readonly maxInflatedBytes?: number;
 }
 
 const failedPlan = (
@@ -239,7 +241,9 @@ export const planIngest = Effect.fn('planIngest')(function* (
 			}
 			const favoritesChanged = state.favorites !== favorites;
 			const staleIndex: Reindex | null =
-				state.indexVersion === INDEX_VERSION ? null : { text: clean, sourceUrl, rawSha256: yield* sha256(clean), contentSha256 };
+				state.indexVersion === INDEX_VERSION
+					? null
+					: { text: clean, sourceUrl, rawSha256: yield* sha256(clean), contentSha256, maxInflatedBytes: options.maxInflatedBytes };
 			if (viewerFiles === null && !favoritesChanged && staleIndex === null) return { kind: 'unchanged', id };
 			return { kind: 'refresh', id, favorites: favoritesChanged ? favorites : null, viewerFiles, reindex: staleIndex };
 		}
@@ -328,7 +332,7 @@ const reindex = Effect.fn('reindex')(function* (
 	const raw = yield* RawStore;
 	const doc = parsePrintDoc(yield* raw.get(analysisKey(id)));
 	if (!doc || doc.analysis.analyzerVersion !== ANALYZER_VERSION || doc.analysis.gameDataVersion !== gameData.gameVersion) {
-		return yield* applyPlan(yield* planAnalysis(id, r.text, r.sourceUrl, null, {}, null));
+		return yield* applyPlan(yield* planAnalysis(id, r.text, r.sourceUrl, null, { maxInflatedBytes: r.maxInflatedBytes }, null));
 	}
 	const record = yield* decodeRecord(id, r.text).pipe(Effect.mapError((cause) => new StorageError({ op: `reindex ${id}`, cause })));
 	const viewerFiles = viewer ? yield* putViewerFiles(id, viewer) : 0;
@@ -361,21 +365,9 @@ export const processRaw = Effect.fn('processRaw')(function* (
 	return yield* applyPlan(yield* planAnalysis(id, text, sourceUrl, previous, options, null));
 });
 
-/**
- * Drop fields we must never store or republish: `favorites` maps the user ids of
- * everyone who favourited the print, and `image.deletehash` is an Imgur deletion secret.
- */
+/** `stripPrivateFields` as an Effect: drop `favorites` and `image.deletehash` before anything is stored. */
 export const sanitizeRaw = (id: string, text: string) =>
-	Effect.try({
-		try: () => {
-			const record = JSON.parse(text) as Record<string, unknown>;
-			delete record.favorites;
-			const image = record.image as Record<string, unknown> | undefined;
-			if (image && typeof image === 'object') delete image.deletehash;
-			return JSON.stringify(record);
-		},
-		catch: (cause) => new RecordParseError({ id, cause })
-	});
+	Effect.try({ try: () => stripPrivateFields(text), catch: (cause) => new RecordParseError({ id, cause }) });
 
 /**
  * sanitize → (skip if unchanged) → archive raw → parse → decode → analyze → store: `planIngest`,

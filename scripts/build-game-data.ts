@@ -1,32 +1,55 @@
 /**
- * Distil the game prototype data the analyzer needs into one committed JSON file.
+ * Distil the game prototype data the analyzer needs into one committed JSON file, from Factorio's
+ * own data dump. Nothing is parsed from Lua: the game runs the data stage and dumps the result.
  *
- *   git clone --depth 1 --branch 2.0.55 https://github.com/wube/factorio-data <dir>
- *   curl -o <km.json> https://raw.githubusercontent.com/KirkMcDonald/kirkmcdonald.github.io/master/data/space-age-2.0.55.json
- *   bun scripts/build-game-data.ts <dir> <km.json>
+ * Into one folder (by default the user data dir's `script-output/`), with only the official mods
+ * enabled (base, elevated-rails, quality, space-age):
  *
- * Two sources, pinned to the same game version:
- * - KirkMcDonald calculator JSON: recipes, crafting machines, modules, beacon, belts, planets.
- * - wube/factorio-data Lua sources, regex-scanned (never executed): every prototype name
- *   and its mod, plus entity type, size and surface_conditions, and the rename migrations.
+ *   factorio --dump-data                 # data-raw-dump.json
+ *   factorio --dump-prototype-locale     # <type>-locale.json: English names
  *
- * The scan misses entities that Lua helper functions build, so the analyzer also treats item and
- * recipe names as known.
+ * The dump doesn't say which mod adds a prototype, so run `factorio --dump-data` three more times,
+ * with only base enabled, base + elevated-rails and base + quality, and save each result next to
+ * the first as data-raw-dump-base.json, data-raw-dump-elevated-rails.json and
+ * data-raw-dump-quality.json. (A `--config` whose `write-data` is a scratch folder and a
+ * `--mod-directory` holding just a mod-list.json keep these runs away from your saves and mods.)
+ * Then:
+ *
+ *   bun run game-data <script-output dir> <factorio data dir>
+ *
+ * The data dir is the game's own `data/` folder: `base/info.json` gives the game version and
+ * `base/migrations/` the 1.x→2.0 renames. Writes data/game/game-data-<version>.json.
  */
-import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { basename, join, relative } from 'node:path';
+import { existsSync } from 'node:fs';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join, relative } from 'node:path';
 import type { GameDataFile, SurfaceCondition } from '#lib/server/pipeline/game-data.js';
 
-const [fdDir, kmPath] = process.argv.slice(2);
-if (!fdDir || !kmPath) {
-	console.error('usage: bun scripts/build-game-data.ts <factorio-data checkout> <kirkmcdonald json>');
+const [outputDir, dataDir] = process.argv.slice(2);
+if (!outputDir || !dataDir) {
+	console.error('usage: bun run game-data <script-output dir> <factorio data dir>');
 	process.exit(1);
 }
 
-const MOD_DIRS = ['core', 'base', 'elevated-rails', 'quality', 'space-age'];
+type Proto = Record<string, unknown> & { name: string; type: string };
+type Raw = Record<string, Record<string, Proto>>;
+const readJson = async <T>(path: string) => JSON.parse(await readFile(path, 'utf8')) as T;
+
+const raw = await readJson<Raw>(join(outputDir, 'data-raw-dump.json'));
+/** The game's English names for one prototype category ("item" covers every item type). */
+const localeOf = async (category: string) =>
+	(await readJson<{ names: Record<string, string> }>(join(outputDir, `${category}-locale.json`))).names;
+const locale = {
+	item: await localeOf('item'),
+	fluid: await localeOf('fluid'),
+	recipe: await localeOf('recipe'),
+	entity: await localeOf('entity')
+};
+const { version: gameVersion } = await readJson<{ version: string }>(join(dataDir, 'base', 'info.json'));
+const protos = (...types: string[]): Proto[] => types.flatMap((t) => Object.values(raw[t] ?? {}));
 
 /** Prototype types placed in the world as entities (subset of data.raw that blueprints can contain). */
-const ENTITY_TYPES = new Set([
+const ENTITY_TYPES = [
 	'accumulator', 'agricultural-tower', 'ammo-turret', 'arithmetic-combinator', 'artillery-turret',
 	'artillery-wagon', 'assembling-machine', 'asteroid-collector', 'beacon', 'boiler', 'burner-generator',
 	'car', 'cargo-bay', 'cargo-landing-pad', 'cargo-wagon', 'constant-combinator', 'container',
@@ -43,103 +66,238 @@ const ENTITY_TYPES = new Set([
 	'simple-entity-with-force', 'simple-entity-with-owner', 'solar-panel', 'space-platform-hub',
 	'spider-vehicle', 'splitter', 'storage-tank', 'straight-rail', 'thruster', 'train-stop',
 	'transport-belt', 'tree', 'turret', 'underground-belt', 'valve', 'wall'
-]); // prettier-ignore
+]; // prettier-ignore
+/** Every item prototype type (data.raw keeps each in its own table). */
+const ITEM_TYPES = [
+	'item', 'ammo', 'armor', 'blueprint', 'blueprint-book', 'capsule', 'copy-paste-tool', 'deconstruction-item',
+	'gun', 'item-with-entity-data', 'item-with-inventory', 'item-with-label', 'item-with-tags', 'module',
+	'rail-planner', 'repair-tool', 'selection-tool', 'space-platform-starter-pack', 'spidertron-remote', 'tool',
+	'upgrade-item'
+]; // prettier-ignore
+/** What else a blueprint can name: world entities, tiles, recipes and signals. */
+const OTHER_NAMED_TYPES = [
+	'asteroid', 'asteroid-chunk', 'character', 'cliff', 'fish', 'planet', 'quality', 'recipe', 'resource',
+	'segmented-unit', 'simple-entity', 'space-location', 'spider-unit', 'tile', 'unit', 'unit-spawner',
+	'virtual-signal'
+]; // prettier-ignore
+const CRAFTING_MACHINE_TYPES = ['assembling-machine', 'furnace', 'rocket-silo'];
 
-const HEAD = /\btype\s*=\s*"([a-z0-9_-]+)"\s*,\s*name\s*=\s*"([A-Za-z0-9_-]+)"/g;
-const COLLISION = /\bcollision_box\s*=\s*\{\s*\{\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\}\s*,\s*\{\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\}/;
-const SUPPLY = /\bsupply_area_distance\s*=\s*([\d.]+)/;
-const DIST_EFF = /\bdistribution_effectivity\s*=\s*([\d.]+)/;
-const DIST_Q = /\bdistribution_effectivity_bonus_per_quality_level\s*=\s*([\d.]+)/;
-const BASE_PROD = /base_effect\s*=\s*\{\s*productivity\s*=\s*([\d.]+)/;
-/** `surface_conditions = { {...}, ... }`; the inner tables hold no braces. */
-const SURFACE = /surface_conditions\s*=\s*(\{(?:\s*\{[^{}]*\}\s*,?)+\s*\})/;
-/** `data.raw["type"]["name"].surface_conditions = <table or helper()>` in data-updates files. */
-const RAW_SURFACE = /data\.raw\["([a-z0-9-]+)"\]\["([a-z0-9-]+)"\]\.surface_conditions\s*=\s*(\{(?:\s*\{[^{}]*\}\s*,?)+\s*\}|[a-z_]+\(\))/g;
-const LOCAL_FN = /local function ([a-z_]+)\(\)\s*return\s*(\{(?:\s*\{[^{}]*\}\s*,?)+\s*\})/g;
+/** Drop float noise from Lua arithmetic (0.44719999999999993 → 0.4472). */
+const num = (x: unknown) => Number(Number(x).toPrecision(10));
+/** A Lua array; the dump writes an empty table as `{}`. */
+const list = <T>(x: unknown): T[] => (Array.isArray(x) ? (x as T[]) : []);
+const byKey = <T>(o: Record<string, T>) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 
-const parseConditions = (table: string): SurfaceCondition[] =>
-	[...table.matchAll(/\{([^{}]*)\}/g)].flatMap(([, body]) => {
-		const property = body.match(/property\s*=\s*"([a-z-]+)"/)?.[1];
-		if (!property) return [];
-		const num = (k: string) => {
-			const m = body.match(new RegExp(`\\b${k}\\s*=\\s*(-?[\\d.]+)`));
-			return m ? Number(m[1]) : undefined;
-		};
-		return [{ property, ...(num('min') !== undefined && { min: num('min') }), ...(num('max') !== undefined && { max: num('max') }) }];
-	});
+// ---- Mod of origin -------------------------------------------------------------------------------
+// A prototype comes from the first mod, in load order, whose partial dump has it, even when a later
+// mod changed it; space-age, which needs the other three, adds the rest.
 
-async function* luaFiles(dir: string): AsyncGenerator<string> {
-	for (const e of await readdir(dir, { withFileTypes: true })) {
-		const p = join(dir, e.name);
-		if (e.isDirectory()) yield* luaFiles(p);
-		else if (e.name.endsWith('.lua')) yield p;
-	}
-}
+const partial = await Promise.all(
+	(['base', 'elevated-rails', 'quality'] as const).map(async (mod) => ({
+		mod,
+		raw: await readJson<Raw>(join(outputDir, `data-raw-dump-${mod}.json`))
+	}))
+);
+const modOf = (p: Proto): string => partial.find(({ raw }) => raw[p.type]?.[p.name])?.mod ?? 'space-age';
+
+// ---- Entities, tiles, names ----------------------------------------------------------------------
+
+const conditions = (p: Proto): SurfaceCondition[] | undefined => {
+	const conds = list<{ property: string; min?: number; max?: number }>(p.surface_conditions);
+	if (!conds.length) return undefined;
+	return conds.map((c) => ({
+		property: c.property,
+		...(c.min !== undefined && { min: num(c.min) }),
+		...(c.max !== undefined && { max: num(c.max) })
+	}));
+};
 
 type Entity = GameDataFile['entities'][string];
-const names: Record<string, string> = {};
 const entities: Record<string, Entity> = {};
-const tiles: Record<string, string> = {};
-/** Entity → the item that places it, for icons: `place_result`, plus rail planners' `rails` lists. */
-const entityItem: Record<string, string> = {};
-const surfaceOverrides: [string, SurfaceCondition[], string][] = [];
-
-for (const mod of MOD_DIRS) {
-	for await (const file of luaFiles(join(fdDir, mod))) {
-		const text = await readFile(file, 'utf8');
-		const heads = [...text.matchAll(HEAD)];
-		heads.forEach((m, i) => {
-			const [, type, name] = m;
-			const end = heads[i + 1]?.index ?? Math.min(text.length, m.index + 20000);
-			const block = text.slice(m.index, end);
-			// First definition wins: base defines most things, DLC mods add rather than redefine.
-			names[name] ??= mod;
-			if (type === 'tile') tiles[name] ??= mod;
-			const head = block.slice(0, 3000);
-			const placed = head.match(/\bplace_result\s*=\s*"([a-z0-9-]+)"/)?.[1];
-			if (placed) entityItem[placed] ??= name;
-			for (const r of head.match(/\brails\s*=\s*\{([^}]*)\}/)?.[1].matchAll(/"([a-z0-9-]+)"/g) ?? []) entityItem[r[1]] ??= name;
-			if (!ENTITY_TYPES.has(type) || entities[name]) return;
-			const e: Entity = { type, mod };
-			const c = block.match(COLLISION);
-			if (c) {
-				const [x1, y1, x2, y2] = c.slice(1).map(Number);
-				const size: [number, number] = [Math.max(1, Math.ceil(x2 - x1)), Math.max(1, Math.ceil(y2 - y1))];
-				if (size[0] > 1 || size[1] > 1) e.size = size;
-			}
-			const sc = block.slice(0, 6000).match(SURFACE);
-			if (sc) e.surface = parseConditions(sc[1]);
-			if (type === 'beacon') {
-				e.supplyArea = Number(block.match(SUPPLY)?.[1] ?? 3);
-				e.distributionEffectivity = Number(block.match(DIST_EFF)?.[1] ?? 1.5);
-				e.distributionEffectivityPerQuality = Number(block.match(DIST_Q)?.[1] ?? 0);
-			}
-			const bp = block.match(BASE_PROD);
-			if (bp) e.baseProductivity = Number(bp[1]);
-			entities[name] = e;
-		});
-		const helpers = Object.fromEntries([...text.matchAll(LOCAL_FN)].map((m) => [`${m[1]}()`, m[2]]));
-		for (const m of text.matchAll(RAW_SURFACE)) {
-			const table = m[3].endsWith('()') ? helpers[m[3]] : m[3];
-			if (table) surfaceOverrides.push([m[2], parseConditions(table), relative(fdDir, file)]);
-		}
+for (const p of protos(...ENTITY_TYPES)) {
+	const e: Entity = { type: p.type, mod: modOf(p) };
+	if (locale.entity[p.name]) e.label = locale.entity[p.name];
+	const box = p.collision_box as [[number, number], [number, number]] | undefined;
+	if (box) {
+		const [[x1, y1], [x2, y2]] = box;
+		const size: [number, number] = [Math.max(1, Math.ceil(x2 - x1)), Math.max(1, Math.ceil(y2 - y1))];
+		if (size[0] > 1 || size[1] > 1) e.size = size;
 	}
+	const surface = conditions(p);
+	if (surface) e.surface = surface;
+	if (p.type === 'beacon') {
+		e.supplyArea = num(p.supply_area_distance);
+		e.distributionEffectivity = num(p.distribution_effectivity);
+		e.distributionEffectivityPerQuality = num(p.distribution_effectivity_bonus_per_quality_level ?? 0);
+	}
+	const slots = Number(p.module_slots ?? 0);
+	if (slots > 0) e.moduleSlots = slots;
+	const prod = (p.effect_receiver as { base_effect?: { productivity?: number } } | undefined)?.base_effect?.productivity;
+	if (prod) e.baseProductivity = num(prod);
+	entities[p.name] = e;
 }
-for (const [name, conds] of surfaceOverrides) if (entities[name]) entities[name].surface = conds;
 
-// space-age/base-data-updates.lua sets this in a Lua loop the regex can't follow:
-// every vanilla chest needs gravity >= 0.1, so none can be placed on a platform.
-const updates = await readFile(join(fdDir, 'space-age', 'base-data-updates.lua'), 'utf8');
-if (!/local containers = [\s\S]{0,400}"wooden-chest"[\s\S]{0,900}property = "gravity",\s*min = 0\.1/.test(updates)) {
-	throw new Error('space-age/base-data-updates.lua container loop changed; re-check chest surface_conditions');
+const tiles = Object.fromEntries(protos('tile').map((p) => [p.name, modOf(p)]));
+
+// A name can be several prototypes (an item, its entity and its recipe); the earliest mod wins.
+const MOD_ORDER = ['base', 'elevated-rails', 'quality', 'space-age'];
+const names: Record<string, string> = {};
+for (const p of protos(...ENTITY_TYPES, ...ITEM_TYPES, 'fluid', ...OTHER_NAMED_TYPES)) {
+	const mod = modOf(p);
+	if (!(p.name in names) || MOD_ORDER.indexOf(mod) < MOD_ORDER.indexOf(names[p.name])) names[p.name] = mod;
 }
-for (const n of ['wooden-chest', 'iron-chest', 'steel-chest', 'passive-provider-chest', 'active-provider-chest',
-	'storage-chest', 'buffer-chest', 'requester-chest']) {
-	entities[n].surface = [{ property: 'gravity', min: 0.1 }];
-} // prettier-ignore
 
-// Rename migrations, applied in file order to pre-2.0 prints only. 0.17 renamed the science
+/** Entity → the item that places it: `place_result`, rail planners' `rails`, then `placeable_by`. */
+const entityItem: Record<string, string> = {};
+const items = protos(...ITEM_TYPES);
+for (const p of items) if (typeof p.place_result === 'string') entityItem[p.place_result] ??= p.name;
+for (const p of items) for (const r of list<string>(p.rails)) entityItem[r] ??= p.name;
+for (const p of protos(...ENTITY_TYPES)) {
+	const by = p.placeable_by as { item?: string } | { item?: string }[] | undefined;
+	const item = (Array.isArray(by) ? by[0] : by)?.item;
+	if (item) entityItem[p.name] ??= item;
+}
+
+// ---- Recipes, machines, modules, belts -----------------------------------------------------------
+
+interface Product {
+	type: string;
+	name: string;
+	amount?: number;
+	amount_min?: number;
+	amount_max?: number;
+	probability?: number;
+	extra_count_fraction?: number;
+}
+/** Expected amount per craft: item amounts are whole (the game drops the fraction) plus `extra_count_fraction`. */
+const expected = (r: Product) => {
+	const base = r.amount ?? ((r.amount_min ?? 0) + (r.amount_max ?? 0)) / 2;
+	const whole = r.type === 'item' && r.amount !== undefined ? Math.floor(base) : base;
+	return num((whole + (r.extra_count_fraction ?? 0)) * (r.probability ?? 1));
+};
+
+const recipes: GameDataFile['recipes'] = {};
+for (const p of protos('recipe')) {
+	const surface = conditions(p);
+	recipes[p.name] = {
+		category: (p.category as string | undefined) ?? 'crafting',
+		time: num(p.energy_required ?? 0.5),
+		productivity: p.allow_productivity === true,
+		ingredients: list<Product>(p.ingredients).map((i) => [i.name, num(i.amount)]),
+		results: list<Product>(p.results).map((r) => [r.name, expected(r)]),
+		...(surface && { surface }),
+		...(locale.recipe[p.name] && { label: locale.recipe[p.name] })
+	};
+}
+
+const machines = Object.fromEntries(
+	protos(...CRAFTING_MACHINE_TYPES).map((p) => [
+		p.name,
+		{ speed: num(p.crafting_speed), moduleSlots: Number(p.module_slots ?? 0), baseProductivity: entities[p.name]?.baseProductivity ?? 0 }
+	])
+);
+const modules = Object.fromEntries(
+	protos('module').map((p) => [
+		p.name,
+		byKey(Object.fromEntries(Object.entries(p.effect as Record<string, number>).map(([k, v]) => [k, num(v)])))
+	])
+);
+const beacon = raw.beacon?.beacon;
+if (!beacon) throw new Error('no beacon prototype in the dump');
+const belts = Object.fromEntries(protos('transport-belt').map((p) => [p.name, num(p.speed)]));
+
+// ---- Items: type, English name, crafting-menu group and order ------------------------------------
+
+const itemType: Record<string, string> = {};
+// Fluids first, so an item wins when both share a name (the parameter-0…9 placeholders).
+for (const p of protos('fluid', ...ITEM_TYPES)) itemType[p.name] = p.type;
+
+const subgroups = raw['item-subgroup'];
+const groups = raw['item-group'];
+const made = new Set(Object.values(recipes).flatMap((r) => r.results.map(([n]) => n)));
+/**
+ * Left out of the picker data: the game's placeholders, the space platform hub (never built or
+ * blueprinted), tools that only live in the cursor or a shortcut (blueprints, planners, wires,
+ * remotes), and hidden items that no recipe makes and that place nothing (vehicle guns, the
+ * research-progress item).
+ */
+const notAnItem = (p: Proto) =>
+	['item-unknown', 'fluid-unknown', 'no-item', 'space-platform-hub'].includes(p.name) ||
+	list<string>(p.flags).some((f) => f === 'only-in-cursor' || f === 'spawnable') ||
+	(p.hidden === true && !made.has(p.name) && typeof p.place_result !== 'string');
+const label = (p: Proto) => locale[p.type === 'fluid' ? 'fluid' : 'item']?.[p.name];
+const itemInfo: GameDataFile['itemInfo'] = {};
+const missingLabels: string[] = [];
+for (const p of protos(...ITEM_TYPES, 'fluid')) {
+	if (notAnItem(p) || p.name in itemInfo) continue;
+	const subgroup = subgroups[(p.subgroup as string | undefined) ?? (p.type === 'fluid' ? 'fluid' : 'other')];
+	const group = groups[subgroup?.group as string];
+	const name = label(p);
+	if (!name) missingLabels.push(p.name);
+	itemInfo[p.name] = {
+		label: name ?? p.name,
+		group: group?.name ?? 'other',
+		sort: `${group?.order ?? 'z'}|${subgroup?.order ?? 'z'}|${(p.order as string | undefined) ?? ''}`
+	};
+}
+
+// ---- Planets and surfaces ------------------------------------------------------------------------
+
+const surfaceDefaults = Object.fromEntries(protos('surface-property').map((p) => [p.name, num(p.default_value)]));
+const surfaces = Object.fromEntries(
+	protos('planet', 'surface')
+		.filter((p) => p.surface_properties)
+		.map((p) => [p.name, byKey(p.surface_properties as Record<string, number>)])
+);
+
+/** What mining a resource or harvesting a plant yields. */
+const yields = (p: Proto): string[] => {
+	const m = p.minable as { result?: string; results?: Product[] } | undefined;
+	return m?.result ? [m.result] : list<Product>(m?.results).map((r) => r.name);
+};
+/** Raw materials a planet's map has: resources and plants it places, and fluids its oceans pump. */
+const native = Object.fromEntries(
+	protos('planet').map((planet) => {
+		const gen = (planet.map_gen_settings ?? {}) as {
+			autoplace_controls?: Record<string, unknown>;
+			autoplace_settings?: Record<string, { settings?: Record<string, unknown> }>;
+		};
+		const controls = new Set(Object.keys(gen.autoplace_controls ?? {}));
+		const placed = new Set(Object.keys(gen.autoplace_settings?.entity?.settings ?? {}));
+		const found = new Set<string>();
+		for (const p of protos('resource', 'plant')) {
+			const control = (p.autoplace as { control?: string } | undefined)?.control;
+			if (placed.has(p.name) || (control && controls.has(control))) for (const y of yields(p)) found.add(y);
+		}
+		for (const t of Object.keys(gen.autoplace_settings?.tile?.settings ?? {})) {
+			const fluid = raw.tile?.[t]?.fluid;
+			if (typeof fluid === 'string') found.add(fluid);
+		}
+		return [planet.name, found];
+	})
+);
+// Raw items only one planet yields and no planet-side recipe makes: calcite says Vulcanus,
+// scrap says Fulgora. Heavy oil is offshore on Fulgora, but refineries make it anywhere.
+// Recycling and asteroid crushing (platform-only) don't count as making something; spoiling
+// does (Gleba's iron bacteria spoil into iron ore).
+const crafted = new Set([
+	...Object.values(recipes)
+		.filter((r) => r.category !== 'recycling' && r.category !== 'crushing')
+		.flatMap((r) => r.results.map(([n]) => n)),
+	...items.flatMap((p) => (typeof p.spoil_result === 'string' ? [p.spoil_result] : []))
+]);
+const planetResources: Record<string, string[]> = {};
+for (const [planet, found] of Object.entries(native)) {
+	planetResources[planet] = [...found]
+		.filter((i) => !crafted.has(i) && Object.entries(native).every(([other, o]) => other === planet || !o.has(i)))
+		.sort();
+}
+for (const s of Object.keys(surfaces)) planetResources[s] ??= [];
+
+// ---- Rename migrations ---------------------------------------------------------------------------
+// Applied in the game's order (migrations.txt) to pre-2.0 prints only. 0.17 renamed the science
 // packs, but its migration files no longer ship with 2.0, so that step is written out here.
+
 const science017 = {
 	'science-pack-1': 'automation-science-pack',
 	'science-pack-2': 'logistic-science-pack',
@@ -149,163 +307,50 @@ const science017 = {
 const migrations: GameDataFile['migrations'] = [
 	{ file: '0.17.0 (science pack renames)', entity: {}, item: science017, recipe: science017, tile: {} }
 ];
-const migDir = join(fdDir, 'base', 'migrations');
-for (const f of (await readdir(migDir)).filter((f) => f.endsWith('.json')).sort()) {
-	const m = JSON.parse(await readFile(join(migDir, f), 'utf8')) as Record<string, [string, string][]>;
+const migDir = join(dataDir, 'base', 'migrations');
+const migOrder = (await readFile(join(migDir, 'migrations.txt'), 'utf8')).split(/\r?\n/).map((l) => l.trim());
+for (const f of migOrder.filter((f) => f.endsWith('.json') && existsSync(join(migDir, f)))) {
+	const m = await readJson<Record<string, [string, string][]>>(join(migDir, f));
 	const pick = (k: string) => Object.fromEntries(m[k] ?? []);
 	migrations.push({ file: f, entity: pick('entity'), item: pick('item'), recipe: pick('recipe'), tile: pick('tile') });
 }
-// 1.1 rails become legacy rails in 2.0. That happens in 2.0.0.lua, not the JSON.
+// 1.1 rails load as 2.0's legacy rails; the game does that itself, with no migration file.
 migrations.push({
-	file: '2.0.0.lua',
+	file: '2.0 legacy rails',
 	entity: { 'straight-rail': 'legacy-straight-rail', 'curved-rail': 'legacy-curved-rail' },
 	item: {},
 	recipe: {},
 	tile: {}
 });
 
-interface Km {
-	recipes: {
-		key: string;
-		icon_col: number;
-		icon_row: number;
-		category: string;
-		energy_required: number;
-		allow_productivity: boolean;
-		ingredients: { name: string; amount: number }[];
-		results: { name: string; amount: number; probability?: number }[];
-		surface_conditions?: SurfaceCondition[];
-	}[];
-	crafting_machines: { key: string; crafting_speed: number; module_slots: number; prod_bonus?: number; crafting_categories: string[] }[];
-	rocket_silo: Km['crafting_machines'];
-	modules: { item_key: string; effect: Record<string, number> }[];
-	beacon: { profile: number[]; distribution_effectivity: number };
-	belts: { key: string; speed: number }[];
-	items: {
-		key: string;
-		type: string;
-		icon_col: number;
-		icon_row: number;
-		localized_name: { en: string };
-		group: string;
-		subgroup: string;
-		order: string;
-	}[];
-	groups: Record<string, { order: string; subgroups: Record<string, string> }>;
-	sprites: { hash: string; width: number; height: number };
-	planets: { key: string; surface_properties: Record<string, number>; resources: Record<string, string[]> }[];
-	surface_properties: { name: string; default_value: number }[];
-	resources: { key: string; results: { name: string }[] }[];
-	plants: { key: string; results: { name: string }[] }[];
-	spoilage: { from_item: string; to_item: string }[];
-}
-const km = JSON.parse(await readFile(kmPath, 'utf8')) as Km;
-
-// Raw items only one planet yields and no planet-side recipe makes: calcite says Vulcanus,
-// scrap says Fulgora. Heavy oil is offshore on Fulgora, but refineries make it anywhere.
-// Recycling and asteroid crushing (platform-only) don't count as making something; spoiling
-// does (Gleba's iron bacteria spoil into iron ore).
-const yields = Object.fromEntries([...km.resources, ...km.plants].map((r) => [r.key, r.results.map((x) => x.name)]));
-const crafted = new Set([
-	...km.recipes.filter((r) => r.category !== 'recycling' && r.category !== 'crushing').flatMap((r) => r.results.map((x) => x.name)),
-	...km.spoilage.map((s) => s.to_item)
-]);
-const native = Object.fromEntries(
-	km.planets.map((p) => [
-		p.key,
-		new Set(
-			Object.values(p.resources)
-				.flat()
-				.flatMap((r) => yields[r] ?? [r])
-		)
-	])
-);
-const planetResources = Object.fromEntries(
-	Object.entries(native).map(([planet, items]) => [
-		planet,
-		[...items].filter((i) => !crafted.has(i) && Object.entries(native).every(([other, o]) => other === planet || !o.has(i))).sort()
-	])
-);
+// ---- Write ---------------------------------------------------------------------------------------
 
 const out: GameDataFile = {
-	gameVersion: '2.0.55',
+	gameVersion,
 	sources: {
-		kirkmcdonald: `KirkMcDonald/kirkmcdonald.github.io data/${basename(kmPath)}`,
-		factorioData: 'wube/factorio-data@2.0.55 (regex scan)'
+		factorio: `Factorio ${gameVersion} --dump-data and --dump-prototype-locale, official mods (base, elevated-rails, quality, space-age)`
 	},
-	surfaceDefaults: Object.fromEntries(km.surface_properties.map((p) => [p.name, p.default_value])),
-	surfaces: Object.fromEntries(km.planets.map((p) => [p.key, p.surface_properties])),
-	planetResources,
-	recipes: Object.fromEntries(
-		km.recipes.map((r) => [
-			r.key,
-			{
-				category: r.category,
-				time: r.energy_required,
-				productivity: r.allow_productivity,
-				ingredients: r.ingredients.map((i) => [i.name, i.amount] as [string, number]),
-				// Expected amount: probability folded in.
-				results: r.results.map((x) => [x.name, x.amount * (x.probability ?? 1)] as [string, number]),
-				...(r.surface_conditions && { surface: r.surface_conditions })
-			}
-		])
-	),
-	machines: Object.fromEntries(
-		[...km.crafting_machines, ...km.rocket_silo].map((m) => [
-			m.key,
-			{ speed: m.crafting_speed, moduleSlots: m.module_slots, baseProductivity: entities[m.key]?.baseProductivity ?? m.prod_bonus ?? 0 }
-		])
-	),
-	modules: Object.fromEntries(km.modules.map((m) => [m.item_key, m.effect])),
-	beaconProfile: km.beacon.profile,
-	belts: Object.fromEntries(km.belts.map((b) => [b.key, b.speed])),
-	items: Object.fromEntries(km.items.map((i) => [i.key, i.type])),
-	entities: Object.fromEntries(Object.entries(entities).sort(([a], [b]) => a.localeCompare(b))),
-	tiles: Object.fromEntries(Object.entries(tiles).sort(([a], [b]) => a.localeCompare(b))),
-	names: Object.fromEntries(Object.entries(names).sort(([a], [b]) => a.localeCompare(b))),
-	migrations,
-	// For item pickers: English name, crafting-menu tab, and a sort key matching the game's order.
-	itemInfo: Object.fromEntries(
-		km.items.map((i) => [
-			i.key,
-			{
-				label: i.localized_name.en,
-				group: i.group,
-				sort: `${km.groups[i.group]?.order ?? 'z'}|${km.groups[i.group]?.subgroups[i.subgroup] ?? 'z'}|${i.order}`
-			}
-		])
-	),
-	// KirkMcDonald's calculator publishes one sprite sheet of 32px icons per data version.
-	icons: {
-		sheet: {
-			url: `https://kirkmcdonald.github.io/images/sprite-sheet-${km.sprites.hash}.png`,
-			width: km.sprites.width,
-			height: km.sprites.height,
-			size: 32
-		},
-		item: Object.fromEntries(km.items.map((i) => [i.key, [i.icon_col, i.icon_row] as [number, number]])),
-		recipe: Object.fromEntries(km.recipes.map((r) => [r.key, [r.icon_col, r.icon_row] as [number, number]])),
-		// Legacy (1.x) and elevated rails are placed by rail planners the scan doesn't follow;
-		// the rail item stands in.
-		entityItem: {
-			...Object.fromEntries(
-				[
-					'legacy-straight-rail',
-					'legacy-curved-rail',
-					'elevated-straight-rail',
-					'elevated-half-diagonal-rail',
-					'elevated-curved-rail-a',
-					'elevated-curved-rail-b'
-				].map((r) => [r, 'rail'])
-			),
-			...entityItem
-		}
-	}
+	surfaceDefaults: byKey(surfaceDefaults),
+	surfaces: byKey(surfaces),
+	planetResources: byKey(planetResources),
+	recipes: byKey(recipes),
+	machines: byKey(machines),
+	modules: byKey(modules),
+	beaconProfile: (beacon.profile as number[]).map(num),
+	belts: byKey(belts),
+	items: byKey(itemType),
+	entities: byKey(entities),
+	tiles: byKey(tiles),
+	names: byKey(names),
+	itemInfo: byKey(itemInfo),
+	entityItem: byKey(entityItem),
+	migrations
 };
 
-const dest = join(import.meta.dirname, '..', 'data', 'game', `game-data-${out.gameVersion}.json`);
+const dest = join(import.meta.dirname, '..', 'data', 'game', `game-data-${gameVersion}.json`);
 await writeFile(dest, JSON.stringify(out) + '\n');
 console.log(
-	`wrote ${relative(process.cwd(), dest)}: ${Object.keys(out.entities).length} entities, ${Object.keys(out.tiles).length} tiles, ` +
-		`${Object.keys(out.names).length} names, ${Object.keys(out.recipes).length} recipes, ${surfaceOverrides.length} surface overrides`
+	`wrote ${relative(process.cwd(), dest)}: ${Object.keys(entities).length} entities, ${Object.keys(tiles).length} tiles, ` +
+		`${Object.keys(names).length} names, ${Object.keys(recipes).length} recipes, ${Object.keys(itemInfo).length} items`
 );
+if (missingLabels.length) console.warn(`no English name for: ${missingLabels.join(', ')}`);

@@ -8,7 +8,6 @@
 		gridMove,
 		gridRows,
 		initialTab,
-		isBuilding,
 		landOn,
 		printCount,
 		score,
@@ -27,9 +26,9 @@
 
 	const uid = $props.id();
 
-	// Seeded once: the page re-creates this box (`{#key}`) when the query in the URL changes.
-	// svelte-ignore state_referenced_locally
-	let text = $state(value);
+	// The query from the URL, then whatever is typed (the page also re-creates the box with `{#key}`
+	// when the query changes, which resets the menu too).
+	let text = $derived(value);
 	let open = $state(false);
 	let input: HTMLInputElement;
 	let root: HTMLDivElement;
@@ -64,9 +63,10 @@
 	const tabIndex = $derived(TABS.findIndex((t) => t.section === tab));
 	const rows = $derived(gridRows(items.filter((i) => i.section === tab)));
 	const lengths = $derived(rows.map((r) => r.length));
-	let cell = $state<Cell>({ row: 0, col: 0 });
-	let hovered = $state<PickerItem | null>(null);
-	let focused = $state<PickerItem | null>(null);
+	// Raw: replaced, never mutated (and items stay the objects from `items`, not proxies).
+	let cell = $state.raw<Cell>({ row: 0, col: 0 });
+	let hovered = $state.raw<PickerItem | null>(null);
+	let focused = $state.raw<PickerItem | null>(null);
 	const caption = $derived(hovered ?? focused);
 
 	onMount(() => {
@@ -288,7 +288,7 @@
 								onmouseleave={() => (hovered = null)}
 								onkeydown={(e) => onCellKeydown(e, { row: r, col: c })}
 							>
-								<Icon {icons} kind={isBuilding(item) ? 'entity' : 'item'} name={item.name} label="" size={28} />
+								<Icon {icons} signal={item.signal} label="" size={28} />
 								{#if item.n}
 									<span
 										class="absolute right-0 bottom-0 min-w-3.5 rounded-sm bg-stone-950/85 px-0.5 text-center text-[10px] leading-3.5 font-semibold text-amber-300"
@@ -341,7 +341,7 @@
 							}}
 							onmouseenter={() => (active = i)}
 						>
-							<Icon {icons} kind={isBuilding(item) ? 'entity' : 'item'} name={item.name} label={item.label} />
+							<Icon {icons} signal={item.signal} label={item.label} />
 							<span class="min-w-0 flex-1 truncate">
 								{item.label}
 								{#if item.nicknames.some((nick) => nick.includes(text.toLowerCase().trim()))}

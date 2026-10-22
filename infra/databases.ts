@@ -5,8 +5,12 @@
  */
 
 export const PREFIX = 'factorio-prints';
-export const STAGES = ['dev', 'prod'] as const;
+/** Deployed stages. Only prod; add a name here (and its DATABASES entry) for a staging environment. */
+export const STAGES = ['prod'] as const;
 export type Stage = (typeof STAGES)[number];
+
+/** The one sprites bucket (game icons; sprite atlases later). Prod owns it; any other stage links to it. */
+export const SPRITES_BUCKET = `${PREFIX}-sprites`;
 
 /**
  * D1 generations per stage. `bound` is the database the Worker uses as DB. `importTarget`, when
@@ -15,6 +19,5 @@ export type Stage = (typeof STAGES)[number];
  * Keep this in code, not in env vars, so every machine and CI deploy binds the same database.
  */
 export const DATABASES: Record<Stage, { bound: number; importTarget?: number }> = {
-	dev: { bound: 1 },
 	prod: { bound: 1 }
 };

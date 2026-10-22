@@ -6,17 +6,16 @@ import { fail, type Action, type Cookies } from '@sveltejs/kit';
 import { env } from 'cloudflare:workers';
 import { validTimeZone } from '#lib/components/admin/metrics.js';
 import {
+	CONTROL_STATES,
 	HEARTBEAT_MS,
 	isLive,
 	isStale,
+	LIVE_STATES,
 	parseRun,
 	type PipelineRun,
 	type PipelineRunRow,
-	type RunControl,
-	type RunState
+	type RunControl
 } from '#lib/server/pipeline/runs.js';
-
-const LIVE_STATES: RunState[] = ['starting', 'running', 'paused', 'stopping'];
 
 /** The run to show first: the newest one whose heartbeat is fresh, else the newest one at all. */
 export const currentRun = async (db: D1Database, now = Date.now()): Promise<PipelineRun | null> => {
@@ -79,13 +78,6 @@ export const failedPrints = async (db: D1Database, run: PipelineRun, page: numbe
 	const total = (count.results[0] as { n: number } | undefined)?.n ?? 0;
 	const items = (rows.results as (Omit<FailedPrint, 'onSite'> & { onSite: number })[]).map((r) => ({ ...r, onSite: r.onSite === 1 }));
 	return { items, total, page, pages: Math.max(1, Math.ceil(total / FAILED_PAGE)), perPage: FAILED_PAGE };
-};
-
-/** States in which the runner accepts each control. */
-export const CONTROL_STATES: Record<RunControl, RunState[]> = {
-	pause: ['starting', 'running'],
-	resume: ['paused'],
-	stop: ['starting', 'running', 'paused']
 };
 
 /**

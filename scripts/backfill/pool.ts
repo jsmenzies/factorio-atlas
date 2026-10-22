@@ -41,8 +41,6 @@ export class ComputePool {
 	private readonly queue: Job[] = [];
 	private nextJob = 1;
 	private closed = false;
-	/** Workers replaced after a timeout or crash. */
-	replaced = 0;
 
 	constructor(
 		size: number,
@@ -103,7 +101,6 @@ export class ComputePool {
 	/** Replace the slot's worker and reject what it was doing. */
 	private fail(slot: Slot, error: Error) {
 		slot.worker.terminate();
-		this.replaced++;
 		const running = slot.job;
 		slot.job = null;
 		if (!this.closed) this.start(slot);

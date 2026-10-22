@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { loadViewerPage } from '#lib/server/print-pages.js';
+import { renderBase } from '#lib/server/renders.js';
 import type { RequestHandler } from './$types';
 
 /**
@@ -9,5 +10,8 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async ({ params, url }) => {
 	const found = await loadViewerPage(params.id, url.searchParams.get('page'));
 	if (!found) error(404, 'No viewer files');
-	return Response.json({ page: found.page, render: found.render }, { headers: { 'cache-control': 'public, max-age=300' } });
+	return Response.json(
+		{ page: found.page, render: found.render, base: renderBase(params.id), tooltip: found.tooltip },
+		{ headers: { 'cache-control': 'public, max-age=300' } }
+	);
 };

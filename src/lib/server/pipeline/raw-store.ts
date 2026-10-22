@@ -1,7 +1,11 @@
 import { Context, Effect, Layer } from 'effect';
 import { StorageError } from './errors';
 
-/** Content-addressed-ish archive of source records, so analysis can be re-run offline. */
+/**
+ * The RAW bucket: the sanitised source records (`factorioprints/<id>.json`, so analysis can be re-run
+ * without re-downloading), each print's analysis document (`analysis/<id>.json`) and its viewer
+ * files (`viewer/<id>/`).
+ */
 export class RawStore extends Context.Service<
 	RawStore,
 	{

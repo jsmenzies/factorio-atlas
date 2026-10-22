@@ -282,6 +282,8 @@ describe('compute/write split', () => {
 		const upserted = h.writes.upsert;
 		const { plan, outcome } = await viaWorker(h, BOOK_ID, BOOK);
 		expect(plan.kind === 'refresh' && plan.reindex !== null && plan.viewerFiles === null).toBe(true);
+		// The run's decode cap rides along, for the full analysis a missing document falls back to.
+		expect(plan.kind === 'refresh' && plan.reindex?.maxInflatedBytes).toBe(192 << 20);
 		expect(outcome.status).toBe('reindexed');
 		expect(rows()).toEqual(before);
 		expect(new Map(h.r2)).toEqual(r2);

@@ -1,7 +1,8 @@
 /**
  * Where a backfill writes: `local` is the miniflare state `bun run dev` uses (wrangler.jsonc, as
- * scripts/ingest.ts does); `dev` and `prod` are the Alchemy-deployed D1 database and R2 bucket
- * (docs/deploy.md), reached through wrangler's remote bindings with your `wrangler login`.
+ * scripts/ingest.ts does); every other stage (`prod`, and any added to STAGES in infra/databases.ts)
+ * is the Alchemy-deployed D1 database and R2 bucket (docs/deploy.md), reached through wrangler's
+ * remote bindings with your `wrangler login`.
  *
  * For a remote stage this writes a throwaway wrangler config under .wrangler/backfill/ with
  * `remote: true` bindings, and a Node sidecar (remote-bindings.mjs) opens wrangler's remote proxy
@@ -12,10 +13,10 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getPlatformProxy } from 'wrangler';
-import { DATABASES, PREFIX } from '../../infra/databases';
+import { DATABASES, PREFIX, STAGES as DEPLOYED_STAGES, type Stage as DeployedStage } from '../../infra/databases';
 import { openRemoteBindings } from './remote';
 
-export const STAGES = ['local', 'dev', 'prod'] as const;
+export const STAGES = ['local', ...DEPLOYED_STAGES] as const;
 export type Stage = (typeof STAGES)[number];
 
 const ROOT = join(import.meta.dirname, '..', '..');
@@ -73,16 +74,16 @@ export interface Target {
 }
 
 /** The D1 generation the stage's Worker is bound to (infra/databases.ts). `--db <n>` overrides it. */
-export const boundGeneration = (stage: 'dev' | 'prod'): number => DATABASES[stage].bound;
+export const boundGeneration = (stage: DeployedStage): number => DATABASES[stage].bound;
 
-export const resourceNames = (stage: 'dev' | 'prod', generation: number) => ({
+export const resourceNames = (stage: DeployedStage, generation: number) => ({
 	database: `${PREFIX}-${stage}-db-${generation}`,
 	raw: `${PREFIX}-${stage}-raw`,
 	renders: `${PREFIX}-${stage}-renders`
 });
 
 /** The generated wrangler config for a remote stage: only the bindings the backfill uses, all remote. */
-export const remoteConfig = (stage: 'dev' | 'prod', names: ReturnType<typeof resourceNames>, databaseId: string) => ({
+export const remoteConfig = (stage: DeployedStage, names: ReturnType<typeof resourceNames>, databaseId: string) => ({
 	name: `${PREFIX}-${stage}-backfill`,
 	account_id: accountId(),
 	compatibility_date: '2026-10-18',
@@ -115,11 +116,11 @@ const wranglerRetrying = (args: string[]) => {
 const notDeployed = (stage: string, what: string) =>
 	new TargetError(
 		`${what} doesn't exist in Cloudflare account ${accountId()}. Nothing is deployed for "${stage}" yet: ` +
-			`run \`bun run deploy:${stage}\` first (docs/deploy.md), then re-run the backfill.`
+			`run \`bun run deploy:${stage}\` first (docs/deploy.md), then run this command again.`
 	);
 
 /** D1 database id by name (`wrangler d1 list --json`; needs `wrangler login`). */
-export const findDatabaseId = (stage: 'dev' | 'prod', name: string): string => {
+export const findDatabaseId = (stage: DeployedStage, name: string): string => {
 	const r = wranglerRetrying(['d1', 'list', '--json']);
 	const json = r.stdout.slice(r.stdout.indexOf('['));
 	if (!r.ok || !json.startsWith('[')) {
@@ -130,7 +131,7 @@ export const findDatabaseId = (stage: 'dev' | 'prod', name: string): string => {
 	return db.uuid;
 };
 
-export const checkBucket = (stage: 'dev' | 'prod', name: string) => {
+export const checkBucket = (stage: DeployedStage, name: string) => {
 	const r = wranglerRetrying(['r2', 'bucket', 'info', name, '--json']);
 	if (r.ok) return;
 	const text = `${r.stdout}\n${r.stderr}`;
@@ -141,18 +142,19 @@ export const checkBucket = (stage: 'dev' | 'prod', name: string) => {
 /** Fail early, with what to do, when the schema isn't there. */
 const checkSchema = async (stage: Stage, db: D1Database) => {
 	const { results } = await db
-		.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('pipeline_runs', 'ingest_state', 'prints')`)
+		.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('pipeline_runs', 'ingest_state', 'prints', 'print_renders')`)
 		.all<{ name: string }>();
-	if (results.length < 3) {
+	if (results.length < 4) {
+		// print_renders (0015) is the newest table a print's write reads.
 		throw new TargetError(
 			stage === 'local'
-				? 'the local D1 database lacks pipeline_runs/ingest_state: run `bun run db:migrate`'
-				: `the ${stage} D1 database lacks pipeline_runs/ingest_state: deploy applies migrations (\`bun run deploy:${stage}\`)`
+				? 'the local D1 database lacks the latest tables (pipeline_runs, ingest_state, print_renders): run `bun run db:migrate`'
+				: `the ${stage} D1 database lacks the latest tables (pipeline_runs, ingest_state, print_renders): deploy applies migrations (\`bun run deploy:${stage}\`)`
 		);
 	}
 };
 
-export const configPath = (stage: 'dev' | 'prod') => join(ROOT, '.wrangler', 'backfill', `wrangler.${stage}.json`);
+export const configPath = (stage: DeployedStage) => join(ROOT, '.wrangler', 'backfill', `wrangler.${stage}.json`);
 
 /**
  * Resolve and connect to the stage. Remote stages check that the database and bucket exist before

@@ -1,26 +1,22 @@
 import { error } from '@sveltejs/kit';
 import { getRenderFile } from '#lib/server/renders.js';
-import { RENDER_FILE } from '#lib/viewer/game-render.js';
+import { RENDER_FILE, renderCacheControl } from '#lib/viewer/game-render.js';
 import type { RequestHandler } from './$types';
 
 /**
- * Game render images and sidecars: `/prints/<id>/render/<page>.webp|.json`, tiles under
- * `<page>.tiles/<ppt>/<col>-<row>.webp`, and `index.json`. Image URLs carry `?v=<stamp>`
- * from the sidecar, so they can be cached for good; a re-render gets a new stamp.
+ * Game render files: `/prints/<id>/render/<page>.<stamp>.avif|<page>.json|<page>.page.json`, tiles
+ * at `t/<hash>.avif`, and `index.json`. Every image is named by its content (tiles by pixel hash,
+ * overviews by render stamp), so it is cached for good; the JSON files keep their names and are
+ * cached briefly, with the same rules the uploader sets on the bucket's objects.
  */
-export const GET: RequestHandler = async ({ params, url, request }) => {
+export const GET: RequestHandler = async ({ params, request }) => {
 	if (!RENDER_FILE.test(params.file)) error(404, 'Not a render file');
 	const file = await getRenderFile(`${params.id}/${params.file}`);
 	if (!file) error(404, 'No render');
 	if (file.etag && request.headers.get('if-none-match') === file.etag) return new Response(null, { status: 304 });
-	const json = params.file.endsWith('.json');
 	const headers: Record<string, string> = {
-		'content-type': json ? 'application/json' : 'image/webp',
-		'cache-control': json
-			? 'public, max-age=300'
-			: url.searchParams.has('v')
-				? 'public, max-age=31536000, immutable'
-				: 'public, max-age=3600'
+		'content-type': params.file.endsWith('.json') ? 'application/json' : 'image/avif',
+		'cache-control': renderCacheControl(params.file)
 	};
 	if (file.etag) headers.etag = file.etag;
 	return new Response(file.body, { headers });

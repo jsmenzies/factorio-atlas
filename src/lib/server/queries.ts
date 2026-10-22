@@ -1,20 +1,25 @@
-import { slug, versionTokens } from './pipeline/repository';
+import type { MultiFilter } from '#lib/filters.js';
+import { RENDER_TOKEN, slug, versionTokens } from './pipeline/repository';
+
+export { MULTI_FILTERS, type MultiFilter } from '#lib/filters.js';
 
 export interface SearchParams {
 	q: string;
-	makes: string | null;
-	takes: string | null;
-	/** A building, as "entity:<name>" (`?uses=entity:foundry`). Any entity matches, not only the "Built with" list. */
-	uses: string | null;
-	/** A recipe some machine is set to, or a module, by name (`?recipe=electronic-circuit`, `?module=speed-module-3`). */
-	recipe: string | null;
-	module: string | null;
-	version: string | null;
-	/** A raw factorioprints author tag, e.g. "/general/tileable/". */
-	tag: string | null;
+	makes: string[];
+	takes: string[];
+	/** Buildings, as "entity:<name>" (`?uses=entity:foundry`). Any entity matches, not only the "Built with" list. */
+	uses: string[];
+	/** Recipes some machine is set to, or modules, by name (`?recipe=electronic-circuit`, `?module=speed-module-3`). */
+	recipe: string[];
+	module: string[];
+	version: string[];
+	/** Raw factorioprints author tags, e.g. "/general/tileable/". */
+	tag: string[];
 	spaceAge: 'yes' | 'no' | null;
 	circuits: boolean;
 	trains: boolean;
+	/** Only prints with a game render in this stage's bucket (`?render=1`; print_renders, migration 0015). */
+	render: boolean;
 	sort: 'favorites' | 'recent' | 'relevance';
 }
 
@@ -24,23 +29,25 @@ export interface SearchParams {
  */
 export const parseSearch = (url: URL): SearchParams => {
 	const g = (k: string) => url.searchParams.get(k)?.trim() || null;
+	// Every value of a repeated filter, trimmed, blanks and repeats dropped.
+	const all = (k: MultiFilter) => [...new Set(url.searchParams.getAll(k).map((v) => v.trim()))].filter(Boolean);
 	const sa = g('spaceAge');
 	const q = g('q') ?? '';
 	const sort = g('sort');
-	const uses = g('uses');
 	return {
 		q,
-		makes: g('makes'),
-		takes: g('takes'),
+		makes: all('makes'),
+		takes: all('takes'),
 		// A bare name ("foundry") means the entity.
-		uses: uses && !uses.includes(':') ? `entity:${uses}` : uses,
-		recipe: g('recipe'),
-		module: g('module'),
-		version: g('version'),
-		tag: g('tag'),
+		uses: [...new Set(all('uses').map((u) => (u.includes(':') ? u : `entity:${u}`)))],
+		recipe: all('recipe'),
+		module: all('module'),
+		version: all('version'),
+		tag: all('tag'),
 		spaceAge: sa === 'yes' || sa === 'no' ? sa : null,
 		circuits: g('circuits') === '1',
 		trains: g('trains') === '1',
+		render: g('render') === '1',
 		sort: sort === 'recent' || sort === 'favorites' ? sort : q ? 'relevance' : 'favorites'
 	};
 };
@@ -60,17 +67,18 @@ const TEXT_COLUMNS = '{title description labels entities recipes nicknames}';
 /** Filter tokens for the FTS `facets` column (written by `facetTokens` in repository.ts). */
 export const filterTokens = (s: SearchParams): string[] => {
 	const tokens: string[] = [];
-	if (s.makes) tokens.push(`makes_${slug(s.makes)}`);
-	if (s.takes) tokens.push(`takes_${slug(s.takes)}`);
-	if (s.uses) tokens.push(`uses_${slug(s.uses)}`);
-	if (s.recipe) tokens.push(`recipe_${slug(s.recipe) || 'none'}`);
-	if (s.module) tokens.push(`module_${slug(s.module) || 'none'}`);
+	for (const v of s.makes) tokens.push(`makes_${slug(v)}`);
+	for (const v of s.takes) tokens.push(`takes_${slug(v)}`);
+	for (const v of s.uses) tokens.push(`uses_${slug(v)}`);
+	for (const v of s.recipe) tokens.push(`recipe_${slug(v) || 'none'}`);
+	for (const v of s.module) tokens.push(`module_${slug(v) || 'none'}`);
 	// "2.0" matches 2.0.x saves and "2.0" claims; a version that isn't numbers matches nothing.
-	if (s.version) tokens.push(versionTokens(s.version).at(-1) ?? 'v_none');
-	if (s.tag) tokens.push(`tag_${slug(s.tag) || 'none'}`);
+	for (const v of s.version) tokens.push(versionTokens(v).at(-1) ?? 'v_none');
+	for (const v of s.tag) tokens.push(`tag_${slug(v) || 'none'}`);
 	if (s.spaceAge) tokens.push(s.spaceAge === 'yes' ? 'sa_yes' : 'sa_no');
 	if (s.circuits) tokens.push('uses_circuits');
 	if (s.trains) tokens.push('uses_trains');
+	if (s.render) tokens.push(RENDER_TOKEN);
 	return tokens;
 };
 
@@ -102,11 +110,14 @@ export interface PrintCard {
 	claimed_versions: string[];
 	planets: string[];
 	mods: string[];
+	/** 1 when the print has a game render (a print_renders row). */
+	has_render: number;
 }
 
 const CARD = `p.id, p.title, p.author_name, p.favorites, p.image_id, p.image_type, p.updated_at, p.game_version,
 	p.blueprint_count, p.entity_count, p.requires_space_age, p.uses_circuits, p.uses_trains,
-	p.outputs, p.claimed_versions, p.planets, p.mods`;
+	p.outputs, p.claimed_versions, p.planets, p.mods,
+	EXISTS (SELECT 1 FROM print_renders r WHERE r.print_id = p.id) AS has_render`;
 
 /** Title counts most for relevance, then page labels and nicknames (weights by FTS column). */
 const RELEVANCE = 'bm25(print_search, 0, 10, 1, 3, 1, 1, 2, 0)';

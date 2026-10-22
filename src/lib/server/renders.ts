@@ -1,46 +1,60 @@
 /**
- * Game-look render files (scripts/render-game.ts): the RENDERS bucket, or data/renders on
- * disk in dev when the bucket lacks the file (the dev server's platform proxy only picks up
- * new bindings on restart).
+ * Game-look render files (scripts/render-game.ts; layout in #lib/viewer/game-render.ts): in dev
+ * data/renders on disk first (where `bun run render` writes), then the RENDERS bucket; deployed
+ * stages read only the bucket. Sidecars, page data and indexes of another format version count as missing.
+ *
+ * Browsers fetch the images from `renderBase()`: the bucket's custom domain (`RENDERS_URL`) when
+ * deployed with one, through Cloudflare's cache without reaching the Worker; otherwise this site's
+ * `/prints/<id>/render/<file>` route.
  */
 import { dev } from '$app/env';
 import { env } from 'cloudflare:workers';
-import type { RenderSidecar } from '#lib/viewer/game-render.js';
+import { readDataFile } from './dev-files.js';
+import { PAGE_DATA_VERSION, type RenderIndex, type RenderPageData, type RenderSidecar } from '#lib/viewer/game-render.js';
 
 export interface RenderFile {
 	body: ReadableStream;
 	etag?: string;
 }
 
-const fromDisk = async (key: string): Promise<RenderFile | null> => {
-	const { readFile } = await import('node:fs/promises');
-	const { join, normalize } = await import('node:path');
-	const root = join(process.cwd(), 'data', 'renders');
-	const path = normalize(join(root, key));
-	if (!path.startsWith(root)) return null;
-	try {
-		return { body: new Blob([new Uint8Array(await readFile(path))]).stream() };
-	} catch {
-		return null;
-	}
+/** URL prefix of a print's render images (no trailing slash). */
+export const renderBase = (id: string): string => {
+	const url = (env as Partial<Env>).RENDERS_URL?.trim();
+	return url ? `${url.replace(/\/+$/, '')}/${encodeURIComponent(id)}` : `/prints/${encodeURIComponent(id)}/render`;
 };
 
 /** `key` is `<print id>/<file>`; callers check `<file>` against RENDER_FILE first. */
 export async function getRenderFile(key: string): Promise<RenderFile | null> {
+	if (dev) {
+		const file = await readDataFile('renders', key);
+		if (file) return file;
+	}
 	const bucket = (env as Partial<Env>).RENDERS;
 	const obj = bucket ? await bucket.get(key) : null;
-	if (obj) return { body: obj.body, etag: obj.httpEtag };
-	return dev ? fromDisk(key) : null;
+	return obj ? { body: obj.body, etag: obj.httpEtag } : null;
 }
 
-async function getJson<T>(key: string): Promise<T | null> {
-	const file = await getRenderFile(key);
-	if (!file) return null;
+/**
+ * A render JSON file, or null when it's missing, of another version, unreadable or not JSON: a
+ * failed bucket read only hides the render, so the print and render pages still load.
+ */
+async function getJson<T extends { v: number }>(key: string, v: T['v']): Promise<T | null> {
 	try {
-		return (await new Response(file.body).json()) as T;
-	} catch {
+		const file = await getRenderFile(key);
+		if (!file) return null;
+		const json = (await new Response(file.body).json()) as T;
+		return json.v === v ? json : null;
+	} catch (e) {
+		console.warn(`render file ${key}: ${e instanceof Error ? e.message : String(e)}`);
 		return null;
 	}
 }
 
-export const getRenderSidecar = (id: string, base: string) => getJson<RenderSidecar>(`${id}/${base}.json`);
+export const getRenderSidecar = (id: string, base: string) => getJson<RenderSidecar>(`${id}/${base}.json`, 2);
+
+/** A rendered page's entity data for hover tooltips (`<base>.page.json`). */
+export const getRenderPageData = (id: string, base: string) => getJson<RenderPageData>(`${id}/${base}.page.json`, PAGE_DATA_VERSION);
+
+/** Book paths of the print's pages that have a render; empty when it has none or its index can't be read. */
+export const renderedPages = async (id: string): Promise<string[]> =>
+	Object.keys((await getJson<RenderIndex>(`${id}/index.json`, 2))?.pages ?? {});

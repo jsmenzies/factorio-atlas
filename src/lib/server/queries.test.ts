@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { facetText } from './pipeline/repository.js';
-import { parseSearch } from './queries.js';
+import { facetText, RENDER_TOKEN } from './pipeline/repository.js';
+import { filterTokens, parseSearch } from './queries.js';
 
 const sortOf = (search: string) => parseSearch(new URL(`http://x/${search}`)).sort;
 
@@ -29,10 +29,40 @@ describe('parseSearch uses', () => {
 	const usesOf = (search: string) => parseSearch(new URL(`http://x/${search}`)).uses;
 
 	test('takes an entity signal, or a bare entity name', () => {
-		expect(usesOf('?uses=entity:foundry')).toBe('entity:foundry');
-		expect(usesOf('?uses=biolab')).toBe('entity:biolab');
-		expect(usesOf('?uses=')).toBe(null);
-		expect(usesOf('')).toBe(null);
+		expect(usesOf('?uses=entity:foundry')).toEqual(['entity:foundry']);
+		expect(usesOf('?uses=biolab')).toEqual(['entity:biolab']);
+		expect(usesOf('?uses=')).toEqual([]);
+		expect(usesOf('')).toEqual([]);
+		expect(usesOf('?uses=foundry&uses=entity:foundry&uses=beacon')).toEqual(['entity:foundry', 'entity:beacon']);
+	});
+});
+
+describe('parseSearch repeated filters', () => {
+	const of = (search: string) => parseSearch(new URL(`http://x/${search}`));
+
+	test('every value of a filter is kept once, in order, and each becomes a token', () => {
+		const s = of('?makes=item:iron-plate&makes=item:copper-plate&makes=item:iron-plate&makes=&version=2.0&version=1.1');
+		expect(s.makes).toEqual(['item:iron-plate', 'item:copper-plate']);
+		expect(s.version).toEqual(['2.0', '1.1']);
+		expect(filterTokens(s)).toEqual(['makes_item_iron_plate', 'makes_item_copper_plate', 'v_2_0', 'v_1_1']);
+	});
+});
+
+describe('parseSearch render', () => {
+	const of = (search: string) => parseSearch(new URL(`http://x/${search}`));
+
+	test('?render=1 turns it on; anything else leaves it off', () => {
+		expect(of('').render).toBe(false);
+		expect(of('?render=1').render).toBe(true);
+		expect(of('?render=0').render).toBe(false);
+		expect(of('?render=yes').render).toBe(false);
+	});
+
+	test('works with text, sort and other filters', () => {
+		const s = of('?q=smelting&render=1&spaceAge=no&sort=recent&makes=item:iron-plate');
+		expect([s.q, s.render, s.spaceAge, s.sort, s.makes]).toEqual(['smelting', true, 'no', 'recent', ['item:iron-plate']]);
+		expect(of('?render=1').sort).toBe('favorites');
+		expect(filterTokens(of('?render=1&circuits=1'))).toEqual(['uses_circuits', RENDER_TOKEN]);
 	});
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { alignToGrid } from './extract.js';
-import { beltShapes, inserterHands, normalizeDirection, pairUndergrounds, pipeNetwork, railLine, type GeoEntity } from './geometry.js';
+import { beltShapes, inserterHands, normalizeDirection, pairUndergrounds, pipeNetwork, type GeoEntity } from './geometry.js';
 import type { CompactEntity, NameInfo } from './types.js';
 
 const N = 0,
@@ -173,17 +173,5 @@ describe('pre-1.0 half-tile offset', () => {
 		expect(alignToGrid(rows, names)).toEqual([0.5, 0.5]);
 		expect(rows[0][1]).toBe(0.5);
 		expect(rows[0][2]).toBe(0.5);
-	});
-});
-
-describe('rails', () => {
-	test('draw as lines, not boxes', () => {
-		const line = railLine({ kind: 'rail-straight', x: 1, y: 1, dir: E })!;
-		expect(line).toEqual([
-			[2, 1],
-			[0, 1]
-		]);
-		expect(railLine({ kind: 'rail-curve-a', x: 0, y: 0, dir: 3 })!.length).toBeGreaterThan(5);
-		expect(railLine({ kind: 'box', x: 0, y: 0, dir: 0 })).toBe(null);
 	});
 });

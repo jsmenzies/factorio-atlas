@@ -32,7 +32,7 @@ export const BUILDING_TYPES: ReadonlySet<string> = new Set([
 /** A building of those types that a player can place (it has a crafting-menu item; no crash-site props). */
 export const isBuilding = (name: string, game: GameData = gameData) => {
 	const type = game.entities[name]?.type;
-	return type !== undefined && BUILDING_TYPES.has(type) && (game.icons.entityItem[name] ?? name) in game.itemInfo;
+	return type !== undefined && BUILDING_TYPES.has(type) && (game.entityItem[name] ?? name) in game.itemInfo;
 };
 
 /** The buildings among a print's entity names, as `entity:<name>` (the `?uses=` value), sorted. */
@@ -45,4 +45,4 @@ export const buildingsIn = (entities: Iterable<string>, game: GameData = gameDat
 /** Every building, for the picker: entity name, the item that places it (label and game order). */
 export const BUILDINGS: readonly { name: string; item: string }[] = Object.keys(gameData.entities)
 	.filter((n) => isBuilding(n))
-	.map((name) => ({ name, item: gameData.icons.entityItem[name] ?? name }));
+	.map((name) => ({ name, item: gameData.entityItem[name] ?? name }));

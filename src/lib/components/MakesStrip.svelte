@@ -18,7 +18,6 @@
 	}: { main: MadeItem[]; groups: ProductGroup[]; icons: IconSet; active?: string | null; onpick?: (signal: string) => void } = $props();
 
 	let open = $state<string | null>(null);
-	const bare = (s: string) => s.slice(s.indexOf(':') + 1);
 	const tip = (m: MadeItem) =>
 		`${signalName(m.signal)}${m.rate ? `: ${m.claimed ? 'claimed' : 'nameplate estimate'} ${formatRate(m.rate)}` : ': no rate (smelting and mining are not rated yet)'}${
 			m.pages.length > 1 ? `, best of ${m.pages.length} pages` : ''
@@ -38,7 +37,7 @@
 			? 'border-amber-500/70 bg-amber-500/10'
 			: 'border-stone-800 bg-stone-950/60'} {onpick ? 'hover:border-stone-600' : ''}"
 	>
-		<Icon {icons} kind="item" name={bare(m.signal)} label={signalName(m.signal)} size={small ? 18 : 24} />
+		<Icon {icons} signal={m.signal} label={signalName(m.signal)} size={small ? 18 : 24} />
 		<span class="text-stone-200">{signalName(m.signal)}</span>
 		{#if m.rate}<span class="text-emerald-300">{m.claimed ? '' : '≈ '}{formatRate(m.rate)}</span>{/if}
 		{#if m.pages.length > 1}<span class="text-xs text-stone-500">×{m.pages.length}</span>{/if}

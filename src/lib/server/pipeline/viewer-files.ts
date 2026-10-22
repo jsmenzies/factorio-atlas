@@ -1,24 +1,27 @@
 /**
- * The viewer's data, made once at ingest instead of on every view: a page list,
- * each blueprint page's compact entity data, and each page's own exchange string, in R2 under
- * `viewer/<id>/`. Requests then read one small object instead of fetching and inflating the
- * whole raw record (up to 10 MB in, 120 MB out, in a 128 MB isolate).
+ * Per-print files made once at ingest instead of on every view: the page list and each blueprint
+ * page's own exchange string, in R2 under `viewer/<id>/`. Requests then read one small object
+ * instead of fetching and inflating the whole raw record (up to 10 MB in, 120 MB out, in a 128 MB
+ * isolate). The per-page entity data for hover tooltips is made with the game render instead
+ * (scripts/render-game.ts), since only rendered pages have a viewer.
  */
 import { Effect } from 'effect';
-import { gameCatalog } from '#lib/viewer/catalog.server.js';
-import { extractPage, listPages, nodeAt } from '#lib/viewer/extract.js';
+import { listPagesWithNodes } from '#lib/viewer/extract.js';
 import { pageBase } from '#lib/viewer/game-render.js';
-import type { CompactPage, PageRef } from '#lib/viewer/types.js';
+import type { PageRef } from '#lib/viewer/types.js';
 import { encodeExchangeString } from './decode';
 import { StorageError } from './errors';
 import { RawStore } from './raw-store';
 
-/** Bump when extract.ts output changes: re-ingest then rebuilds viewer files without re-analysing. */
-export const VIEWER_VERSION = 1;
+/** Bump when these files change (listPages output, the strings): re-ingest then rebuilds them without re-analysing. */
+export const VIEWER_VERSION = 4;
+/** Up to this version the files also held each page's entity data, at `legacyPageKey`. */
+const LAST_WITH_PAGE_DATA = 3;
 
 export const viewerIndexKey = (id: string) => `viewer/${id}/index.json`;
-export const viewerPageKey = (id: string, path: string) => `viewer/${id}/${pageBase(path)}.json`;
 export const pageStringKey = (id: string, path: string) => `viewer/${id}/${pageBase(path)}.txt`;
+/** Where versions up to 3 kept a page's entity data; only deleted now. */
+export const legacyPageKey = (id: string, path: string) => `viewer/${id}/${pageBase(path)}.json`;
 
 export interface ViewerIndex {
 	v: typeof VIEWER_VERSION;
@@ -26,28 +29,30 @@ export interface ViewerIndex {
 	pages: PageRef[];
 }
 
-const catalog = gameCatalog();
-
 const contentType = (key: string) => (key.endsWith('.txt') ? 'text/plain; charset=utf-8' : 'application/json');
 
 /** Every file for one print, keyed by R2 key. Pure apart from string compression. */
 export const buildViewerFiles = async (id: string, decoded: unknown): Promise<Map<string, string>> => {
-	const pages = listPages(decoded);
+	const { pages, nodes } = listPagesWithNodes(decoded);
 	const files = new Map<string, string>([[viewerIndexKey(id), JSON.stringify({ v: VIEWER_VERSION, pages } satisfies ViewerIndex)]]);
 	for (const p of pages) {
 		if (p.kind !== 'blueprint') continue;
-		const page = extractPage(decoded, p.path, catalog);
-		const node = nodeAt(decoded, p.path);
-		if (!page || !node) continue;
-		files.set(viewerPageKey(id, p.path), JSON.stringify(page satisfies CompactPage));
+		const node = nodes.get(p.path);
+		if (!node) continue;
 		files.set(pageStringKey(id, p.path), await encodeExchangeString({ [node.kind]: node.body }));
 	}
 	return files;
 };
 
-/** The page and string keys an index points at (the index itself excluded). */
-const keysOf = (id: string, pages: readonly PageRef[]) =>
-	pages.filter((p) => p.kind === 'blueprint').flatMap((p) => [viewerPageKey(id, p.path), pageStringKey(id, p.path)]);
+/** The keys an index of `version` points at (the index itself excluded). */
+const keysOf = (id: string, { version, pages }: Previous) =>
+	pages
+		.filter((p) => p.kind === 'blueprint')
+		.flatMap((p) =>
+			version !== null && version <= LAST_WITH_PAGE_DATA
+				? [legacyPageKey(id, p.path), pageStringKey(id, p.path)]
+				: [pageStringKey(id, p.path)]
+		);
 
 /** For readers: the index, or null when it's missing, unreadable or from another VIEWER_VERSION. */
 export const parseViewerIndex = (text: string | null): ViewerIndex | null => {
@@ -60,17 +65,25 @@ export const parseViewerIndex = (text: string | null): ViewerIndex | null => {
 	}
 };
 
+interface Previous {
+	version: number | null;
+	pages: PageRef[];
+}
+
 /**
- * For cleanup: the pages any earlier index listed, whatever its version, so a VIEWER_VERSION
- * bump still finds the files to delete. Unreadable indexes list nothing.
+ * For cleanup: the pages any earlier index listed, and its version, so a VIEWER_VERSION bump still
+ * finds the files to delete. Unreadable indexes list nothing.
  */
-const previousPages = (text: string | null): PageRef[] => {
-	if (text === null) return [];
+const previousPages = (text: string | null): Previous => {
+	if (text === null) return { version: null, pages: [] };
 	try {
-		const pages = (JSON.parse(text) as { pages?: unknown }).pages;
-		return Array.isArray(pages) ? (pages as PageRef[]).filter((p) => typeof p?.path === 'string') : [];
+		const { v, pages } = JSON.parse(text) as { v?: unknown; pages?: unknown };
+		return {
+			version: typeof v === 'number' ? v : null,
+			pages: Array.isArray(pages) ? (pages as PageRef[]).filter((p) => typeof p?.path === 'string') : []
+		};
 	} catch {
-		return [];
+		return { version: null, pages: [] };
 	}
 };
 
@@ -81,10 +94,11 @@ const PUT_CONCURRENCY = 8;
 export type ViewerFiles = ReadonlyMap<string, string>;
 
 /**
- * Store viewer files built by `buildViewerFiles`, and delete pages an earlier version of the print
- * had but this one doesn't. Pages and strings first, the index last, so a reader never sees an
- * index pointing at missing pages. Pages go up a few at a time: a big book has hundreds, and each is
- * a round trip when R2 is remote. Returns the number of objects written.
+ * Store viewer files built by `buildViewerFiles`, and delete files an earlier version of the print
+ * had but this one doesn't (pages it lost; entity data written by VIEWER_VERSION 3 and earlier).
+ * Strings first, the index last, so a reader never sees an index pointing at missing pages. They
+ * go up a few at a time: a big book has hundreds, and each is a round trip when R2 is remote.
+ * Returns the number of objects written.
  */
 export const putViewerFiles = (id: string, files: ViewerFiles) =>
 	Effect.gen(function* () {

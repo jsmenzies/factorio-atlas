@@ -5,7 +5,7 @@ import { DLC_MODS, gameData as defaultGameData, type GameData, type SurfaceCondi
  * Bump when the analyzer's output changes so stored prints can be re-analyzed
  * from the raw store without re-downloading.
  */
-export const ANALYZER_VERSION = 6;
+export const ANALYZER_VERSION = 7;
 
 // Game facts (names, sizes, recipes, surface conditions) come from `game-data.ts`, pinned to
 // one game version. Older prints are renamed to 2.0 names first; newer ones may have names
@@ -204,7 +204,7 @@ export interface NodeAnalysis {
 
 export interface PrintAnalysis {
 	analyzerVersion: number;
-	/** Game data the analysis used, e.g. "2.0.55". */
+	/** Game data the analysis used, e.g. "2.0.77". */
 	gameDataVersion: string;
 	rootKind: NodeKind;
 	gameVersion: string | null;

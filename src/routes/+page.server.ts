@@ -1,18 +1,17 @@
 import { env } from 'cloudflare:workers';
 import { nicknamesFor } from '#lib/aliases.js';
+import { retryBusy } from '#lib/server/admin/busy.js';
 import { BUILDINGS } from '#lib/server/pipeline/buildings.js';
 import { gameData } from '#lib/server/pipeline/game-data.js';
 import { parseSearch, searchPrints } from '#lib/server/queries.js';
 import { iconSet } from '#lib/server/icon-set.js';
-import { sectionOf, type PickerItem } from '#lib/picker.js';
+import { sectionOf, TABS, type PickerItem } from '#lib/picker.js';
 import type { PageServerLoad } from './$types';
-
-/** "item:electronic-circuit" → "electronic-circuit" */
-const bare = (signal: string) => signal.slice(signal.indexOf(':') + 1);
 
 export const load: PageServerLoad = async ({ url }) => {
 	const params = parseSearch(url);
-	const found = await searchPrints(env.DB, params);
+	// One batch; locally a render or backfill run can hold the database's lock for a moment (busy.ts).
+	const found = await retryBusy(() => searchPrints(env.DB, params));
 	const makes = Object.fromEntries(found.facets.makes.map((f) => [f.value, f.n]));
 	const uses = Object.fromEntries(found.facets.uses.map((f) => [f.value, f.n]));
 
@@ -39,15 +38,21 @@ export const load: PageServerLoad = async ({ url }) => {
 		});
 	}
 
-	const names = new Set([
-		...picker.map((p) => p.name),
-		...found.results.flatMap((r) => r.outputs.map(bare)),
-		...(params.module ? [params.module] : [])
-	]);
-	// Filter chips can name any entity or recipe, not only the listed ones.
-	const entities = [...BUILDINGS.map((b) => b.name), ...(params.uses ? [bare(params.uses)] : [])];
+	// The picker's items and tabs, results' outputs, facets, and filter chips (which can name anything).
 	const icons = iconSet(
-		{ item: names, entity: entities, recipe: params.recipe ? [params.recipe] : [] },
+		{
+			item: [...TABS.map((t) => t.icon), ...params.module],
+			recipe: params.recipe,
+			signals: [
+				...picker.map((p) => p.signal),
+				...found.results.flatMap((r) => r.outputs),
+				...found.facets.makes.map((f) => f.value),
+				...found.facets.uses.map((f) => f.value),
+				...params.makes,
+				...params.takes,
+				...params.uses
+			]
+		},
 		found.results.map((r) => r.title)
 	);
 	return { params, ...found, icons, picker };

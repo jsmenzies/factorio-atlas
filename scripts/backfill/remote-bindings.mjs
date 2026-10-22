@@ -1,5 +1,5 @@
 /**
- * Node sidecar that holds wrangler's remote bindings (D1 + R2) for `bun run backfill --stage dev|prod`
+ * Node sidecar that holds wrangler's remote bindings (D1 + R2) for `bun run backfill --stage prod`
  * and serves them to the Bun parent over loopback HTTP (scripts/backfill/remote.ts is the client).
  *
  * Why: under Bun, wrangler's remote proxy session never comes up. Its ProxyController talks to the

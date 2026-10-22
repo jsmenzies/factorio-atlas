@@ -68,17 +68,24 @@ const isPole = (n: string) => /pole|substation/.test(n);
 const isSignal = (n: string) => /signal/.test(n);
 const isRollingStock = (n: string) => /locomotive|wagon/.test(n);
 
+/** What `describeCategory` says beyond entity counts. */
+interface CategoryContext {
+	beltThroughput?: number | null;
+	trainStops?: string[];
+	wires?: { red: number; green: number };
+	signs?: number;
+}
+
+/** One page's context; `beltThroughput` is passed in, since page rows leave it out. */
+const nodeContext = (n: NodeAnalysis, beltThroughput: number | null): CategoryContext => ({
+	beltThroughput,
+	trainStops: n.trainStops.flatMap((s) => (s.name ? [s.name] : [])),
+	wires: n.wires,
+	signs: n.signs
+});
+
 /** Infra headline for one category, shared by page rows and print cards. */
-export const describeCategory = (
-	cat: Category,
-	c: Partial<Record<Category, Counts>>,
-	extra: {
-		beltThroughput?: number | null;
-		trainStops?: string[];
-		wires?: { red: number; green: number };
-		signs?: number;
-	}
-): string => {
+export const describeCategory = (cat: Category, c: Partial<Record<Category, Counts>>, extra: CategoryContext): string => {
 	const counts = c[cat];
 	switch (cat) {
 		case 'belts': {
@@ -129,12 +136,7 @@ export const describeCategory = (
 /** What one page does. `withRate` adds the estimate, for places with no separate rate column. */
 export const describeNode = (n: NodeAnalysis, { withRate = false } = {}): string => {
 	// Belt speed repeats on every row of a belt book, so rows leave it to the Belts card.
-	const ctx = {
-		beltThroughput: withRate ? n.beltThroughput : null,
-		trainStops: n.trainStops.flatMap((s) => (s.name ? [s.name] : [])),
-		wires: n.wires,
-		signs: n.signs
-	};
+	const ctx = nodeContext(n, withRate ? n.beltThroughput : null);
 	switch (n.role) {
 		case 'production': {
 			if (!n.outputs.length) {
@@ -186,12 +188,7 @@ export const describePrint = (a: PrintAnalysis): string => {
 
 /** Infra categories worth a card for this print, in display order, with their headline. */
 export const infraCards = (a: PrintAnalysis): { cat: Category; title: string; headline: string }[] => {
-	const ctx = {
-		beltThroughput: a.beltThroughput,
-		trainStops: a.trainStops,
-		wires: a.wires,
-		signs: a.signs
-	};
+	const ctx: CategoryContext = { beltThroughput: a.beltThroughput, trainStops: a.trainStops, wires: a.wires, signs: a.signs };
 	const c = a.byCategory;
 	const cards: { cat: Category; title: string; show: boolean }[] = [
 		{ cat: 'belts', title: 'Belts', show: !!c.belts },
@@ -340,12 +337,7 @@ export const describeBook = (a: PrintAnalysis): string => {
 
 /** One page's infra in short lines ("Belts: 75 belts · 12 splitters"), for the selected-page panel. */
 export const pageInfra = (n: NodeAnalysis): { title: string; text: string }[] => {
-	const ctx = {
-		beltThroughput: n.beltThroughput,
-		trainStops: n.trainStops.flatMap((s) => (s.name ? [s.name] : [])),
-		wires: n.wires,
-		signs: n.signs
-	};
+	const ctx = nodeContext(n, n.beltThroughput);
 	const c = n.byCategory;
 	return (
 		[

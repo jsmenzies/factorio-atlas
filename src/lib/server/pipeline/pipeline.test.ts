@@ -1,15 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { Effect, Layer } from 'effect';
 import { fixtureRecord } from '#lib/server/fixtures.js';
-import { gameCatalog } from '#lib/viewer/catalog.server.js';
-import { extractPage, listPages, nodeAt } from '#lib/viewer/extract.js';
+import { listPages, nodeAt } from '#lib/viewer/extract.js';
 import { ANALYZER_VERSION } from './analyze';
 import { decodeExchangeString, encodeExchangeString } from './decode';
 import { gameData } from './game-data';
 import { ingestText, type IngestOptions } from './pipeline';
 import { RawStore } from './raw-store';
 import { INDEX_VERSION, PrintRepository, type IngestState, type StoredPrint } from './repository';
-import { pageStringKey, parseViewerIndex, VIEWER_VERSION, viewerIndexKey, viewerPageKey } from './viewer-files';
+import { legacyPageKey, pageStringKey, parseViewerIndex, VIEWER_VERSION, viewerIndexKey } from './viewer-files';
 
 /** A small real print (1 blueprint), from the mirror (see ../fixtures.ts). */
 const ID = '-KYpTULTDIvDOsJfgjeS';
@@ -37,6 +36,8 @@ const harness = (id = ID) => {
 	let lastUpsert: StoredPrint | null = null;
 	/** R2: raw archive puts are counted; analysis documents are kept so the favourites patch can read them. */
 	const r2 = new Map<string, string>();
+	/** Every key a delete was sent for, whether or not it existed. */
+	const deleted: string[] = [];
 	const layer = Layer.mergeAll(
 		Layer.succeed(RawStore, {
 			put: (key, body) =>
@@ -49,6 +50,7 @@ const harness = (id = ID) => {
 			get: (key) => Effect.succeed(r2.get(key) ?? null),
 			delete: (key) =>
 				Effect.sync(() => {
+					deleted.push(key);
 					if (key.startsWith('viewer/') && r2.has(key)) viewer.deletes++;
 					r2.delete(key);
 				})
@@ -105,7 +107,7 @@ const harness = (id = ID) => {
 		Effect.runPromise(ingestText(id, text, 'test', options).pipe(Effect.provide(layer)));
 	/** Every viewer object stored for the print. */
 	const viewerKeys = () => [...r2.keys()].filter((k) => k.startsWith(`viewer/${id}/`)).sort();
-	return { run, writes, viewer, states, doc, r2, viewerKeys, analysisPuts: () => analysisPuts, lastUpsert: () => lastUpsert };
+	return { run, writes, viewer, states, doc, r2, deleted, viewerKeys, analysisPuts: () => analysisPuts, lastUpsert: () => lastUpsert };
 };
 
 describe('ingestText change detection', () => {
@@ -152,7 +154,7 @@ describe('ingestText change detection', () => {
 		expect((await h.run(FIXTURE)).status).toBe('analysed');
 		expect(h.writes).toEqual({ rawPuts: 1, upserts: 3, failures: 0, favorites: 0 });
 		// The content didn't change and the viewer files are current, so they aren't rewritten.
-		expect(h.viewer).toEqual({ puts: 3, deletes: 0, versions: 0 });
+		expect(h.viewer).toEqual({ puts: 2, deletes: 0, versions: 0 });
 	});
 
 	test('--force re-analyses an unchanged record', async () => {
@@ -233,7 +235,7 @@ describe('re-index (INDEX_VERSION)', () => {
 		// One upsert; no archive, analysis document or viewer writes.
 		expect(h.writes).toEqual({ rawPuts: 1, upserts: 2, failures: 0, favorites: 0 });
 		expect(h.analysisPuts()).toBe(1);
-		expect(h.viewer).toEqual({ puts: 19, deletes: 0, versions: 0 });
+		expect(h.viewer).toEqual({ puts: 10, deletes: 0, versions: 0 });
 		expect(new Map(h.r2)).toEqual(before);
 		expect((await h.run(BOOK)).status).toBe('unchanged');
 		expect(h.writes.upserts).toBe(2);
@@ -254,7 +256,7 @@ describe('re-index (INDEX_VERSION)', () => {
 		const h = harness();
 		await h.run(FIXTURE);
 		h.states.set(ID, { ...h.states.get(ID)!, viewerVersion: VIEWER_VERSION - 1, indexVersion: null });
-		expect(await h.run(FIXTURE)).toEqual({ status: 'reindexed', id: ID, rowsWritten: 0, viewerFiles: 3 });
+		expect(await h.run(FIXTURE)).toEqual({ status: 'reindexed', id: ID, rowsWritten: 0, viewerFiles: 2 });
 		expect(h.states.get(ID)?.viewerVersion).toBe(VIEWER_VERSION);
 		expect(h.states.get(ID)?.indexVersion).toBe(INDEX_VERSION);
 		expect((await h.run(FIXTURE)).status).toBe('unchanged');
@@ -273,7 +275,7 @@ describe('re-index (INDEX_VERSION)', () => {
 });
 
 describe('viewer files', () => {
-	test('match live extractPage output, with every node listed in book order', async () => {
+	test('list every node in book order, with a string per blueprint and no entity data', async () => {
 		const h = harness(BOOK_ID);
 		const outcome = await h.run(BOOK);
 		expect(outcome.status).toBe('analysed');
@@ -282,12 +284,9 @@ describe('viewer files', () => {
 		expect(parseViewerIndex(h.r2.get(viewerIndexKey(BOOK_ID)) ?? null)).toEqual({ v: VIEWER_VERSION, pages });
 		const blueprints = pages.filter((p) => p.kind === 'blueprint');
 		expect(blueprints.length).toBe(9);
-		for (const p of blueprints) {
-			expect(JSON.parse(h.r2.get(viewerPageKey(BOOK_ID, p.path))!)).toEqual(extractPage(decoded, p.path, gameCatalog()));
-		}
-		// Index, plus a page and a string per blueprint; nothing for the book node itself.
-		expect(h.viewerKeys().length).toBe(1 + 2 * 9);
-		expect(outcome.status === 'analysed' && outcome.viewerFiles).toBe(19);
+		// Index, plus a string per blueprint; nothing for the book node itself. Entity data comes with the render.
+		expect(h.viewerKeys()).toEqual([viewerIndexKey(BOOK_ID), ...blueprints.map((p) => pageStringKey(BOOK_ID, p.path))].sort());
+		expect(outcome.status === 'analysed' && outcome.viewerFiles).toBe(10);
 	});
 
 	test("each page's string decodes back to that page's body", async () => {
@@ -303,7 +302,7 @@ describe('viewer files', () => {
 	test('a single blueprint is stored as the root page', async () => {
 		const h = harness();
 		await h.run(FIXTURE);
-		expect(h.viewerKeys()).toEqual([`viewer/${ID}/index.json`, `viewer/${ID}/root.json`, `viewer/${ID}/root.txt`]);
+		expect(h.viewerKeys()).toEqual([`viewer/${ID}/index.json`, `viewer/${ID}/root.txt`]);
 	});
 
 	test('a VIEWER_VERSION bump rebuilds only the viewer files', async () => {
@@ -314,15 +313,40 @@ describe('viewer files', () => {
 		h.states.set(BOOK_ID, { ...h.states.get(BOOK_ID)!, viewerVersion: VIEWER_VERSION - 1 });
 		h.r2.set(viewerIndexKey(BOOK_ID), JSON.stringify({ ...JSON.parse(before.get(viewerIndexKey(BOOK_ID))!), v: VIEWER_VERSION - 1 }));
 		h.viewer.puts = 0;
-		expect(await h.run(BOOK)).toEqual({ status: 'viewer', id: BOOK_ID, viewerFiles: 19 });
+		expect(await h.run(BOOK)).toEqual({ status: 'viewer', id: BOOK_ID, viewerFiles: 10 });
 		expect(h.writes).toEqual({ rawPuts: 1, upserts: 1, failures: 0, favorites: 0 });
 		expect(h.analysisPuts()).toBe(1);
-		expect(h.viewer).toEqual({ puts: 19, deletes: 0, versions: 1 });
+		expect(h.viewer).toEqual({ puts: 10, deletes: 0, versions: 1 });
 		expect(h.states.get(BOOK_ID)?.viewerVersion).toBe(VIEWER_VERSION);
 		expect(new Map(h.r2)).toEqual(before);
 		// Up to date again.
 		expect((await h.run(BOOK)).status).toBe('unchanged');
-		expect(h.viewer).toEqual({ puts: 19, deletes: 0, versions: 1 });
+		expect(h.viewer).toEqual({ puts: 10, deletes: 0, versions: 1 });
+	});
+
+	test('rebuilding files from version 3 deletes the per-page entity data it kept', async () => {
+		const h = harness(BOOK_ID);
+		await h.run(BOOK);
+		const before = new Map(h.r2);
+		const blueprints = parseViewerIndex(before.get(viewerIndexKey(BOOK_ID))!)!.pages.filter((p) => p.kind === 'blueprint');
+		// As version 3 left them: an index of that version, and an entity-data JSON per page.
+		h.states.set(BOOK_ID, { ...h.states.get(BOOK_ID)!, viewerVersion: 3 });
+		h.r2.set(viewerIndexKey(BOOK_ID), JSON.stringify({ ...JSON.parse(before.get(viewerIndexKey(BOOK_ID))!), v: 3 }));
+		for (const p of blueprints) h.r2.set(legacyPageKey(BOOK_ID, p.path), '{}');
+		expect(h.viewerKeys().length).toBe(1 + 2 * 9);
+		expect(await h.run(BOOK)).toEqual({ status: 'viewer', id: BOOK_ID, viewerFiles: 10 });
+		expect(h.viewer.deletes).toBe(9);
+		expect(new Map(h.r2)).toEqual(before);
+	});
+
+	test('after an index of this version, a rebuild sends no deletes for entity data', async () => {
+		const h = harness(BOOK_ID);
+		await h.run(BOOK);
+		const seen = h.viewerKeys();
+		h.states.set(BOOK_ID, { ...h.states.get(BOOK_ID)!, viewerVersion: null });
+		expect((await h.run(BOOK)).status).toBe('viewer');
+		expect(h.viewerKeys()).toEqual(seen);
+		expect(h.deleted).toEqual([]);
 	});
 
 	test('a print with no viewer files yet gets them, and its favourites still update', async () => {
@@ -331,7 +355,7 @@ describe('viewer files', () => {
 		for (const k of h.viewerKeys()) h.r2.delete(k);
 		h.states.set(ID, { ...h.states.get(ID)!, viewerVersion: null });
 		expect((await h.run(withRecord((r) => (r.numberOfFavorites = 4242)))).status).toBe('viewer');
-		expect(h.viewerKeys().length).toBe(3);
+		expect(h.viewerKeys().length).toBe(2);
 		expect(h.writes).toEqual({ rawPuts: 1, upserts: 1, failures: 0, favorites: 1 });
 		expect(h.doc()?.print.favorites).toBe(4242);
 	});
@@ -346,16 +370,14 @@ describe('viewer files', () => {
 		expect((await h.run(smaller)).status).toBe('analysed');
 		const pages = parseViewerIndex(h.r2.get(viewerIndexKey(BOOK_ID)) ?? null)!.pages.filter((p) => p.kind === 'blueprint');
 		expect(pages.length).toBe(3);
-		expect(h.viewerKeys()).toEqual(
-			[viewerIndexKey(BOOK_ID), ...pages.flatMap((p) => [viewerPageKey(BOOK_ID, p.path), pageStringKey(BOOK_ID, p.path)])].sort()
-		);
-		expect(h.viewer.deletes).toBe(2 * 6);
+		expect(h.viewerKeys()).toEqual([viewerIndexKey(BOOK_ID), ...pages.map((p) => pageStringKey(BOOK_ID, p.path))].sort());
+		expect(h.viewer.deletes).toBe(6);
 	});
 
 	test('a print that stops decoding loses its viewer files', async () => {
 		const h = harness(BOOK_ID);
 		await h.run(BOOK);
-		expect(h.viewerKeys().length).toBe(19);
+		expect(h.viewerKeys().length).toBe(10);
 		expect((await h.run(withRecord((r) => (r.blueprintString = '0eNotAValidZlibStream'), BOOK))).status).toBe('failed');
 		expect(h.viewerKeys()).toEqual([]);
 		expect(h.doc()).toBe(null);

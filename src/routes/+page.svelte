@@ -2,29 +2,42 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import Icon from '#lib/components/Icon.svelte';
-	import RichText from '#lib/components/RichText.svelte';
 	import SearchBox from '#lib/components/SearchBox.svelte';
-	import type { IconKind } from '#lib/icons.js';
+	import ResultCard from '#lib/components/search/ResultCard.svelte';
+	import RenderToggle from '#lib/components/search/RenderToggle.svelte';
+	import SearchFacets from '#lib/components/search/SearchFacets.svelte';
 	import { pickParam, type PickerItem } from '#lib/picker.js';
-	import { imgurUrl, signalName } from '#lib/format.js';
+	import { signalName } from '#lib/format.js';
 	import { parseTag } from '#lib/tags.js';
+	import { MULTI_FILTERS } from '#lib/filters.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 
-	/** Link to the current search with one param set (or cleared when it already has that value). */
+	const multi = new Set<string>(MULTI_FILTERS);
+	/**
+	 * Link to the current search with one filter value toggled. Filters that take several values
+	 * (makes, uses, version, …) add it to the ones already set, so each click narrows the results;
+	 * the rest (Space Age, sort, …) hold one value and switch to it.
+	 */
 	const toggle = (key: string, value: string) => {
 		const u = new URL(page.url.href);
-		if (u.searchParams.get(key) === value) u.searchParams.delete(key);
-		else u.searchParams.set(key, value);
+		const had = u.searchParams.getAll(key);
+		u.searchParams.delete(key);
+		if (multi.has(key)) for (const v of had.includes(value) ? had.filter((v) => v !== value) : [...had, value]) u.searchParams.append(key, v);
+		else if (!had.includes(value)) u.searchParams.set(key, value);
 		return `${u.pathname}${u.search}`;
 	};
-	const active = (key: string, value: string) => page.url.searchParams.get(key) === value;
+	const active = (key: string, value: string) => page.url.searchParams.getAll(key).includes(value);
 
-	/** Picking an item filters to prints that make it (a building: that use it); the typed text only found it, so drop it. */
+	/**
+	 * Picking an item adds a filter to prints that make it (a building: that use it), next to the
+	 * filters already set; the typed text only found it, so drop it.
+	 */
 	const pickItem = (item: PickerItem) => {
 		const u = new URL(page.url.href);
-		u.searchParams.set(pickParam(item), item.signal);
+		const key = pickParam(item);
+		if (!u.searchParams.getAll(key).includes(item.signal)) u.searchParams.append(key, item.signal);
 		u.searchParams.delete('q');
 		// Best match needs text to match; without it the default sort applies.
 		if (u.searchParams.get('sort') === 'relevance') u.searchParams.delete('sort');
@@ -39,91 +52,55 @@
 		] as [string, string][]
 	);
 	const itemLabel = (signal: string) => data.picker.find((p) => p.signal === signal)?.label ?? signalName(signal);
-	const bare = (signal: string) => signal.slice(signal.indexOf(':') + 1);
 
-	/** Every active filter as a removable tag; clicking one clears just that filter. */
-	const chips = $derived(
-		(
-			[
-				data.params.makes && { key: 'makes', value: data.params.makes, label: itemLabel(data.params.makes), icon: bare(data.params.makes) },
-				data.params.takes && { key: 'takes', value: data.params.takes, label: `Takes ${itemLabel(data.params.takes)}`, icon: bare(data.params.takes) },
-				data.params.uses && { key: 'uses', value: data.params.uses, label: `Uses ${itemLabel(data.params.uses)}`, icon: bare(data.params.uses), kind: 'entity' },
-				data.params.recipe && { key: 'recipe', value: data.params.recipe, label: `Recipe ${signalName(data.params.recipe)}`, icon: data.params.recipe, kind: 'recipe' },
-				data.params.module && { key: 'module', value: data.params.module, label: `Module ${signalName(data.params.module)}`, icon: data.params.module },
-				data.params.version && { key: 'version', value: data.params.version, label: `Factorio ${data.params.version}` },
-				data.params.tag && { key: 'tag', value: data.params.tag, label: parseTag(data.params.tag).label },
-				data.params.spaceAge && { key: 'spaceAge', value: data.params.spaceAge, label: data.params.spaceAge === 'yes' ? 'Space Age' : 'No Space Age needed' },
-				data.params.circuits && { key: 'circuits', value: '1', label: 'Uses circuits' },
-				data.params.trains && { key: 'trains', value: '1', label: 'Uses trains' }
-			] as const
-		).filter((c) => !!c) as { key: string; value: string; label: string; icon?: string; kind?: IconKind }[]
-	);
+	/** Every active filter value as a removable tag; clicking one clears just that value. */
+	type Chip = { key: string; value: string; label: string; icon?: string };
+	const chips = $derived<Chip[]>([
+		...data.params.makes.map((v) => ({ key: 'makes', value: v, label: itemLabel(v), icon: v })),
+		...data.params.takes.map((v) => ({ key: 'takes', value: v, label: `Takes ${itemLabel(v)}`, icon: v })),
+		...data.params.uses.map((v) => ({ key: 'uses', value: v, label: `Uses ${itemLabel(v)}`, icon: v })),
+		...data.params.recipe.map((v) => ({ key: 'recipe', value: v, label: `Recipe ${signalName(v)}`, icon: `recipe:${v}` })),
+		...data.params.module.map((v) => ({ key: 'module', value: v, label: `Module ${signalName(v)}`, icon: `item:${v}` })),
+		...data.params.version.map((v) => ({ key: 'version', value: v, label: `Factorio ${v}` })),
+		...data.params.tag.map((v) => ({ key: 'tag', value: v, label: parseTag(v).label })),
+		...(data.params.spaceAge
+			? [{ key: 'spaceAge', value: data.params.spaceAge, label: data.params.spaceAge === 'yes' ? 'Space Age' : 'No Space Age needed' }]
+			: []),
+		...(data.params.circuits ? [{ key: 'circuits', value: '1', label: 'Uses circuits' }] : []),
+		...(data.params.trains ? [{ key: 'trains', value: '1', label: 'Uses trains' }] : []),
+		...(data.params.render ? [{ key: 'render', value: '1', label: 'Has a render' }] : [])
+	]);
 </script>
 
 <!-- Enter submits (the input is type="search"); the active filters and sort ride along as hidden inputs. -->
-<form method="GET" role="search" class="mb-6 flex">
+<form method="GET" role="search" class="mb-6 flex gap-2">
 	{#key data.params.q}
 		<SearchBox value={data.params.q} items={data.picker} icons={data.icons} onpick={pickItem} />
 	{/key}
-	{#each ['makes', 'takes', 'uses', 'recipe', 'module', 'version', 'tag', 'spaceAge', 'circuits', 'trains', 'sort'] as key (key)}
-		{#if page.url.searchParams.get(key)}
-			<input type="hidden" name={key} value={page.url.searchParams.get(key)} />
-		{/if}
+	<RenderToggle on={data.params.render} href={toggle('render', '1')} />
+	{#each [...MULTI_FILTERS, 'spaceAge', 'circuits', 'trains', 'render', 'sort'] as key (key)}
+		{#each page.url.searchParams.getAll(key).filter(Boolean) as value, i (i)}
+			<input type="hidden" name={key} {value} />
+		{/each}
 	{/each}
 </form>
 
 <div class="grid gap-6 md:grid-cols-[16rem_1fr]">
-	<aside class="space-y-6 text-sm">
-		{#snippet facet(title: string, key: string, items: { value: string; n: number }[], label: (v: string) => string, icon: IconKind | null = null)}
-			<section>
-				<h2 class="mb-2 text-xs font-semibold tracking-wide text-stone-400 uppercase">{title}</h2>
-				{#if items.length === 0}
-					<p class="text-stone-600">—</p>
-				{/if}
-				<ul class="space-y-0.5">
-					{#each items as f (f.value)}
-						<li>
-							<a
-								href={toggle(key, f.value)}
-								class="flex items-center gap-2 rounded px-2 py-0.5 hover:bg-stone-800 {active(key, f.value)
-									? 'bg-amber-500/15 text-amber-300'
-									: ''}"
-							>
-								{#if icon}
-									<Icon icons={data.icons} kind={icon} name={f.value.slice(f.value.indexOf(':') + 1)} label={label(f.value)} size={18} />
-								{/if}
-								<span class="min-w-0 flex-1 truncate">{label(f.value)}</span><span class="text-stone-500">{f.n}</span>
-							</a>
-						</li>
-					{/each}
-				</ul>
-			</section>
-		{/snippet}
-
-		{@render facet('Makes', 'makes', data.facets.makes.slice(0, 25), signalName, 'item')}
-		{@render facet('Built with', 'uses', data.facets.uses.slice(0, 25), itemLabel, 'entity')}
-		{@render facet('Game version', 'version', data.facets.versions, (v) => v)}
-
-		<section>
-			<h2 class="mb-2 text-xs font-semibold tracking-wide text-stone-400 uppercase">Features</h2>
-			<ul class="space-y-0.5">
-				{#each [['spaceAge', 'no', 'No Space Age needed'], ['spaceAge', 'yes', 'Space Age'], ['circuits', '1', 'Uses circuits'], ['trains', '1', 'Uses trains']] as [k, v, l] (k + v)}
-					<li>
-						<a
-							href={toggle(k, v)}
-							class="block rounded px-2 py-0.5 hover:bg-stone-800 {active(k, v) ? 'bg-amber-500/15 text-amber-300' : ''}"
-							>{l}</a
-						>
-					</li>
-				{/each}
-			</ul>
-		</section>
-	</aside>
+	<SearchFacets
+		makes={data.facets.makes}
+		uses={data.facets.uses}
+		versions={data.facets.versions}
+		makesLabel={signalName}
+		usesLabel={itemLabel}
+		{toggle}
+		{active}
+		icons={data.icons}
+	/>
 
 	<section>
 		{#if chips.length}
 			<div class="mb-3 flex flex-wrap gap-2 text-sm">
-				{#each chips as c (c.key)}
+				{#each chips as c (`${c.key}=${c.value}`)}
 					<a
 						href={toggle(c.key, c.value)}
 						class="flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 py-0.5 pr-3 text-amber-200 hover:bg-amber-500/20 {c.icon
@@ -131,7 +108,7 @@
 							: 'pl-3'}"
 						aria-label="Remove filter: {c.label}"
 					>
-						{#if c.icon}<Icon icons={data.icons} kind={c.kind ?? 'item'} name={c.icon} label="" size={20} />{/if}
+						{#if c.icon}<Icon icons={data.icons} signal={c.icon} label="" size={20} />{/if}
 						{c.label} <span class="text-amber-400">×</span>
 					</a>
 				{/each}
@@ -174,59 +151,7 @@
 		{/if}
 		<ul class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
 			{#each data.results as p (p.id)}
-				<li class="overflow-hidden rounded-lg border border-stone-800 bg-stone-900 hover:border-stone-600">
-					<a href="/prints/{p.id}" class="block">
-						{#if p.image_id}
-							<img
-								src={imgurUrl(p.image_id, p.image_type)}
-								alt=""
-								loading="lazy"
-								class="aspect-video w-full bg-stone-800 object-cover"
-							/>
-						{/if}
-						<div class="space-y-2 p-3">
-							<h3 class="leading-snug font-medium text-stone-100"><RichText text={p.title} icons={data.icons} size={18} /></h3>
-							<p class="text-xs text-stone-500">
-								{p.author_name ?? 'unknown author'} · ★ {p.favorites} · {p.blueprint_count} blueprint{p.blueprint_count === 1
-									? ''
-									: 's'} · {p.entity_count} entities
-							</p>
-						</div>
-					</a>
-					<!-- Outside the card link: version and Space Age badges are filter links of their own. -->
-					<div class="space-y-2 px-3 pb-3">
-							<div class="flex flex-wrap gap-1 text-xs">
-								{#if p.game_version}<a
-										href={toggle('version', p.game_version)}
-										title="Filter by Factorio {p.game_version}"
-										class="rounded bg-stone-800 px-1.5 py-0.5 hover:bg-stone-700 {active('version', p.game_version) ? 'ring-1 ring-amber-500' : ''}"
-										>saved in {p.game_version}</a
-									>{/if}
-								{#each p.claimed_versions as v (v)}<a
-										href={toggle('version', v)}
-										title="Filter by Factorio {v}"
-										class="rounded bg-sky-900/50 px-1.5 py-0.5 text-sky-300 hover:bg-sky-800/60 {active('version', v) ? 'ring-1 ring-amber-500' : ''}"
-										>{v}</a
-									>{/each}
-								{#if p.requires_space_age}<a
-										href={toggle('spaceAge', 'yes')}
-										title="Filter by Space Age"
-										class="rounded bg-violet-900/60 px-1.5 py-0.5 text-violet-300 hover:bg-violet-800/60 {active('spaceAge', 'yes') ? 'ring-1 ring-amber-500' : ''}"
-										>Space Age</a
-									>{/if}
-								{#each p.planets as pl (pl)}<span class="rounded bg-emerald-900/50 px-1.5 py-0.5 text-emerald-300">{pl}</span>{/each}
-								{#each p.mods as m (m)}<span class="rounded bg-rose-900/50 px-1.5 py-0.5 text-rose-300">{m}</span>{/each}
-							</div>
-							{#if p.outputs.length}
-								<p class="flex flex-wrap items-center gap-1 text-xs text-stone-400">
-									{#each p.outputs.slice(0, 8) as o (o)}
-										<Icon icons={data.icons} kind="item" name={o.slice(o.indexOf(':') + 1)} label={signalName(o)} size={20} />
-									{/each}
-									{#if p.outputs.length > 8}<span>+{p.outputs.length - 8}</span>{/if}
-								</p>
-							{/if}
-					</div>
-				</li>
+				<ResultCard print={p} {toggle} {active} renderOnly={data.params.render} icons={data.icons} />
 			{/each}
 		</ul>
 	</section>

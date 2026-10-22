@@ -73,13 +73,22 @@ export const parseRun = (row: PipelineRunRow): PipelineRun => ({
 	failures: JSON.parse(row.failures) as Record<string, number>
 });
 
-const LIVE: RunState[] = ['starting', 'running', 'paused', 'stopping'];
+/** States of a run that hasn't ended (or claims not to: see `isStale`). Render runs (`render_runs`) use the same states. */
+export const LIVE_STATES: readonly RunState[] = ['starting', 'running', 'paused', 'stopping'];
+
+/** States in which a runner accepts each control (pipeline and render runs alike). */
+export const CONTROL_STATES: Record<RunControl, readonly RunState[]> = {
+	pause: ['starting', 'running'],
+	resume: ['paused'],
+	stop: ['starting', 'running', 'paused']
+};
 
 /** True when the run claims to be live but its heartbeat has stopped. */
 export const isStale = (run: Pick<PipelineRun, 'state' | 'updated_at'>, now = Date.now()) =>
-	LIVE.includes(run.state) && now - run.updated_at > HEARTBEAT_STALE_MS;
+	LIVE_STATES.includes(run.state) && now - run.updated_at > HEARTBEAT_STALE_MS;
 
-export const isLive = (run: Pick<PipelineRun, 'state' | 'updated_at'>, now = Date.now()) => LIVE.includes(run.state) && !isStale(run, now);
+export const isLive = (run: Pick<PipelineRun, 'state' | 'updated_at'>, now = Date.now()) =>
+	LIVE_STATES.includes(run.state) && !isStale(run, now);
 
 /** The `failures` key for a failure reason: its first word ("decode: zlib" → "decode", "analyze v6: …" → "analyze"). */
 export const failureBucket = (reason: string) => /^[a-z]+/i.exec(reason)?.[0].toLowerCase() ?? 'other';

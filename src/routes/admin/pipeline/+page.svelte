@@ -54,7 +54,7 @@
 			<div class="rounded-lg border border-dashed border-stone-800 p-6 text-sm text-stone-400">
 				<p class="text-stone-200">No pipeline runs yet.</p>
 				<p class="mt-1">
-					Start one from a terminal, e.g. <code class="rounded bg-stone-800 px-1 text-stone-200">bun run backfill --stage dev --limit 100</code>. It
+					Start one from a terminal, e.g. <code class="rounded bg-stone-800 px-1 text-stone-200">bun run backfill --stage local --limit 100</code>. It
 					shows up here within a few seconds.
 				</p>
 			</div>

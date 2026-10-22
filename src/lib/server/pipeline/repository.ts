@@ -111,6 +111,14 @@ export const facetTokens = (r: Pick<FirebaseRecord, 'tags'>, a: PrintAnalysis): 
 };
 
 /**
+ * The facet token of prints with a game render in the stage's RENDERS bucket (`?render=1`). Not
+ * from the analysis: print_renders (migration 0015, written by `bun run render:flags`) says which
+ * prints have one, `upsert` adds it while that row exists, and render-flags.ts patches the FTS
+ * rows of prints the sync sets or unsets. First in the column, so facetText's cap never drops it.
+ */
+export const RENDER_TOKEN = 'render_yes';
+
+/**
  * The `facets` column: tokens in `facetTokens` order, cut at a token boundary under the FTS cap. The
  * biggest real books need about 16 KB; past the cap only the last tokens (recipes, modules) drop.
  */
@@ -367,7 +375,8 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 					),
 					db
 						.prepare(
-							'INSERT INTO print_search (print_id, title, description, labels, entities, recipes, nicknames, facets) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+							`INSERT INTO print_search (print_id, title, description, labels, entities, recipes, nicknames, facets) VALUES (?, ?, ?, ?, ?, ?, ?,
+								CASE WHEN EXISTS (SELECT 1 FROM print_renders WHERE print_id = ?) THEN '${RENDER_TOKEN} ' ELSE '' END || ?)`
 						)
 						.bind(
 							id,
@@ -377,6 +386,7 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 							cap(Object.keys(a.entities).join(' ').replaceAll('-', ' ')),
 							cap([...Object.keys(a.recipes), ...a.outputs.map((o) => o.split(':')[1])].join(' ').replaceAll('-', ' ')),
 							cap(nicknameText(a)),
+							id,
 							facetText(facetTokens(r, a))
 						),
 					stateRow(db, {

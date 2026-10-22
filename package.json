@@ -2,6 +2,15 @@
 	"name": "factorio-atlas",
 	"version": "0.0.1",
 	"private": true,
+	"description": "A searchable index of Factorio blueprints from factorioprints.com, decoded and analysed",
+	"homepage": "https://github.com/jsmenzies/factorio-atlas#readme",
+	"bugs": "https://github.com/jsmenzies/factorio-atlas/issues",
+	"license": "MIT",
+	"author": "James Menzies",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/jsmenzies/factorio-atlas.git"
+	},
 	"type": "module",
 	"imports": {
 		"#lib/*": "./src/lib/*"
@@ -19,16 +28,17 @@
 		"backfill": "bun scripts/backfill.ts",
 		"backfill:status": "bun scripts/backfill.ts --status",
 		"render": "bun scripts/render-game.ts",
-		"render:placeholder-assets": "bun scripts/fpsr-placeholder-assets.ts",
+		"render:resume": "bun scripts/render-game.ts --resume",
+		"render:top": "bun scripts/render-scope.ts top",
+		"render:check": "bun scripts/render-scope.ts check",
+		"render:flags": "bun scripts/render-flags.ts",
 		"game-data": "bun scripts/build-game-data.ts",
+		"icons": "bun scripts/icons.ts",
 		"lint": "oxlint",
 		"fmt": "oxfmt",
 		"fmt:check": "oxfmt --check",
-		"plan:dev": "bun run build && alchemy plan --stage dev",
 		"plan:prod": "bun run build && alchemy plan --stage prod",
-		"deploy:dev": "bun run build && alchemy deploy --stage dev",
-		"deploy:prod": "bun run build && alchemy deploy --stage prod",
-		"destroy:dev": "bun run build && alchemy destroy --stage dev"
+		"deploy:prod": "bun run build && alchemy deploy --stage prod"
 	},
 	"dependencies": {
 		"effect": "4.0.5",
@@ -36,24 +46,30 @@
 		"xss": "1.0.15"
 	},
 	"devDependencies": {
+		"@distilled.cloud/cloudflare": "1.0.0-rc.13",
 		"@effect/platform-bun": "4.0.5",
 		"@effect/platform-node": "4.0.5",
 		"@rickyzhangca/fpsr": "0.0.3",
-		"@sveltejs/adapter-cloudflare": "^8.0.0",
-		"@sveltejs/kit": "^3.0.0",
-		"@sveltejs/vite-plugin-svelte": "^7.2.0",
+		"@sveltejs/adapter-cloudflare": "^8.0.1",
+		"@sveltejs/kit": "^3.1.0",
+		"@sveltejs/vite-plugin-svelte": "^7.3.1",
 		"@tailwindcss/vite": "^4.3.0",
 		"@types/node": "^26.6.5",
 		"alchemy": "2.0.0-beta.81",
+		"aws4fetch": "1.0.20",
 		"oxfmt": "^0.73.0",
 		"oxlint": "^1.88.0",
+		"sharp": "0.35.5",
 		"skia-canvas": "2.0.2",
-		"svelte": "^5.57.1",
-		"svelte-check": "^4.6.0",
+		"svelte": "^5.57.2",
+		"svelte-check": "^4.7.7",
 		"tailwindcss": "^4.3.0",
 		"typescript": "^6.0.3",
-		"vite": "^8.3.0",
+		"vite": "^8.3.5",
 		"wrangler": "^4.97.0"
+	},
+	"engines": {
+		"bun": ">=1.4.3"
 	},
 	"trustedDependencies": [
 		"skia-canvas"
