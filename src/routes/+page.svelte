@@ -54,6 +54,7 @@
 		[
 			...(data.params.q ? [['relevance', 'Best match']] : []),
 			['favorites', 'Most favourited'],
+			['popular', 'Popular this month'],
 			['recent', 'Recently updated']
 		] as [string, string][]
 	);

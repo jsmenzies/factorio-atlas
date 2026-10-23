@@ -20,7 +20,8 @@ export interface SearchParams {
 	trains: boolean;
 	/** Only prints with a game render in this stage's bucket (`?render=1`; print_renders, migration 0015). */
 	render: boolean;
-	sort: 'favorites' | 'recent' | 'relevance';
+	/** `popular`: most viewed over the last 30 days (prints.views_30d, from `bun run views:sync`), then favourites. */
+	sort: 'favorites' | 'recent' | 'relevance' | 'popular';
 	/** 1-based results page (`?p=2`), at most MAX_PAGES. */
 	page: number;
 }
@@ -72,7 +73,7 @@ export const parseSearch = (url: URL): SearchParams => {
 		circuits: g('circuits') === '1',
 		trains: g('trains') === '1',
 		render: g('render') === '1',
-		sort: sort === 'recent' || sort === 'favorites' ? sort : q ? 'relevance' : 'favorites',
+		sort: sort === 'recent' || sort === 'favorites' || sort === 'popular' ? sort : q ? 'relevance' : 'favorites',
 		page: parsePage(g('p'))
 	};
 };
@@ -144,6 +145,9 @@ const CARD = `p.id, p.title, p.author_name, p.favorites, p.image_id, p.image_typ
 	p.outputs, p.claimed_versions, p.planets, p.mods,
 	EXISTS (SELECT 1 FROM print_renders r WHERE r.print_id = p.id) AS has_render`;
 
+/** ORDER BY for the sorts that don't need a match; each has its own index on prints (migrations 0005, 0016). */
+const ORDERS = { favorites: 'p.favorites DESC', recent: 'p.updated_at DESC', popular: 'p.views_30d DESC, p.favorites DESC' };
+
 /** Title counts most for relevance, then page labels and nicknames (weights by FTS column). */
 const RELEVANCE = 'bm25(print_search, 0, 10, 1, 3, 1, 1, 2, 0)';
 
@@ -163,7 +167,7 @@ export const searchStatements = (s: SearchParams): SearchStatements => {
 	const match = matchExpression(s);
 	const page = `LIMIT ${PAGE_SIZE} OFFSET ${(parsePage(String(s.page)) - 1) * PAGE_SIZE}`;
 	if (!match) {
-		const order = s.sort === 'recent' ? 'p.updated_at DESC' : 'p.favorites DESC';
+		const order = ORDERS[s.sort === 'relevance' ? 'favorites' : s.sort];
 		return {
 			results: { sql: `SELECT ${CARD} FROM prints p ORDER BY ${order} ${page}`, binds: [] },
 			total: { sql: 'SELECT COUNT(*) AS n FROM prints', binds: [] },
@@ -172,7 +176,7 @@ export const searchStatements = (s: SearchParams): SearchStatements => {
 			versions: { sql: `SELECT value, n FROM facet_counts WHERE kind = 'version' ORDER BY value`, binds: [] }
 		};
 	}
-	const order = s.sort === 'recent' ? 'p.updated_at DESC' : s.sort === 'relevance' ? RELEVANCE : 'p.favorites DESC';
+	const order = s.sort === 'relevance' ? RELEVANCE : ORDERS[s.sort];
 	const matched = 'SELECT print_id FROM print_search WHERE print_search MATCH ?1';
 	return {
 		results: {

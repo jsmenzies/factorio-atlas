@@ -13,19 +13,21 @@ resources as prod, under its own names, and links to prod's sprites bucket.
 
 The stage gets:
 
-| Resource | Name                              | Binding                      | Notes                                                           |
-| -------- | --------------------------------- | ---------------------------- | --------------------------------------------------------------- |
-| Worker   | `factorio-prints-<stage>`         |                              | the SvelteKit app; preview URLs off                             |
-| D1       | `factorio-prints-<stage>-db-<n>`  | `DB`                         | migrations from `./migrations` applied on deploy                |
-| R2       | `factorio-prints-<stage>-raw`     | `RAW`                        | retained on destroy                                             |
-| R2       | `factorio-prints-<stage>-renders` | `RENDERS`                    | game renders; optional custom domain; retained on destroy       |
-| R2       | `factorio-prints-sprites`         | `SPRITES`                    | game icons, owned by prod; optional custom domain; retained     |
-| Assets   | `.svelte-kit/cloudflare`          | `ASSETS`                     | client files; honours the adapter's `.assetsignore`, `_headers` |
-| Access   | `factorio-prints-<stage> admin`   |                              | Zero Trust application on `<domain>/admin*`; see "Admin page"   |
-| Cache    | the zone's cache rules            |                              | prod, with a sprites or renders domain; see "Edge cache"        |
-| Limits   | two Workers rate limits           | `PAGE_LIMIT`, `SEARCH_LIMIT` | per visitor; see "Rate limits"                                  |
-| WAF      | the zone's rate-limiting rules    |                              | prod, with a site domain; see "Rate limits"                     |
-| Bots     | the zone's Bot Fight Mode         |                              | prod, with a site domain; see "Rate limits"                     |
+| Resource | Name                                 | Binding                      | Notes                                                           |
+| -------- | ------------------------------------ | ---------------------------- | --------------------------------------------------------------- |
+| Worker   | `factorio-prints-<stage>`            |                              | the SvelteKit app; preview URLs off                             |
+| D1       | `factorio-prints-<stage>-db-<n>`     | `DB`                         | migrations from `./migrations` applied on deploy                |
+| R2       | `factorio-prints-<stage>-raw`        | `RAW`                        | retained on destroy                                             |
+| R2       | `factorio-prints-<stage>-renders`    | `RENDERS`                    | game renders; optional custom domain; retained on destroy       |
+| R2       | `factorio-prints-sprites`            | `SPRITES`                    | game icons, owned by prod; optional custom domain; retained     |
+| Assets   | `.svelte-kit/cloudflare`             | `ASSETS`                     | client files; honours the adapter's `.assetsignore`, `_headers` |
+| Access   | `factorio-prints-<stage> admin`      |                              | Zero Trust application on `<domain>/admin*`; see "Admin page"   |
+| Cache    | the zone's cache rules               |                              | prod, with a sprites or renders domain; see "Edge cache"        |
+| Limits   | two Workers rate limits              | `PAGE_LIMIT`, `SEARCH_LIMIT` | per visitor; see "Rate limits"                                  |
+| Views    | `factorio_prints_<stage>_views`      | `VIEWS`                      | Analytics Engine dataset; see "Page views"                      |
+| Worker   | `factorio-prints-<stage>-views-cron` |                              | daily views rollup into D1, with `ANALYTICS_API_TOKEN`          |
+| WAF      | the zone's rate-limiting rules       |                              | prod, with a site domain; see "Rate limits"                     |
+| Bots     | the zone's Bot Fight Mode            |                              | prod, with a site domain; see "Rate limits"                     |
 
 Prod's D1 database is retained on destroy (a staging stage's would be deleted). `<n>` is the D1
 generation from `infra/databases.ts` (1 by default).
@@ -313,6 +315,38 @@ hasn't ingested yet: the backfill adds the token whenever a print's row exists, 
 backfill and renders doesn't matter, and a re-ingest keeps it. `--stage local` also counts renders in
 `data/renders/`, which the local site reads first. Prod goes through the backfill's remote bindings
 (`wrangler login`, Node on PATH), and the deployed database must have migration 0015.
+
+## Page views
+
+The search page's "Popular this month" sort orders prints by their views over the last 30 days.
+Each print page sends one request when it opens in a browser (`POST /prints/<id>/view`, once per
+print per tab), and the Worker writes one Analytics Engine data point to the stage's dataset holding
+only the print id: no IP address, user agent or cookie. The request is a keepalive `fetch`, not
+`navigator.sendBeacon`, because privacy extensions block every beacon. Requests whose user agent
+looks automated aren't counted, and hover preloads never send it. Cloudflare creates the dataset on
+the first write and keeps data points for three months. The counts are never shown on the site.
+
+The counts reach D1 (`prints.views_30d`) once a day, at 04:17 UTC, from a small scheduled Worker,
+`factorio-prints-<stage>-views-cron` (`src/cron/views.ts`). It totals the stage's dataset through
+the Analytics Engine SQL API and writes only the counts that changed; prints with no views in the
+window go back to 0. Its runs and any errors are in the Worker's logs in the dashboard. A re-ingest
+keeps a print's count; a fresh D1 database starts at 0 until the next run.
+
+The same sync runs by hand, to refresh the order now or to copy prod's counts into the local D1:
+
+```sh
+bun run views:sync --stage prod --dry-run   # what would change
+bun run views:sync --stage prod             # asks before writing; --yes skips that
+bun run views:sync --stage local            # prod's counts into the local D1
+```
+
+The SQL API needs an API token of its own, since `wrangler login` can't read analytics. Create one
+in the dashboard (My Profile → API Tokens → Create Token → Custom token) with one permission,
+**Account → Account Analytics → Read**, limited to the site's account, and put it in `.env` as
+`ANALYTICS_API_TOKEN`. Don't name it `CLOUDFLARE_API_TOKEN`: wrangler and Alchemy would pick that up
+in place of your login. The deploy binds it to the cron Worker as a secret; without it the deploy
+warns and skips that Worker. `views:sync` reaches prod's D1 through the backfill's remote bindings
+(`wrangler login`, Node on PATH), and the deployed database must have migration 0016.
 
 ## Swapping in a fresh D1 database
 

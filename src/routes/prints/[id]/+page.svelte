@@ -49,6 +49,21 @@
 	const pageHref = (path: string) => (path === pages[0]?.path ? `/prints/${p.id}` : `/prints/${p.id}?page=${encodeURIComponent(path)}`);
 	const select = (path: string) => goto(pageHref(path), { shallow: true, replace: true });
 
+	// One view per print per tab, for the "Popular" sort (lib/server/views.ts). Sent from the browser,
+	// so hover preloads (which run this page's load) and most crawlers don't count; picking a book
+	// page is a shallow navigation and doesn't either. A plain fetch, not navigator.sendBeacon:
+	// privacy extensions (ClearURLs, for one) block every request of the "beacon" type.
+	$effect(() => {
+		const id = p.id;
+		try {
+			if (sessionStorage.getItem(`viewed:${id}`)) return;
+			sessionStorage.setItem(`viewed:${id}`, '1');
+		} catch {
+			// Storage blocked: count it anyway.
+		}
+		fetch(`/prints/${id}/view`, { method: 'POST', keepalive: true }).catch(() => {});
+	});
+
 	// A book page past the first is a page of its own for search engines: title, description and canonical URL.
 	const bookPage = $derived(!single && selected && selectedIndex > 0 ? selected : null);
 	const meta = $derived(

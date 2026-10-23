@@ -6,10 +6,11 @@
  *
  * One deployed stage, `prod` (STAGES in infra/databases.ts; local development runs on miniflare
  * with `bun run dev`), with its own Worker (the SvelteKit app, built by adapter-cloudflare exactly
- * as `bun run preview` runs it), D1 database and two R2 buckets. Prod also owns the one sprites
+ * as `bun run preview` runs it), D1 database and two R2 buckets, plus a small scheduled Worker that
+ * totals page views into D1 daily (with ANALYTICS_API_TOKEN). Prod also owns the one sprites
  * bucket. A staging stage can be added to STAGES; it gets the same resources and links to prod's
  * sprites bucket.
- * Binding names (DB, RAW, RENDERS, SPRITES), the rate limits (PAGE_LIMIT, SEARCH_LIMIT), vars,
+ * Binding names (DB, RAW, RENDERS, SPRITES, VIEWS), the rate limits (PAGE_LIMIT, SEARCH_LIMIT), vars,
  * compatibility date and flags come from wrangler.jsonc,
  * which stays the config for local tooling (`vite dev`, `wrangler d1 --local`, `wrangler types`,
  * scripts/ingest.ts), so local and deployed Workers can't drift apart. Alchemy adds ASSETS.
@@ -25,7 +26,7 @@ import * as Alchemy from 'alchemy';
 import * as Cloudflare from 'alchemy/Cloudflare';
 import { Config, Effect, Option } from 'effect';
 import { unstable_readConfig } from 'wrangler';
-import { DATABASES, PREFIX, SPRITES_BUCKET, STAGES, type Stage } from './infra/databases';
+import { DATABASES, PREFIX, SPRITES_BUCKET, STAGES, viewsDataset, type Stage } from './infra/databases';
 
 /** The parts of wrangler.jsonc used here (wrangler's own config type isn't exported). */
 interface LocalConfig {
@@ -35,15 +36,17 @@ interface LocalConfig {
 	d1_databases: { binding: string }[];
 	r2_buckets: { binding: string }[];
 	ratelimits: { name: string; namespace_id: string; simple: { limit: number; period: 10 | 60 } }[];
+	analytics_engine_datasets: { binding: string }[];
 }
 const local: LocalConfig = unstable_readConfig({ config: 'wrangler.jsonc' }, { hideWarnings: true });
 
 // Fail fast if wrangler.jsonc gains a binding this file doesn't provision.
-const expected = { d1: ['DB'], r2: ['RAW', 'RENDERS', 'SPRITES'], ratelimits: ['PAGE_LIMIT', 'SEARCH_LIMIT'] };
+const expected = { d1: ['DB'], r2: ['RAW', 'RENDERS', 'SPRITES'], ratelimits: ['PAGE_LIMIT', 'SEARCH_LIMIT'], analytics: ['VIEWS'] };
 const actual = {
 	d1: local.d1_databases.map((d) => d.binding),
 	r2: local.r2_buckets.map((b) => b.binding),
-	ratelimits: local.ratelimits.map((r) => r.name)
+	ratelimits: local.ratelimits.map((r) => r.name),
+	analytics: local.analytics_engine_datasets.map((a) => a.binding)
 };
 if (JSON.stringify(actual) !== JSON.stringify(expected)) {
 	throw new Error(`wrangler.jsonc bindings ${JSON.stringify(actual)} differ from alchemy.run.ts ${JSON.stringify(expected)}`);
@@ -126,6 +129,11 @@ export default Alchemy.Stack(
 			domains: rendersDomain === undefined ? [] : [{ name: rendersDomain, minTLS: '1.2' }],
 			cors: [{ allowedMethods: ['GET', 'HEAD'], allowedOrigins: ['*'], maxAgeSeconds: 86400 }]
 		}).pipe(Alchemy.RemovalPolicy.retain());
+
+		// Print page views (one data point each), totalled into D1 daily by the ViewsCron Worker below
+		// (or `bun run views:sync`). Cloudflare creates the dataset on the first write; nothing to
+		// retain or delete.
+		const views = yield* Cloudflare.AnalyticsEngine.Dataset('Views', { dataset: viewsDataset(stage as Stage) });
 
 		// Optional custom domain, SITE_DOMAIN_<STAGE>, e.g. SITE_DOMAIN_PROD=example.com (in .env or
 		// the shell). The zone must already be in the account. Unset leaves domains
@@ -252,6 +260,7 @@ export default Alchemy.Stack(
 				DB: db,
 				RAW: raw,
 				RENDERS: renders,
+				VIEWS: views,
 				...(sprites ? { SPRITES: sprites } : {}),
 				...Object.fromEntries(
 					local.ratelimits.map((r) => [r.name, Cloudflare.RateLimit(r.name, { namespaceId: r.namespace_id, simple: r.simple })])
@@ -264,6 +273,26 @@ export default Alchemy.Stack(
 				ACCESS_AUD: admin ? admin.aud : ''
 			}
 		});
+
+		// The daily views rollup (src/cron/views.ts): its own Worker, since the site's adapter-cloudflare
+		// Worker has no scheduled handler. Reads the dataset through the Analytics Engine SQL API, so it
+		// needs ANALYTICS_API_TOKEN (Account Analytics: Read; docs/deploy.md, "Page views"), bound as a
+		// secret. Unset, there is no cron and `bun run views:sync` does it by hand.
+		const analyticsToken = Option.getOrUndefined(yield* Config.option(Config.Redacted('ANALYTICS_API_TOKEN')));
+		if (analyticsToken === undefined) {
+			yield* Effect.logWarning(`the daily views rollup is off on ${stage}: it needs ANALYTICS_API_TOKEN (docs/deploy.md, "Page views")`);
+		} else {
+			const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
+			yield* Cloudflare.Worker('ViewsCron', {
+				name: `${name}-views-cron`,
+				main: './src/cron/views.ts',
+				compatibility: { date: local.compatibility_date },
+				workersDev: { enabled: false, previewsEnabled: false },
+				// 04:17 UTC daily.
+				crons: ['17 4 * * *'],
+				env: { DB: db, ANALYTICS_API_TOKEN: analyticsToken, ACCOUNT_ID: accountId, VIEWS_DATASET: viewsDataset(stage as Stage) }
+			});
+		}
 
 		return {
 			url: worker.url,

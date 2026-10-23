@@ -16,6 +16,8 @@ describe('parseSearch sort', () => {
 		expect(sortOf('?q=smelting&sort=favorites')).toBe('favorites');
 		expect(sortOf('?q=smelting&sort=recent')).toBe('recent');
 		expect(sortOf('?sort=recent')).toBe('recent');
+		expect(sortOf('?sort=popular')).toBe('popular');
+		expect(sortOf('?q=smelting&sort=popular')).toBe('popular');
 	});
 
 	test('best match without text, or an unknown sort, falls back to the default', () => {

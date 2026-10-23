@@ -13,6 +13,13 @@ export type Stage = (typeof STAGES)[number];
 export const SPRITES_BUCKET = `${PREFIX}-sprites`;
 
 /**
+ * A stage's Analytics Engine dataset of print page views (VIEWS binding; src/routes/prints/[id]/view).
+ * Cloudflare creates it on the first write. `bun run views:sync` reads it by this name, as an SQL
+ * table, hence underscores.
+ */
+export const viewsDataset = (stage: Stage) => `${PREFIX.replaceAll('-', '_')}_${stage}_views`;
+
+/**
  * D1 generations per stage. `bound` is the database the Worker uses as DB. `importTarget`, when
  * set, is an extra database that Alchemy creates and migrates but doesn't bind: the backfill is
  * imported into it, then it becomes `bound` (docs/deploy.md, "Swapping in a fresh D1 database").

@@ -42,6 +42,9 @@
 		{ "name": "PAGE_LIMIT", "namespace_id": "4101", "simple": { "limit": 150, "period": 60 } },
 		{ "name": "SEARCH_LIMIT", "namespace_id": "4102", "simple": { "limit": 40, "period": 60 } }
 	],
+	// One data point per print page view (src/routes/prints/[id]/view). Locally the writes go nowhere;
+	// alchemy.run.ts binds each stage's own dataset (viewsDataset in infra/databases.ts).
+	"analytics_engine_datasets": [{ "binding": "VIEWS", "dataset": "factorio_prints_local_views" }],
 	"vars": {
 		"MIRROR_BASE_URL": "https://raw.githubusercontent.com/motlin/factorio-blueprint-firebase-cdn/main",
 		"FIREBASE_BASE_URL": "https://facorio-blueprints.firebaseio.com",

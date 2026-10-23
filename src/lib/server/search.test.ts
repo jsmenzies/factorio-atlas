@@ -9,6 +9,7 @@ import { ingestText, type IngestOutcome } from './pipeline/pipeline';
 import { RawStore } from './pipeline/raw-store';
 import { PrintRepository, PrintRepositoryD1, RENDER_TOKEN } from './pipeline/repository';
 import { syncRenderFlags } from './pipeline/render-flags';
+import { syncViews } from './views';
 import { MAX_PAGES, matchExpression, MULTI_FILTERS, PAGE_SIZE, searchStatements, type MultiFilter, type SearchParams } from './queries';
 
 const ROOT = join(import.meta.dirname, '../../..');
@@ -278,7 +279,9 @@ describe('query plans', () => {
 		{ render: true },
 		{ render: true, sort: 'recent' },
 		{ q: 'science', render: true, sort: 'relevance' },
-		{ render: true, spaceAge: 'yes', uses: 'entity:foundry' }
+		{ render: true, spaceAge: 'yes', uses: 'entity:foundry' },
+		{ sort: 'popular' },
+		{ q: 'science', makes: 'item:automation-science-pack', sort: 'popular' }
 	];
 
 	test('no search query scans a whole table', () => {
@@ -293,5 +296,51 @@ describe('query plans', () => {
 				expect({ case: c, fullScans }).toEqual({ case: c, fullScans: [] });
 			}
 		}
+	});
+});
+
+describe('views (bun run views:sync)', () => {
+	const UNKNOWN = 'AAAAAAAAAAAAAAAAAAAA';
+
+	test('the sync sets counts, writes nothing the second time, and "popular" orders by them', async () => {
+		const first = await syncViews(
+			db,
+			new Map([
+				[BELTS, 5],
+				[SPACE, 9],
+				[UNKNOWN, 3]
+			])
+		);
+		expect(first.plan.set.length).toBe(3);
+		// The print that isn't ingested here is planned but matches no row.
+		expect(first).toMatchObject({ known: 2, rowsWritten: 2 });
+		expect(run({ sort: 'popular' }).ids).toEqual([SPACE, BELTS, SCIENCE]);
+		expect(run({ spaceAge: 'no', sort: 'popular' }).ids).toEqual([BELTS, SCIENCE]);
+		const again = await syncViews(
+			db,
+			new Map([
+				[BELTS, 5],
+				[SPACE, 9],
+				[UNKNOWN, 3]
+			])
+		);
+		expect(again.plan).toEqual({ set: [[UNKNOWN, 3]], clear: [] });
+		expect(again.rowsWritten).toBe(0);
+	});
+
+	test('a print with no views in the window goes back to 0; equal counts fall back to favourites', async () => {
+		const done = await syncViews(db, new Map([[SPACE, 9]]));
+		expect(done.plan).toEqual({ set: [], clear: [BELTS] });
+		expect(run({ sort: 'popular' }).ids).toEqual([SPACE, SCIENCE, BELTS]);
+		await syncViews(db, new Map());
+		expect(run({ sort: 'popular' }).ids).toEqual(run({}).ids);
+	});
+
+	test('a re-ingest keeps the count', async () => {
+		await syncViews(db, new Map([[BELTS, 4]]));
+		const text = await fixtureRecord(BELTS);
+		await Effect.runPromise(ingestText(BELTS, text, 'test', { force: true }).pipe(Effect.provide(layer)));
+		expect(sqlite.query('SELECT views_30d FROM prints WHERE id = ?').get(BELTS)).toEqual({ views_30d: 4 });
+		await syncViews(db, new Map());
 	});
 });

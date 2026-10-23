@@ -74,6 +74,10 @@ GitHub mirror of factorioprints (motlin/factorio-blueprint-firebase-cdn, one JSO
   `tag`) stack: `?makes=a&makes=b` matches prints that make both.
   "Only prints with a render" (`?render=1`) is the `render_yes` token, set from the
   `print_renders` table by `bun run render:flags`, so a re-ingest keeps it.
+  "Popular this month" (`?sort=popular`) orders by `prints.views_30d`: each print page sends one
+  request (a keepalive `fetch`), the Worker writes an Analytics Engine data point holding only the print id (no IP,
+  user agent or cookie), and a daily scheduled Worker (`src/cron/views.ts`) totals the last 30
+  days into D1 (`bun run views:sync` does the same by hand).
 - **Print pages** read only the print's R2 analysis document, never D1.
 - **Game renders:** `bun run render` draws in-game-looking images of each blueprint page offline
   with [fpsr](https://github.com/rickyzhangca/fpsr), from sprite assets built from an installed
@@ -162,6 +166,7 @@ this repository.
 | `bun run render … --upload local\|prod`                        | also upload each finished page to the local RENDERS bucket or the deployed one (needs an R2 API token; see docs/deploy.md, "Uploading renders")                                                                                                      |
 | `bun run render:resume`                                        | a new run with the latest run's options (`--resume`; flags given override them)                                                                                                                                                                      |
 | `bun run render:flags --stage local\|prod`                     | mark the prints with a render in that stage's bucket for the search filter (after uploads; `--dry-run`, `--db N`, `--yes`; see docs/deploy.md, "Uploading renders")                                                                                  |
+| `bun run views:sync --stage local\|prod`                       | total prod's page views over the last 30 days into that stage's D1 for the Popular sort (`--dry-run`, `--db N`, `--yes`; needs `ANALYTICS_API_TOKEN`; see docs/deploy.md, "Page views")                                                              |
 | `bun run game-data <script-output dir> <factorio data dir>`    | regenerate `data/game/game-data-*.json` from the game's `--dump-data` and `--dump-prototype-locale` output (steps in `scripts/build-game-data.ts`)                                                                                                   |
 | `bun run icons <script-output dir>`                            | WebP icons from the game's `--dump-icon-sprites` output into `data/sprites/` and the local SPRITES bucket; writes `data/game/icons.json`                                                                                                             |
 | `bun run icons --upload local\|remote`                         | upload that icon set again, to the local bucket or to the deployed sprites bucket every stage shares                                                                                                                                                 |
