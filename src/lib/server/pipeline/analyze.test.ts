@@ -3,7 +3,7 @@ import { Effect } from 'effect';
 import { fixtureRecord } from '#lib/server/fixtures.js';
 import { analyzePrint } from './analyze';
 import { decodeExchangeString } from './decode';
-import { facetTokens } from './repository';
+import { facetText, facetTokens } from './repository';
 
 /** Packed game versions, as exchange strings store them. */
 const V2_0_77 = 2 * 2 ** 48 + 77 * 2 ** 16;
@@ -75,6 +75,23 @@ describe('quality counts', () => {
 			'uses_entity_assembling_machine_3_at_rare',
 			'uses_entity_crusher_at_uncommon'
 		]);
+	});
+
+	test('in an oversized print, module and quality tokens come before the long lists, so the cap keeps them', () => {
+		const modded = Array.from({ length: 3000 }, (_, i) => ({ name: `some-mod-entity-with-a-long-name-${i}` }));
+		const big = analyzePrint(
+			blueprint([
+				...modded,
+				{ name: 'assembling-machine-3', quality: 'rare', recipe: 'iron-gear-wheel', items: [modules('speed-module-3', 'legendary', 4)] }
+			])
+		);
+		const kept = facetText(facetTokens({ tags: [] }, big)).split(' ');
+		expect(kept.length).toBeLessThan(facetTokens({ tags: [] }, big).length);
+		expect(kept).toContain('module_speed_module_3');
+		expect(kept).toContain('module_speed_module_3_at_legendary');
+		expect(kept).toContain('quality_legendary');
+		expect(kept).toContain('uses_entity_assembling_machine_3_at_rare');
+		expect(kept).not.toContain('uses_entity_some_mod_entity_with_a_long_name_2999');
 	});
 
 	test("a book's counts add up its pages", () => {

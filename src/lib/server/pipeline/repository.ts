@@ -136,16 +136,18 @@ export const facetTokens = (r: Pick<FirebaseRecord, 'tags' | 'author' | 'authorI
 		...a.mods.map((m) => `mod_${slug(m)}`),
 		// Every quality above normal on an entity, module or recipe (`?quality=`).
 		...Object.keys(a.qualities).map(qualityToken),
+		// Short lists before the long ones: facetText's cap cuts from the end, and the biggest modded books
+		// reach it with thousands of entity and recipe names.
+		...Object.keys(a.modules).map((m) => moduleToken(m.split('@')[0])),
 		// Each entity, module and crafted item at each quality above normal it has, for `?uses=entity:beacon@epic`
 		// and the like. Documents from before ANALYZER_VERSION 9 have no productsByQuality.
 		...atQualities(a.entitiesByQuality).map(([name, q]) => atQuality(`uses_${slug(`entity:${name}`)}`, q)),
 		...atQualities(a.modules).map(([name, q]) => atQuality(moduleToken(name), q)),
 		...atQualities(a.productsByQuality ?? {}).map(([signal, q]) => atQuality(`makes_${slug(signal)}`, q)),
-		// Every entity, recipe and module, not just what the UI offers today, so a new filter on
-		// any of them needs no re-index. `uses_entity_` keeps them apart from uses_circuits/uses_trains.
+		// Every entity and recipe, not just what the UI offers today, so a new filter on any of them
+		// needs no re-index. `uses_entity_` keeps them apart from uses_circuits/uses_trains.
 		...Object.keys(a.entities).map((e) => `uses_${slug(`entity:${e}`)}`),
-		...Object.keys(a.recipes).map((n) => `recipe_${slug(n)}`),
-		...Object.keys(a.modules).map((m) => `module_${slug(m.split('@')[0])}`)
+		...Object.keys(a.recipes).map((n) => `recipe_${slug(n)}`)
 	]);
 	return [...tokens].filter((t) => !t.endsWith('_'));
 };
@@ -160,7 +162,8 @@ export const RENDER_TOKEN = 'render_yes';
 
 /**
  * The `facets` column: tokens in `facetTokens` order, cut at a token boundary under the FTS cap. The
- * biggest real books need about 16 KB; past the cap only the last tokens (recipes, modules) drop.
+ * biggest books need about 16 KB, except three huge modded ones that reach it (2026-10-24); past the
+ * cap only the last tokens, entities and recipes, drop.
  */
 export const facetText = (tokens: string[]) => {
 	const kept: string[] = [];
