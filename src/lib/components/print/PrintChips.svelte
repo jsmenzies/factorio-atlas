@@ -5,22 +5,20 @@
 	import { searchRel } from '#lib/search-seo.js';
 
 	/**
-	 * Under the print's header (PrintHero): its role chips (in a book, buttons that filter the page
-	 * grid) and the author tags that add something to the analysis.
+	 * A print's role chips (with `onrole`, buttons that filter a book's page grid) and the author tags
+	 * that add something to the analysis.
 	 */
 	let {
 		roles,
-		tags,
-		single,
-		activeRole,
+		tags = [],
+		activeRole = null,
 		onrole
 	}: {
 		roles: Record<string, number>;
-		tags: AuthorTag[];
-		single: boolean;
+		tags?: AuthorTag[];
 		/** The role the page grid is filtered to, if any. */
-		activeRole: Role | null;
-		onrole: (role: Role) => void;
+		activeRole?: Role | null;
+		onrole?: (role: Role) => void;
 	} = $props();
 
 	// The first few tags show, the rest on request.
@@ -29,11 +27,11 @@
 </script>
 
 <div class="flex flex-wrap items-center gap-1 text-xs">
-	<!-- In a book, role chips filter the page grid below. -->
+	<!-- In a book, role chips filter the page grid. -->
 	{#each Object.entries(roles) as [r, k] (r)}
 		{@const role = r as Role}
-		{#if single}
-			<span class="rounded px-1.5 py-0.5 {ROLE_CLASS[role]}">{ROLE_LABEL[role]}</span>
+		{#if !onrole}
+			<span class="rounded px-1.5 py-0.5 {ROLE_CLASS[role]}">{ROLE_LABEL[role]}{k > 1 ? ` · ${k}` : ''}</span>
 		{:else}
 			<button
 				type="button"

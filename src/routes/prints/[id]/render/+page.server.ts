@@ -4,19 +4,8 @@ import { signalName } from '#lib/format.js';
 import { plainText } from '#lib/richtext.js';
 import { iconSet } from '#lib/server/icon-set.js';
 import { loadPrintDoc, loadViewerPage, printTexts } from '#lib/server/print-pages.js';
-import { getThumbsIndex, renderBase } from '#lib/server/renders.js';
-import { thumbSrcset } from '#lib/viewer/thumbs.js';
-import type { PageThumb } from '#lib/components/PagePicker.svelte';
+import { pageThumbs, renderBase } from '#lib/server/renders.js';
 import type { PageServerLoad } from './$types';
-
-/** The print's page thumbnails as srcsets for the page picker; none until `render:thumbs` has made them. */
-const pageThumbs = async (id: string): Promise<Record<string, PageThumb>> => {
-	const index = await getThumbsIndex(id);
-	const base = renderBase(id);
-	return Object.fromEntries(
-		Object.entries(index?.pages ?? {}).map(([path, p]) => [path, { srcset: thumbSrcset(base, path, p), w: p.w, h: p.h }])
-	);
-};
 
 /**
  * One book page's game render, with its entity data (made with the render) for hover tooltips.

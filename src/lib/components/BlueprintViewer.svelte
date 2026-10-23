@@ -428,29 +428,6 @@
 {/snippet}
 
 <div class="flex h-full min-h-0 flex-col">
-	{#if !full}
-		<div class="flex flex-wrap items-center gap-2 border-b border-stone-800 bg-stone-900/80 px-3 py-1.5 text-xs">
-			{#if failed}
-				<span class="text-red-300">render failed to load</span>
-			{/if}
-			{#if unknownNames.size}
-				<span class="text-orange-300" title={[...unknownNames].join(', ')}>{unknownNames.size} modded types outlined</span>
-			{/if}
-			<span class="text-stone-500" title="Rendered offline by fpsr {render.sidecar.fpsr} for Factorio {render.sidecar.assets.gameVersion}"
-				>{level ? `${level} px/tile tiles` : 'overview'}</span
-			>
-			<span class="mx-1 h-4 w-px bg-stone-700"></span>
-			<button class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700" onclick={fit} title="Fit to view (F)">Fit</button>
-			<button class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700" onclick={() => zoomAt(size.w / 2, size.h / 2, 1.25)} title="Zoom in (+)"
-				>+</button
-			>
-			<button class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700" onclick={() => zoomAt(size.w / 2, size.h / 2, 0.8)} title="Zoom out (−)"
-				>−</button
-			>
-			<span class="text-stone-500">{zoomPct} px/tile</span>
-			<span class="ml-auto text-stone-500">{page.entities.length.toLocaleString()} entities</span>
-		</div>
-	{/if}
 	<div {@attach fitToContainer} class="relative min-h-0 flex-1 overflow-hidden">
 		<canvas
 			bind:this={canvas}
@@ -465,7 +442,30 @@
 			{onpointerleave}
 			onkeydown={full ? undefined : onkeydown}
 		></canvas>
-		{#if full}
+		{#if !full}
+			<!-- Embedded: notes at the top left, the zoom buttons at the bottom left, over the render. -->
+			{#if failed || unknownNames.size}
+				<div class="pointer-events-none absolute top-2 left-2 space-y-1 text-xs [&>p]:w-fit [&>p]:rounded [&>p]:bg-stone-950/80 [&>p]:px-1.5 [&>p]:py-0.5">
+					{#if failed}<p class="text-red-300">The render failed to load.</p>{/if}
+					{#if unknownNames.size}
+						<p class="pointer-events-auto text-orange-300" title={[...unknownNames].join(', ')}>
+							{unknownNames.size} modded {unknownNames.size === 1 ? 'type' : 'types'} outlined
+						</p>
+					{/if}
+				</div>
+			{/if}
+			<div
+				class="absolute bottom-3 left-3 flex items-center gap-0.5 rounded-lg border border-stone-700 bg-stone-900/90 p-1 text-sm text-stone-300 shadow-lg"
+				role="toolbar"
+				aria-label="Zoom"
+				title="{zoomPct} px/tile · {level ? `drawing ${level} px/tile tiles` : 'drawing the overview'}; rendered offline by fpsr {render.sidecar.fpsr} for Factorio {render
+					.sidecar.assets.gameVersion}"
+			>
+				{@render zoomButton('Fit', 'Fit to view (F)', fit, atFit)}
+				{@render zoomButton('+', 'Zoom in (+)', () => zoomAt(size.w / 2, size.h / 2, 1.25))}
+				{@render zoomButton('−', 'Zoom out (−)', () => zoomAt(size.w / 2, size.h / 2, 0.8))}
+			</div>
+		{:else}
 			<div class="pointer-events-none absolute inset-x-3 bottom-3 flex items-end justify-center gap-3 sm:inset-x-5 sm:bottom-5 sm:justify-between">
 				<!-- Hints sit on the render, so a faint backing keeps them readable over busy builds. -->
 				<div class="hidden min-w-0 flex-1 space-y-1 text-xs text-stone-500 sm:block [&>p]:w-fit [&>p]:rounded [&>p]:bg-stone-950/70 [&>p]:px-1.5 [&>p]:py-0.5">

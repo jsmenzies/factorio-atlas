@@ -1,20 +1,26 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { untrack } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { page as route } from '$app/state';
-	import InlineViewer from '#lib/components/InlineViewer.svelte';
 	import PageMeta from '#lib/components/PageMeta.svelte';
-	import Description from '#lib/components/print/Description.svelte';
-	import InfraCards from '#lib/components/print/InfraCards.svelte';
-	import PageDetail from '#lib/components/print/PageDetail.svelte';
+	import BookScope from '#lib/components/print/BookScope.svelte';
 	import PagesSection, { type PageFilter } from '#lib/components/print/PagesSection.svelte';
-	import PrintChips from '#lib/components/print/PrintChips.svelte';
+	import AboutTab from '#lib/components/print/AboutTab.svelte';
+	import EntitiesTab from '#lib/components/print/EntitiesTab.svelte';
+	import InputsTab from '#lib/components/print/InputsTab.svelte';
+	import OverviewTab from '#lib/components/print/OverviewTab.svelte';
 	import PrintHero from '#lib/components/print/PrintHero.svelte';
 	import PrintSidebar from '#lib/components/print/PrintSidebar.svelte';
+	import PrintTabs, { type Tab, type TabId } from '#lib/components/print/PrintTabs.svelte';
+	import ProducesTab from '#lib/components/print/ProducesTab.svelte';
+	import RecipesTab from '#lib/components/print/RecipesTab.svelte';
 	import SelectedPage from '#lib/components/print/SelectedPage.svelte';
-	import { bookProducts, describePrint, infraCards, metaDescription, pageTitle } from '#lib/describe.js';
-	import { imgurUrl } from '#lib/format.js';
+	import { bookProducts, describeNode, describePrint, metaDescription, pageTitle } from '#lib/describe.js';
+	import { groupPages } from '#lib/book-groups.js';
+	import { imgurUrl, signalName } from '#lib/format.js';
 	import { plainText } from '#lib/richtext.js';
-	import type { Role } from '#lib/server/pipeline/analyze.js';
+	import type { NodeAnalysis, Role } from '#lib/server/pipeline/analyze.js';
 	import { usefulTags } from '#lib/tags.js';
 	import type { PageProps } from './$types';
 
@@ -22,34 +28,124 @@
 	const p = $derived(data.print);
 	const a = $derived(data.analysis);
 	const pages = $derived(a.nodes.filter((n) => n.kind === 'blueprint'));
-	const books = $derived(a.nodes.filter((n) => n.kind === 'blueprint_book'));
 	const single = $derived(pages.length === 1 ? pages[0] : null);
 	const root = $derived(a.nodes.find((n) => n.path === ''));
-	const products = $derived(bookProducts(pages, (s) => data.sections[s] ?? 'Other'));
-	const cards = $derived(infraCards(a));
+	const sectionOf = (s: string) => data.sections[s] ?? 'Other';
+	const products = $derived(bookProducts(pages, sectionOf));
+	const countOf = (ps: typeof products) => ps.main.length + ps.groups.reduce((n, g) => n + g.items.length, 0);
+	const produced = $derived(countOf(products));
+	// Made and used up inside the print: shown after what it makes, never as a product.
+	const insideOf = (ps: typeof products, from: NodeAnalysis[], inputs: string[]) => {
+		const out = new Set([...ps.main, ...ps.groups.flatMap((g) => g.items)].map((m) => m.signal));
+		return [...new Set(from.flatMap((n) => n.intermediates))].filter((s) => !out.has(s) && !inputs.includes(s));
+	};
+	const intermediates = $derived(insideOf(products, pages, a.inputs));
 	const title = $derived(String(p.title));
 	// Author tags that add something to our analysis.
 	const tags = $derived(usefulTags(p.tags, a.mods));
 
-	// Finding a page in a big book: by what it makes (click a product) or its role (click a role chip).
-	let filter = $state<PageFilter>(null);
-	const pickItem = (signal: string) => (filter = filter?.kind === 'item' && filter.signal === signal ? null : { kind: 'item', signal });
-	const pickRole = (role: Role) => (filter = filter?.kind === 'role' && filter.role === role ? null : { kind: 'role', role });
-
-	// The selected book page lives in the URL (`?page=3/1`) so links land on it. Picking one is a
-	// shallow navigation: the URL changes (page.shallow.url) but no load runs and the data stays.
-	const selected = $derived.by(() => {
-		const want = (route.shallow?.url ?? route.url).searchParams.get('page');
-		return pages.find((n) => n.path === want) ?? pages[0] ?? null;
-	});
+	// The page state lives in the URL so links land on it: the book page (`?page=3/1`) and the tab
+	// (`?tab=entities`). Changing either is a shallow navigation: the URL changes (page.shallow.url)
+	// but no load runs and the data stays.
+	const query = $derived((route.shallow?.url ?? route.url).searchParams);
+	const selected = $derived(pages.find((n) => n.path === query.get('page')) ?? pages[0] ?? null);
 	const selectedIndex = $derived(selected ? pages.indexOf(selected) : -1);
 	// Pages without a game render get no viewer.
-	const rendered = $derived(new Set(data.rendered));
+	const rendered = $derived(new Set(Object.keys(data.previews)));
 	// The header shows a rendered page when the author has no screenshot: its number in the book.
 	const coverIndex = $derived(!single && data.cover ? pages.findIndex((n) => n.path === data.cover?.path) + 1 || null : null);
 	// Each book page has its own URL, for links and search engines; the first page's is the print's.
 	const pageHref = (path: string) => (path === pages[0]?.path ? `/prints/${p.id}` : `/prints/${p.id}?page=${encodeURIComponent(path)}`);
-	const select = (path: string) => goto(pageHref(path), { shallow: true, replace: true });
+	// A book page's URL opens on its render; the first page's is the print's own, so it says so.
+	const select = (path: string) => goto(path === pages[0]?.path ? `${pageHref(path)}?tab=pages` : pageHref(path), { shallow: true, replace: true });
+	// In a book, the counting tabs show the whole book or the selected page (BookScope).
+	// A page picked on the render tab (or named in the URL) is the one the other tabs show.
+	let scope = $state<'book' | 'page'>(untrack(() => (query.has('page') ? 'page' : 'book')));
+	const selectPage = (path: string) => {
+		scope = 'page';
+		select(path);
+	};
+	const scoped = $derived(!single && scope === 'page' ? selected : null);
+	const scopedProducts = $derived(scoped ? bookProducts([scoped], sectionOf, 8, true) : products);
+	const scopedInside = $derived(scoped ? insideOf(scopedProducts, [scoped], scoped.inputs) : intermediates);
+	/** Picks a page without leaving `tab`. */
+	const selectOn = (tab: TabId) => (path: string) => {
+		const href = pageHref(path);
+		goto(`${href}${href.includes('?') ? '&' : '?'}tab=${tab}`, { shallow: true, replace: true });
+	};
+
+	const tabs = $derived(
+		[
+			{ id: 'overview', label: 'Overview' },
+			{
+				id: 'pages',
+				label: single ? (rendered.has(single.path) ? 'Render' : 'Blueprint') : rendered.size ? 'Render & pages' : 'Pages',
+				count: single ? undefined : pages.length
+			},
+			produced && { id: 'produces', label: 'Produces', count: single ? produced : undefined },
+			// A book's counts would be ambiguous: these tabs switch between the whole book and one page.
+			{ id: 'entities', label: 'Entities', count: single ? a.entityCount : undefined },
+			a.inputs.length && { id: 'inputs', label: 'Inputs', count: single ? a.inputs.length : undefined },
+			Object.keys(a.recipes).length && { id: 'recipes', label: 'Recipes', count: single ? Object.keys(a.recipes).length : undefined },
+			{ id: 'about', label: 'About' }
+		].filter((t): t is Tab => !!t)
+	);
+	const defaultTab = $derived<TabId>(query.has('page') ? 'pages' : 'overview');
+	const tab = $derived(tabs.find((t) => t.id === query.get('tab'))?.id ?? defaultTab);
+	// Only the open tab is rendered (on the server too, so the page stays light), plus the pages tab,
+	// whose page links let crawlers walk the whole book, and About, with the link back to the
+	// original on factorioprints.com that every print carries. A tab once opened stays mounted, so
+	// its search and filters survive switching away and back.
+	const opened = new SvelteSet<TabId>();
+	$effect(() => {
+		opened.add(tab);
+	});
+	const shows = (id: TabId) => id === tab || id === 'pages' || id === 'about' || opened.has(id);
+	const showTab = (id: TabId) => {
+		const url = new URL((route.shallow?.url ?? route.url).href);
+		if (id === defaultTab) url.searchParams.delete('tab');
+		else url.searchParams.set('tab', id);
+		goto(url.pathname + url.search, { shallow: true, replace: true });
+	};
+
+	// The Overview's picture: the selected page's render, else the biggest rendered page's (its
+	// thumbnail when it has one, else the overview image).
+	const preview = $derived.by(() => {
+		const page = selected && rendered.has(selected.path) ? selected : pages.find((n) => n.path === data.cover?.path);
+		if (!page) return null;
+		const fullScreen = `/prints/${p.id}/render?page=${encodeURIComponent(page.path)}`;
+		return { url: data.previews[page.path], thumb: data.thumbs[page.path], page, index: pages.indexOf(page), total: pages.length, fullScreen };
+	});
+	// From the Overview, the render tab opens on the page it showed.
+	const openTab = (id: TabId) => (id === 'pages' && preview && preview.page !== selected ? select(preview.page.path) : showTab(id));
+
+	// A book's page bar (BookScope): the page picker's groups (stages or sub-books) and what its
+	// search matches. Clicking an item on Produces or Inputs opens it searching for that item.
+	const titleOf = (path: string) => {
+		const n = a.nodes.find((x) => x.path === path);
+		return n ? plainText(pageTitle(n).text) : 'Untitled';
+	};
+	const groups = $derived(groupPages(a.nodes, titleOf));
+	const info = $derived(
+		Object.fromEntries(
+			pages.map((n) => [
+				n.path,
+				{
+					icons: n.icons,
+					find: [titleOf(n.path), describeNode(n), ...[...n.outputs, ...n.products, ...n.inputs].map(signalName)].join(' ').toLowerCase()
+				}
+			])
+		)
+	);
+	let bookScope = $state<BookScope>();
+	// The render tab's page grid can show one role's pages (a role chip on the Overview).
+	let filter = $state<PageFilter>(null);
+	const pickRole = (role: Role) => {
+		const same = filter?.kind === 'role' && filter.role === role;
+		filter = same ? null : { kind: 'role', role };
+		if (!same) showTab('pages');
+	};
+	const findPages = (signal: string) => bookScope?.find(signalName(signal).toLowerCase());
 
 	// One view per print per tab, for the "Popular" sort (lib/server/views.ts). Sent from the browser,
 	// so hover preloads (which run this page's load) and most crawlers don't count; picking a book
@@ -108,51 +204,165 @@
 	{root}
 	cover={data.cover}
 	{coverIndex}
-	main={products.main}
-	groups={products.groups}
-	activeProduct={filter?.kind === 'item' ? filter.signal : null}
-	onpick={single ? undefined : pickItem}
 	copyLabel={bookCopyLabel}
 	oncopy={() => copy('book')}
 	icons={data.icons}
 />
 
-<div class="grid gap-8 lg:grid-cols-[1fr_20rem]">
-	<div class="min-w-0 space-y-6">
-		<PrintChips roles={a.roles} {tags} single={!!single} activeRole={filter?.kind === 'role' ? filter.role : null} onrole={pickRole} />
-		{#if single && !products.main.length && !products.groups.length}<p class="text-stone-200">{describePrint(a)}</p>{/if}
+<div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
+	<div class="min-w-0">
+		<PrintTabs {tabs} active={tab} onselect={showTab} />
 
-		{#if single}
-			<section class="space-y-3">
-				{#if rendered.has(single.path)}<InlineViewer printId={p.id} path={single.path} />{/if}
-				<PageDetail page={single} icons={data.icons} />
-			</section>
-		{:else if selected}
-			<SelectedPage
-				page={selected}
-				index={selectedIndex}
-				total={pages.length}
-				printId={p.id}
-				rendered={rendered.has(selected.path)}
-				prev={pages[selectedIndex - 1]?.path ?? null}
-				next={pages[selectedIndex + 1]?.path ?? null}
-				href={pageHref}
-				onselect={select}
-				copyLabel={copyLabel(copied.page, 'Copy this page')}
-				oncopy={() => copy('page')}
-				icons={data.icons}
-			/>
-			<PagesSection {pages} {books} selected={selected.path} href={pageHref} onselect={select} {filter} onclearfilter={() => (filter = null)} icons={data.icons} />
-		{/if}
+		<div class="pt-6">
+			{#if !single && selected && tab !== 'overview' && tab !== 'pages' && tab !== 'about'}
+				<BookScope
+					bind:this={bookScope}
+					{groups}
+					{info}
+					thumbs={data.thumbs}
+					selected={selected.path}
+					index={selectedIndex}
+					total={pages.length}
+					title={titleOf(selected.path)}
+					prev={pages[selectedIndex - 1]?.path ?? null}
+					next={pages[selectedIndex + 1]?.path ?? null}
+					bind:scope
+					href={pageHref}
+					onpick={selectOn(tab)}
+					icons={data.icons}
+				/>
+			{/if}
+			<div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview" hidden={tab !== 'overview'}>
+				{#if shows('overview')}
+					<OverviewTab
+						print={p}
+						analysis={a}
+						{single}
+						summary={single && !produced ? describePrint(a) : null}
+						main={products.main}
+						more={produced - products.main.length}
+						{tags}
+						{preview}
+						descriptionHtml={data.descriptionHtml}
+						descriptionLong={data.descriptionLong}
+						activeRole={filter?.kind === 'role' ? filter.role : null}
+						onrole={single ? undefined : pickRole}
+						ontab={openTab}
+						icons={data.icons}
+					/>
+				{/if}
+			</div>
 
-		{#if data.descriptionHtml}
-			<Description html={data.descriptionHtml} long={data.descriptionLong} />
-		{/if}
+			<div role="tabpanel" id="panel-pages" aria-labelledby="tab-pages" hidden={tab !== 'pages'} class="space-y-6">
+				{#if shows('pages')}
+					{#if single}
+						<SelectedPage
+							page={single}
+							index={0}
+							total={1}
+							printId={p.id}
+							rendered={rendered.has(single.path)}
+							live={tab === 'pages'}
+							prev={null}
+							next={null}
+							href={pageHref}
+							onselect={select}
+							copyLabel=""
+							icons={data.icons}
+						/>
+					{:else if selected}
+						<PagesSection
+							{pages}
+							books={a.nodes.filter((n) => n.kind === 'blueprint_book')}
+							rootTitle={root ? pageTitle(root).text : title}
+							selected={selected.path}
+							href={pageHref}
+							onselect={selectPage}
+							{filter}
+							onclearfilter={() => (filter = null)}
+							roles={a.roles}
+							onrole={pickRole}
+							thumbs={data.thumbs}
+							icons={data.icons}
+						>
+							<SelectedPage
+								page={selected}
+								index={selectedIndex}
+								total={pages.length}
+								printId={p.id}
+								rendered={rendered.has(selected.path)}
+								live={tab === 'pages'}
+								prev={pages[selectedIndex - 1]?.path ?? null}
+								next={pages[selectedIndex + 1]?.path ?? null}
+								href={pageHref}
+								onselect={selectPage}
+								copyLabel={copyLabel(copied.page, 'Copy this page')}
+								oncopy={() => copy('page')}
+								icons={data.icons}
+							/>
+						</PagesSection>
+					{/if}
+				{/if}
+			</div>
 
-		{#if cards.length}
-			<InfraCards {cards} byCategory={a.byCategory} heading={!single} icons={data.icons} />
-		{/if}
+			{#if produced}
+				<div role="tabpanel" id="panel-produces" aria-labelledby="tab-produces" hidden={tab !== 'produces'}>
+					{#if shows('produces')}
+						<ProducesTab
+							main={scopedProducts.main}
+							groups={scopedProducts.groups}
+							sections={data.sections}
+							intermediates={scopedInside}
+							byQuality={(scoped ?? a).productsByQuality}
+							empty={scoped ? `This page makes nothing: ${describeNode(scoped)}.` : null}
+							onpick={single ? undefined : findPages}
+							icons={data.icons}
+						/>
+					{/if}
+				</div>
+			{/if}
+
+			{#if a.inputs.length}
+				<div role="tabpanel" id="panel-inputs" aria-labelledby="tab-inputs" hidden={tab !== 'inputs'}>
+					{#if shows('inputs')}
+						<InputsTab
+							inputs={scoped ? scoped.inputs : a.inputs}
+							pages={scoped ? [scoped] : pages}
+							single={scoped ?? single}
+							onpick={single ? undefined : findPages}
+							icons={data.icons}
+						/>
+					{/if}
+				</div>
+			{/if}
+
+			<div role="tabpanel" id="panel-entities" aria-labelledby="tab-entities" hidden={tab !== 'entities'}>
+				{#if shows('entities')}
+					<EntitiesTab analysis={a} page={scoped} inBook={!single} icons={data.icons} />
+				{/if}
+			</div>
+
+			{#if Object.keys(a.recipes).length}
+				<div role="tabpanel" id="panel-recipes" aria-labelledby="tab-recipes" hidden={tab !== 'recipes'}>
+					{#if shows('recipes')}
+						<RecipesTab
+							recipes={scoped ? scoped.recipes : a.recipes}
+							info={data.recipes}
+							pages={scoped ? [scoped] : pages}
+							single={scoped ?? single}
+							icons={data.icons}
+						/>
+					{/if}
+				</div>
+			{/if}
+
+			<div role="tabpanel" id="panel-about" aria-labelledby="tab-about" hidden={tab !== 'about'}>
+				{#if shows('about')}
+					<AboutTab print={p} analysis={a} {root} icons={data.icons} />
+				{/if}
+			</div>
+		</div>
 	</div>
 
-	<PrintSidebar analysis={a} main={products.main} icons={data.icons} />
+	<PrintSidebar print={p} analysis={a} size={single?.width && single.height ? `${single.width}×${single.height} tiles` : null} />
 </div>

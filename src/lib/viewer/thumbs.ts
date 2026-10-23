@@ -51,6 +51,13 @@ export interface ThumbsIndex {
 	pages: Record<string, ThumbPage>;
 }
 
+/** A page's thumbnail as a page shows it: its srcset and the overview's size (for the aspect only). */
+export interface PageThumb {
+	srcset: string;
+	w: number;
+	h: number;
+}
+
 /** A thumbnail's pixel size at a tier: fits a tier × tier·9/16 box, never larger than the overview (`scale` ≤ 1). */
 export const thumbSize = (w: number, h: number, tier: number) => {
 	const scale = Math.min(1, tier / w, tier / THUMB_ASPECT / h);

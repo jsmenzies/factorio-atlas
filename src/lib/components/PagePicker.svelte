@@ -1,14 +1,6 @@
-<script lang="ts" module>
-	/** A page's thumbnail: its srcset and the overview's size (for the aspect only). */
-	export interface PageThumb {
-		srcset: string;
-		w: number;
-		h: number;
-	}
-</script>
-
 <script lang="ts">
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
+	import type { PageThumb } from '#lib/viewer/thumbs.js';
 	import BlueprintIcons from '#lib/components/BlueprintIcons.svelte';
 	import type { PageGroup } from '#lib/book-groups.js';
 	import type { IconSet } from '#lib/icons.js';
@@ -28,6 +20,7 @@
 		thumbs = {},
 		icons,
 		href,
+		initialQuery = '',
 		onpick,
 		onclose
 	}: {
@@ -38,11 +31,13 @@
 		thumbs?: Record<string, PageThumb>;
 		icons: IconSet;
 		href: (path: string) => string;
+		/** What the search box starts with. */
+		initialQuery?: string;
 		onpick: (path: string) => void;
 		onclose: () => void;
 	} = $props();
 
-	let query = $state('');
+	let query = $state(untrack(() => initialQuery));
 	/** Pages whose thumbnail failed to load, which show their icons instead. */
 	let failed = $state<string[]>([]);
 	const words = $derived(query.trim().toLowerCase().split(/\s+/).filter(Boolean));

@@ -3,7 +3,7 @@ import { iconSet } from '#lib/server/icon-set.js';
 import { renderDescription } from '#lib/server/markdown.js';
 import { gameData } from '#lib/server/pipeline/game-data.js';
 import { loadPrintDoc, printTexts } from '#lib/server/print-pages.js';
-import { renderBase, renderOverviews } from '#lib/server/renders.js';
+import { pageThumbs, renderBase, renderOverviews } from '#lib/server/renders.js';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -11,26 +11,45 @@ import type { PageServerLoad } from './$types';
  * the page itself (`/prints/[id]/viewer`), so `?page=` changes don't re-run this load.
  */
 export const load: PageServerLoad = async ({ params }) => {
-	// The print page reads only R2 (its document and render index), never D1.
+	// The print page reads only R2 (its document, render index and thumbnails), never D1.
+	const thumbs = pageThumbs(params.id);
 	const [found, overviews] = await loadPrintDoc(params.id, renderOverviews(params.id));
-	const rendered = Object.keys(overviews);
 	const a = found.analysis;
-	// The header's background when the author has no screenshot: the rendered page with the most
-	// entities, as a print's first page is often a small header or a thin strip of track.
-	const biggest = a.nodes.filter((n) => n.path in overviews).sort((x, y) => y.entityCount - x.entityCount)[0];
-	const cover = biggest ? { path: biggest.path, url: `${renderBase(params.id)}/${overviews[biggest.path]}` } : null;
+	// Each rendered page's overview image: the Overview tab's preview, and the header's background
+	// when the author has no screenshot.
+	const previews: Record<string, string> = Object.fromEntries(
+		Object.entries(overviews).map(([path, file]) => [path, `${renderBase(params.id)}/${file}`])
+	);
+	// The header's background: the rendered page with the most entities, as a print's first page
+	// is often a small header or a thin strip of track.
+	const biggest = a.nodes.filter((n) => n.path in previews).sort((x, y) => y.entityCount - x.entityCount)[0];
+	const cover = biggest ? { path: biggest.path, url: previews[biggest.path] } : null;
+	// What each recipe takes and makes, from the game data, for the Recipes tab.
+	const recipes = Object.fromEntries(
+		Object.keys(a.recipes).map((name) => {
+			const r = gameData.recipes[name];
+			const main = r?.results[0]?.[0] ?? name;
+			const section = sectionOf(main, gameData.itemInfo[main]?.group ?? '') ?? 'Other';
+			return [name, { section, time: r?.time ?? null, ingredients: r?.ingredients ?? [], results: r?.results ?? [] }];
+		})
+	);
+	const recipeItems = Object.values(recipes).flatMap((r) => [...r.ingredients, ...r.results].map(([name]) => name));
 	const icons = iconSet(
 		{
 			recipe: Object.keys(a.recipes),
 			entity: Object.keys(a.entities),
-			item: Object.keys(a.modules).map((m) => m.split('@')[0]),
+			item: [...Object.keys(a.modules).map((m) => m.split('@')[0]), ...recipeItems],
 			tile: Object.keys(a.tiles),
-			// Badges on the sidebar's entities and modules above normal quality.
-			quality: Object.keys(a.qualities),
+			// Badges on entities and modules, and the Entities tab's quality filter.
+			quality: ['normal', ...Object.keys(a.qualities)],
 			// Rates, page icons, and what each page makes and takes.
-			signals: [...Object.keys(a.rates), ...a.nodes.flatMap((n) => [...n.icons, ...n.outputs, ...n.products, ...n.inputs])]
+			signals: [
+				...Object.keys(a.rates),
+				...a.nodes.flatMap((n) => [...n.icons, ...n.outputs, ...n.products, ...n.inputs, ...n.intermediates])
+			]
 		},
-		printTexts(found)
+		// Station names may hold rich-text icons too.
+		[...printTexts(found), ...a.trainStops]
 	);
 	// Crafting-menu section per item a page makes, for grouping what isn't a main product.
 	const sections = Object.fromEntries(
@@ -45,5 +64,16 @@ export const load: PageServerLoad = async ({ params }) => {
 	const { description_md, ...print } = found.print;
 	const markdown = String(description_md ?? '');
 	const descriptionHtml = renderDescription(markdown);
-	return { ...found, print, icons, sections, descriptionHtml, descriptionLong: markdown.length > 900, rendered, cover };
+	return {
+		...found,
+		print,
+		icons,
+		sections,
+		recipes,
+		descriptionHtml,
+		descriptionLong: markdown.length > 900,
+		previews,
+		cover,
+		thumbs: await thumbs
+	};
 };

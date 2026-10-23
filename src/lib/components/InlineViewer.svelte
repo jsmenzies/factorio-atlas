@@ -29,7 +29,8 @@
 	const fullScreen = $derived(`/prints/${printId}/render?page=${encodeURIComponent(path)}`);
 </script>
 
-<div class="relative h-[28rem] overflow-hidden rounded-lg border border-stone-800 bg-stone-950">
+<!-- Borderless: it sits inside the selected page's card (SelectedPage). -->
+<div class="relative h-[30rem] overflow-hidden bg-stone-950">
 	{#if data?.page && data.render}
 		{#key path}
 			<!-- A viewer that throws (bad page data, a tooltip bug) loses only itself, not the print page. -->
@@ -47,7 +48,7 @@
 	{/if}
 	<a
 		href={fullScreen}
-		class="absolute right-2 bottom-2 z-10 rounded bg-stone-900/90 px-2 py-1 text-xs text-stone-300 ring-1 ring-stone-700 hover:text-amber-300"
+		class="absolute right-3 bottom-3 z-10 rounded-lg border border-stone-700 bg-stone-900/90 px-3 py-1.5 text-sm text-stone-300 shadow-lg hover:text-amber-300"
 		>Full screen ⤢</a
 	>
 </div>

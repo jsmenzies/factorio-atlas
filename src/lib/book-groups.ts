@@ -25,7 +25,7 @@ const STAGE = /^\s*(\d{1,3})\s*[.):-]\s*(\S.*)$/;
  * else one group with no title. Groups are runs of neighbouring pages, so a book that goes back to
  * an earlier stage gets a second group for it. `titleOf` gives any node's plain-text title.
  */
-export const groupPages = (nodes: PageRef[], titleOf: (path: string) => string): PageGroup[] => {
+export const groupPages = (nodes: Pick<PageRef, 'path' | 'kind'>[], titleOf: (path: string) => string): PageGroup[] => {
 	const pages = nodes.filter((n) => n.kind === 'blueprint').map((n, i) => ({ path: n.path, n: i + 1, title: titleOf(n.path) }));
 	if (!pages.length) return [];
 

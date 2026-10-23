@@ -218,7 +218,6 @@ export const metaDescription = (
 
 /** Infra categories worth a card for this print, in display order, with their headline. */
 export const infraCards = (a: PrintAnalysis): { cat: Category; title: string; headline: string }[] => {
-	const ctx: CategoryContext = { beltThroughput: a.beltThroughput, trainStops: a.trainStops, wires: a.wires, signs: a.signs };
 	const c = a.byCategory;
 	const cards: { cat: Category; title: string; show: boolean }[] = [
 		{ cat: 'belts', title: 'Belts', show: !!c.belts },
@@ -237,9 +236,35 @@ export const infraCards = (a: PrintAnalysis): { cat: Category; title: string; he
 		.map(({ cat, title }) => ({
 			cat,
 			title,
-			headline: describeCategory(cat, c, ctx)
+			headline: printCategoryHeadline(a, cat)
 		}));
 };
+
+/** Every category's name as a heading, in the order the print page lists them. */
+export const CATEGORY_TITLE: [Category, string][] = [
+	['production', 'Production'],
+	['mining', 'Mining'],
+	['research', 'Research'],
+	['belts', 'Belts'],
+	['inserters', 'Inserters'],
+	['fluids', 'Pipes & fluids'],
+	['power', 'Power'],
+	['rail', 'Trains'],
+	['circuits', 'Circuits'],
+	['bots', 'Bots'],
+	['storage', 'Storage'],
+	['defence', 'Defence'],
+	['platform', 'Space platform'],
+	['other', 'Other']
+];
+
+/** A category's headline over a whole print, as its infra card would say it ("3,303 belts · 43 splitters"). */
+export const printCategoryHeadline = (a: PrintAnalysis, cat: Category): string =>
+	describeCategory(cat, a.byCategory, { beltThroughput: a.beltThroughput, trainStops: a.trainStops, wires: a.wires, signs: a.signs });
+
+/** The same for one page. */
+export const pageCategoryHeadline = (n: NodeAnalysis, cat: Category): string =>
+	describeCategory(cat, n.byCategory, nodeContext(n, n.beltThroughput));
 
 /**
  * A page's name: its label, or for untitled pages its own icons ("#1 · Assembling machine 2 ·
@@ -256,8 +281,8 @@ export const pageTitle = (n: Pick<NodeAnalysis, 'label' | 'icons'>): { text: str
 	return { text: text || 'Untitled', derived: true };
 };
 
-/** Machines, modules and beacons on a production page: "20 assembling machine 2s · 40 productivity module 3s". */
-export const describeSetup = (n: NodeAnalysis): string => {
+/** Machines, modules and beacons on a production page or a whole print: "20 assembling machine 2s · 40 productivity module 3s". */
+export const describeSetup = (n: Pick<NodeAnalysis, 'modules' | 'entities' | 'byCategory'>): string => {
 	const modules: Counts = {};
 	for (const [m, x] of Object.entries(n.modules)) modules[m.split('@')[0]] = (modules[m.split('@')[0]] ?? 0) + x;
 	const beacons = sum(n.entities, (x) => /beacon/.test(x));
@@ -285,7 +310,7 @@ const MALL_LABEL = /\b(mall|shop)s?\b/i;
 /** Pages that make many different things for building with: malls and "shops". */
 export const isMall = (n: NodeAnalysis) => n.role === 'production' && (n.products.length >= 4 || MALL_LABEL.test(n.label ?? ''));
 
-const GROUP_ORDER = ['Science', 'Intermediates', 'Mall & shops', 'Logistics', 'Production', 'Combat', 'Space', 'Fluids', 'Other'];
+export const GROUP_ORDER = ['Science', 'Intermediates', 'Mall & shops', 'Logistics', 'Production', 'Combat', 'Space', 'Fluids', 'Other'];
 
 /**
  * What a print makes, split into what matters and the rest. Main products are what some
@@ -293,18 +318,20 @@ const GROUP_ORDER = ['Science', 'Intermediates', 'Mall & shops', 'Logistics', 'P
  * fluids never (they feed other pages). Everything else is grouped: mall and shop products
  * together, the rest by crafting-menu section. Rates are the best single page's, never a sum:
  * books are mostly variants of one build (plain vs gear-input), and adding them would
- * overstate what anyone builds.
+ * overstate what anyone builds. `inBook` says the pages are (some of) a book's, so a mall page's
+ * products count too.
  */
 export const bookProducts = (
 	pages: NodeAnalysis[],
 	sectionOf: (signal: string) => string,
-	maxMain = 8
+	maxMain = 8,
+	inBook = pages.length > 1
 ): { main: MadeItem[]; groups: ProductGroup[] } => {
 	const made = new Map<string, MadeItem>();
 	const fromMall = new Set<string>();
 	const fromBuild = new Set<string>();
 	for (const n of pages) {
-		const mall = pages.length > 1 && isMall(n);
+		const mall = inBook && isMall(n);
 		const signals = mall ? [...new Set([...n.outputs, ...n.products])] : n.outputs;
 		signals.forEach((signal, i) => {
 			const claimed = i === 0 && n.claimedRate ? n.claimedRate : null;

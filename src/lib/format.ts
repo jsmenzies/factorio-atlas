@@ -19,3 +19,7 @@ export const imgurUrl = (id: string, type: string | null, size: 'thumb' | 'large
 };
 
 export const sourceUrl = (id: string) => `https://factorioprints.com/view/${id}`;
+
+const DAY = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+/** "24 Oct 2026": the same on the server and in every browser, so hydration never disagrees. */
+export const formatDate = (ms: number) => DAY.format(ms);
