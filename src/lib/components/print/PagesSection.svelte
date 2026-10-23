@@ -18,6 +18,7 @@
 		pages,
 		books,
 		selected,
+		href,
 		onselect,
 		filter,
 		onclearfilter,
@@ -26,6 +27,8 @@
 		pages: NodeAnalysis[];
 		books: NodeAnalysis[];
 		selected: string;
+		/** A book page's URL. */
+		href: (path: string) => string;
 		onselect: (path: string) => void;
 		filter: PageFilter;
 		onclearfilter: () => void;
@@ -70,7 +73,7 @@
 		{#if filter || query.trim()}<span class="text-sm text-stone-500">{shownPages.length} of {pages.length}</span>{/if}
 	</div>
 	{#if shownPages.length}
-		<BookPages pages={shownPages} {books} {selected} {onselect} {icons} />
+		<BookPages pages={shownPages} {books} {selected} {href} {onselect} {icons} />
 	{:else}
 		<p class="rounded border border-dashed border-stone-700 p-4 text-sm text-stone-500">No pages match. Clear the filter or search to see them all.</p>
 	{/if}

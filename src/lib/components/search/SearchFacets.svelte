@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
 	import type { IconSet } from '#lib/icons.js';
+	import { searchRel } from '#lib/search-seo.js';
 
 	type Facet = { value: string; n: number };
 
@@ -43,9 +44,11 @@
 		{/if}
 		<ul class="space-y-0.5">
 			{#each items as f (f.value)}
+				{@const href = toggle(key, f.value)}
 				<li>
 					<a
-						href={toggle(key, f.value)}
+						{href}
+						rel={searchRel(href)}
 						class="flex items-center gap-2 rounded px-2 py-0.5 hover:bg-stone-800 {active(key, f.value) ? 'bg-amber-500/15 text-amber-300' : ''}"
 					>
 						{#if icon}
@@ -68,8 +71,9 @@
 		<h2 class="mb-2 text-xs font-semibold tracking-wide text-stone-400 uppercase">Features</h2>
 		<ul class="space-y-0.5">
 			{#each FEATURES as [k, v, l] (k + v)}
+				{@const href = toggle(k, v)}
 				<li>
-					<a href={toggle(k, v)} class="block rounded px-2 py-0.5 hover:bg-stone-800 {active(k, v) ? 'bg-amber-500/15 text-amber-300' : ''}">{l}</a>
+					<a {href} rel={searchRel(href)} class="block rounded px-2 py-0.5 hover:bg-stone-800 {active(k, v) ? 'bg-amber-500/15 text-amber-300' : ''}">{l}</a>
 				</li>
 			{/each}
 		</ul>

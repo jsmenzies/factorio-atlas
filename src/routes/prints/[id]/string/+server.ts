@@ -8,7 +8,8 @@ import type { RequestHandler } from './$types';
  */
 export const GET: RequestHandler = async ({ params, url }) => {
 	const path = url.searchParams.get('page');
-	const headers = { 'cache-control': 'public, max-age=300' };
+	// Not for search engines (robots.txt disallows it too).
+	const headers = { 'cache-control': 'public, max-age=300', 'x-robots-tag': 'noindex' };
 	if (path === null || path === '') {
 		const body = await loadString(params.id);
 		if (body === null) error(404, 'Not in raw store');

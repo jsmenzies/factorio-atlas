@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { bookProducts, describeBook } from './describe.js';
+import { bookProducts, describeBook, metaDescription } from './describe.js';
 import type { NodeAnalysis, PrintAnalysis } from './server/pipeline/analyze.js';
 
 const page = (path: string, label: string, outputs: string[], inputs: string[] = [], extra: Partial<NodeAnalysis> = {}) =>
@@ -68,5 +68,48 @@ describe('describeBook', () => {
 
 	test('unnumbered books get a page count and the role mix', () => {
 		expect(describeBook(book(['1 to 1', '1 to 2', '2 to 1'], { belts: 3 }))).toBe('Book of 3 pages. All belt pages.');
+	});
+});
+
+describe('metaDescription', () => {
+	const print = (outputs: string[][], extra: Partial<PrintAnalysis> = {}) =>
+		({
+			nodes: outputs.map((o, i) => page(String(i), `Page ${i}`, o)),
+			roles: { production: outputs.length },
+			gameVersion: '2.0.72',
+			requiresSpaceAge: false,
+			...extra
+		}) as unknown as PrintAnalysis;
+
+	test('the summary, then version, book and author', () => {
+		expect(metaDescription(print([['item:electronic-circuit'], ['item:advanced-circuit']]), 'Nilaus')).toBe(
+			'Book of 2 pages. Makes Advanced circuit, Electronic circuit. Factorio 2.0 blueprint book by Nilaus.'
+		);
+	});
+
+	test('Space Age, and no author or version when unknown', () => {
+		expect(metaDescription(print([[], []], { requiresSpaceAge: true }), ' ')).toBe(
+			'Book of 2 pages. Factorio 2.0 Space Age blueprint book.'
+		);
+		expect(metaDescription(print([[], []], { gameVersion: null }), null)).toBe('Book of 2 pages. Factorio blueprint book.');
+	});
+
+	test('a long summary is cut at a word; the last sentence stays whole', () => {
+		const many = Array.from({ length: 40 }, (_, i) => [`item:product-number-${i}`]);
+		const text = metaDescription(print(many, { roles: { production: 30, belts: 5, rail: 5 } }), 'An author with a long name');
+		expect(text.length).toBeLessThan(161);
+		expect(text.endsWith('… Factorio 2.0 blueprint book by An author with a long name.')).toBe(true);
+		expect(text.startsWith('Book of 40 pages: 30 production · 5 belts · 5 rail.')).toBe(true);
+	});
+
+	test('a book page: its own summary and where it sits in the book', () => {
+		const a = print([['item:electronic-circuit'], ['item:advanced-circuit'], []]);
+		const node = { ...a.nodes[1], trainStops: [], wires: 0, signs: [], estimatedRate: 2.5 } as unknown as NodeAnalysis;
+		expect(metaDescription(a, 'Nilaus', { page: { node, index: 1 } })).toBe(
+			'Makes Advanced circuit ≈ 2.5/s. Page 2 of 3 in a Factorio 2.0 blueprint book by Nilaus.'
+		);
+		expect(metaDescription(a, 'Nilaus', { page: { node, index: 1 }, rendered: true })).toBe(
+			'Makes Advanced circuit ≈ 2.5/s. Page 2 of 3 in a Factorio 2.0 blueprint book by Nilaus. With a zoomable in-game render.'
+		);
 	});
 });

@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import BlueprintIcons from '#lib/components/BlueprintIcons.svelte';
 	import BlueprintViewer from '#lib/components/BlueprintViewer.svelte';
+	import PageMeta from '#lib/components/PageMeta.svelte';
 	import RichText from '#lib/components/RichText.svelte';
 	import { plainText } from '#lib/richtext.js';
 	import { imgurUrl } from '#lib/format.js';
@@ -29,7 +30,13 @@
 	const here = $derived(data.path !== null ? data.info[data.path] : undefined);
 </script>
 
-<svelte:head><title>Render · {plainText(p.title)} · Blueprint Atlas</title></svelte:head>
+<!-- The print page is the one to index; this full-screen view repeats it with less text. -->
+<PageMeta
+	title="Render · {plainText(p.title)} · Blueprint Atlas"
+	description="Full-screen game render of {plainText(p.title)}, a Factorio blueprint."
+	noindex
+	image={p.image_id ? { url: imgurUrl(p.image_id, p.image_type, 'preview'), alt: `Screenshot of ${plainText(p.title)}` } : undefined}
+/>
 
 <div class="fixed inset-0 z-20 flex flex-col bg-stone-950 text-stone-200">
 	<header class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-stone-800 bg-stone-900 px-3 py-2 text-sm">

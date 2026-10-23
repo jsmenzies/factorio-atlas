@@ -1,7 +1,9 @@
 <script lang="ts">
+	import type { ComponentProps } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import Icon from '#lib/components/Icon.svelte';
+	import PageMeta from '#lib/components/PageMeta.svelte';
 	import SearchBox from '#lib/components/SearchBox.svelte';
 	import ResultCard from '#lib/components/search/ResultCard.svelte';
 	import RenderToggle from '#lib/components/search/RenderToggle.svelte';
@@ -10,6 +12,7 @@
 	import { signalName } from '#lib/format.js';
 	import { parseTag } from '#lib/tags.js';
 	import { MULTI_FILTERS } from '#lib/filters.js';
+	import { landingMeta, landingPath, searchPage, searchRel } from '#lib/search-seo.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -70,7 +73,46 @@
 		...(data.params.trains ? [{ key: 'trains', value: '1', label: 'Uses trains' }] : []),
 		...(data.params.render ? [{ key: 'render', value: '1', label: 'Has a render' }] : [])
 	]);
+
+	/**
+	 * For search engines (lib/search-seo.ts): the home page and landing pages for one known item or
+	 * building with results are indexed under one canonical URL, with a visible heading; every other
+	 * search is noindex, with a heading only screen readers see.
+	 */
+	const seo = $derived.by((): { meta: ComponentProps<typeof PageMeta>; heading: string; style: 'intro' | 'title' | 'hidden' } => {
+		const kind = searchPage(page.url.searchParams);
+		if (kind?.kind === 'home') {
+			return {
+				meta: {
+					title: 'Blueprint Atlas · Search Factorio blueprints with high-res renders',
+					description:
+						'Search Factorio blueprints by what they make, the buildings they use, game version and Space Age, and explore them in zoomable in-game renders.',
+					canonical: '/'
+				},
+				heading:
+					'Search Factorio blueprints by what they make and the buildings they use, and explore thousands of them in zoomable in-game renders.',
+				style: 'intro'
+			};
+		}
+		const item = kind ? data.picker.find((p) => p.signal === kind.value) : undefined;
+		if (kind && item && item.n > 0) {
+			return { meta: { ...landingMeta(kind, item.label, item.n), canonical: landingPath(kind) }, heading: `${item.label} blueprints`, style: 'title' };
+		}
+		const what = [...(data.params.q ? [`“${data.params.q}”`] : []), ...chips.map((c) => c.label)].join(', ');
+		return {
+			meta: { title: `${what || 'Search'} · Blueprint Atlas`, description: `Factorio blueprints: ${what || 'search'}.`, noindex: true },
+			heading: 'Search results',
+			style: 'hidden'
+		};
+	});
 </script>
+
+<PageMeta {...seo.meta} />
+
+<!-- The home page's one-line intro, a landing page's title, or (other searches) a heading for screen readers only. -->
+<h1 class={{ intro: 'mb-3 text-sm text-stone-400', title: 'mb-3 text-xl font-semibold text-stone-100', hidden: 'sr-only' }[seo.style]}>
+	{seo.heading}
+</h1>
 
 <!-- Enter submits (the input is type="search"); the active filters and sort ride along as hidden inputs. -->
 <form method="GET" role="search" class="mb-6 flex gap-2">
@@ -101,8 +143,10 @@
 		{#if chips.length}
 			<div class="mb-3 flex flex-wrap gap-2 text-sm">
 				{#each chips as c (`${c.key}=${c.value}`)}
+					{@const href = toggle(c.key, c.value)}
 					<a
-						href={toggle(c.key, c.value)}
+						{href}
+						rel={searchRel(href)}
 						class="flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 py-0.5 pr-3 text-amber-200 hover:bg-amber-500/20 {c.icon
 							? 'pl-1'
 							: 'pl-3'}"

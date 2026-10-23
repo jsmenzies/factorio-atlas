@@ -4,6 +4,7 @@
 	import RichText from '#lib/components/RichText.svelte';
 	import { describeNode, pageTitle } from '#lib/describe.js';
 	import type { IconSet } from '#lib/icons.js';
+	import { plainClick } from '#lib/links.js';
 	import type { NodeAnalysis } from '#lib/server/pipeline/analyze.js';
 	import PageDetail from './PageDetail.svelte';
 
@@ -14,7 +15,10 @@
 		total,
 		printId,
 		rendered,
-		onstep,
+		prev,
+		next,
+		href,
+		onselect,
 		copyLabel,
 		oncopy,
 		icons
@@ -25,7 +29,12 @@
 		printId: string;
 		/** Whether the page has a game render (else there's no viewer). */
 		rendered: boolean;
-		onstep: (by: number) => void;
+		/** The previous and next pages' paths, null at either end. ‹ › are links, so a crawler can walk the whole book. */
+		prev: string | null;
+		next: string | null;
+		href: (path: string) => string;
+		/** Picks a page in place (a plain click); other clicks follow the link. */
+		onselect: (path: string) => void;
 		copyLabel: string;
 		oncopy: () => void;
 		icons: IconSet;
@@ -37,18 +46,23 @@
 <section class="space-y-3 rounded-lg border border-stone-800 bg-stone-900/40 p-3" aria-label="Selected page">
 	<div class="flex flex-wrap items-center gap-2">
 		<div class="flex items-center gap-1">
-			<button
-				class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700 disabled:opacity-40"
-				disabled={index <= 0}
-				onclick={() => onstep(-1)}
-				aria-label="Previous page">‹</button
-			>
-			<button
-				class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700 disabled:opacity-40"
-				disabled={index >= total - 1}
-				onclick={() => onstep(1)}
-				aria-label="Next page">›</button
-			>
+			{#each [{ path: prev, label: 'Previous page', arrow: '‹' }, { path: next, label: 'Next page', arrow: '›' }] as step (step.label)}
+				{#if step.path === null}
+					<span class="rounded bg-stone-800 px-2 py-0.5 opacity-40" aria-hidden="true">{step.arrow}</span>
+				{:else}
+					{@const path = step.path}
+					<a
+						href={href(path)}
+						onclick={(e) => {
+							if (!plainClick(e)) return;
+							e.preventDefault();
+							onselect(path);
+						}}
+						class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700"
+						aria-label={step.label}>{step.arrow}</a
+					>
+				{/if}
+			{/each}
 		</div>
 		{#if page.icons.length}<BlueprintIcons {icons} signals={page.icons} size={36} />{/if}
 		<div class="min-w-0 flex-1">

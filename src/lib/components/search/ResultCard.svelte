@@ -4,6 +4,7 @@
 	import { imgurUrl, signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import type { PrintCard } from '#lib/server/queries.js';
+	import { searchRel } from '#lib/search-seo.js';
 
 	/**
 	 * One search result: screenshot, title, author and counts as a link to the print, then its
@@ -31,7 +32,16 @@
 	<a href="/prints/{p.id}" class="block">
 		{#if p.image_id}
 			<div class="relative">
-				<img referrerpolicy="no-referrer" src={imgurUrl(p.image_id, p.image_type)} alt="" loading="lazy" class="aspect-video w-full bg-stone-800 object-cover" />
+				<!-- Imgur's 320 px thumbnail, or its 640 px one where the card is wider or the screen sharper. -->
+				<img
+					referrerpolicy="no-referrer"
+					src={imgurUrl(p.image_id, p.image_type)}
+					srcset="{imgurUrl(p.image_id, p.image_type)} 320w, {imgurUrl(p.image_id, p.image_type, 'large')} 640w"
+					sizes="(min-width: 1280px) 22rem, (min-width: 640px) 50vw, 100vw"
+					alt=""
+					loading="lazy"
+					class="aspect-video w-full bg-stone-800 object-cover"
+				/>
 				{#if p.has_render}
 					<span
 						title="Has an in-game render"
@@ -59,24 +69,28 @@
 		<div class="flex flex-wrap gap-1 text-xs">
 			{#if p.game_version}<a
 					href={toggle('version', p.game_version)}
+					rel={searchRel(toggle('version', p.game_version))}
 					title="Filter by Factorio {p.game_version}"
 					class="rounded bg-stone-800 px-1.5 py-0.5 hover:bg-stone-700 {active('version', p.game_version) ? 'ring-1 ring-amber-500' : ''}"
 					>saved in {p.game_version}</a
 				>{/if}
 			{#each p.claimed_versions as v (v)}<a
 					href={toggle('version', v)}
+					rel={searchRel(toggle('version', v))}
 					title="Filter by Factorio {v}"
 					class="rounded bg-sky-900/50 px-1.5 py-0.5 text-sky-300 hover:bg-sky-800/60 {active('version', v) ? 'ring-1 ring-amber-500' : ''}"
 					>{v}</a
 				>{/each}
 			{#if p.requires_space_age}<a
 					href={toggle('spaceAge', 'yes')}
+					rel={searchRel(toggle('spaceAge', 'yes'))}
 					title="Filter by Space Age"
 					class="rounded bg-violet-900/60 px-1.5 py-0.5 text-violet-300 hover:bg-violet-800/60 {active('spaceAge', 'yes') ? 'ring-1 ring-amber-500' : ''}"
 					>Space Age</a
 				>{/if}
 			{#if p.has_render && !p.image_id}<a
 					href={toggle('render', '1')}
+					rel={searchRel(toggle('render', '1'))}
 					title="Only prints with a render"
 					class="rounded bg-amber-900/40 px-1.5 py-0.5 text-amber-300 hover:bg-amber-800/50 {renderOnly ? 'ring-1 ring-amber-500' : ''}"
 					>render</a

@@ -12,6 +12,7 @@ export const GET: RequestHandler = async ({ params, url }) => {
 	if (!found) error(404, 'No viewer files');
 	return Response.json(
 		{ page: found.page, render: found.render, base: renderBase(params.id), tooltip: found.tooltip },
-		{ headers: { 'cache-control': 'public, max-age=300' } }
+		// Not for search engines (robots.txt disallows it too).
+		{ headers: { 'cache-control': 'public, max-age=300', 'x-robots-tag': 'noindex' } }
 	);
 };

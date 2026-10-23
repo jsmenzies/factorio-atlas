@@ -3,6 +3,7 @@
 	import { page as route } from '$app/state';
 	import InlineViewer from '#lib/components/InlineViewer.svelte';
 	import MakesStrip from '#lib/components/MakesStrip.svelte';
+	import PageMeta from '#lib/components/PageMeta.svelte';
 	import Description from '#lib/components/print/Description.svelte';
 	import InfraCards from '#lib/components/print/InfraCards.svelte';
 	import PageDetail from '#lib/components/print/PageDetail.svelte';
@@ -10,7 +11,8 @@
 	import PrintHeader from '#lib/components/print/PrintHeader.svelte';
 	import PrintSidebar from '#lib/components/print/PrintSidebar.svelte';
 	import SelectedPage from '#lib/components/print/SelectedPage.svelte';
-	import { bookProducts, describeBook, describePrint, infraCards } from '#lib/describe.js';
+	import { bookProducts, describeBook, describePrint, infraCards, metaDescription, pageTitle } from '#lib/describe.js';
+	import { imgurUrl } from '#lib/format.js';
 	import { plainText } from '#lib/richtext.js';
 	import type { Role } from '#lib/server/pipeline/analyze.js';
 	import { usefulTags } from '#lib/tags.js';
@@ -43,11 +45,23 @@
 	const selectedIndex = $derived(selected ? pages.indexOf(selected) : -1);
 	// Pages without a game render get no viewer.
 	const rendered = $derived(new Set(data.rendered));
-	const select = (path: string) => goto(`?page=${encodeURIComponent(path)}`, { shallow: true, replace: true });
-	const step = (by: number) => {
-		const next = pages[selectedIndex + by];
-		if (next) select(next.path);
-	};
+	// Each book page has its own URL, for links and search engines; the first page's is the print's.
+	const pageHref = (path: string) => (path === pages[0]?.path ? `/prints/${p.id}` : `/prints/${p.id}?page=${encodeURIComponent(path)}`);
+	const select = (path: string) => goto(pageHref(path), { shallow: true, replace: true });
+
+	// A book page past the first is a page of its own for search engines: title, description and canonical URL.
+	const bookPage = $derived(!single && selected && selectedIndex > 0 ? selected : null);
+	const meta = $derived(
+		bookPage
+			? {
+					title: `${plainText(pageTitle(bookPage).text)} · ${plainText(title)} · Blueprint Atlas`,
+					description: metaDescription(a, p.author_name, { page: { node: bookPage, index: selectedIndex }, rendered: rendered.has(bookPage.path) }),
+					canonical: pageHref(bookPage.path)
+				}
+			: { title: `${plainText(title)} · Blueprint Atlas`, description: metaDescription(a, p.author_name, { rendered: rendered.size > 0 }), canonical: `/prints/${p.id}` }
+	);
+	// Link previews show the author's screenshot, for the print and each of its book pages.
+	const image = $derived(p.image_id ? { url: imgurUrl(p.image_id, p.image_type, 'preview'), alt: `Screenshot of ${plainText(title)}` } : undefined);
 
 	type CopyState = 'idle' | 'copying' | 'done' | 'failed';
 	let copied = $state<{ book: CopyState; page: CopyState }>({ book: 'idle', page: 'idle' });
@@ -68,7 +82,7 @@
 	const bookCopyLabel = $derived(copyLabel(copied.book, single ? 'Copy blueprint string' : 'Copy whole book'));
 </script>
 
-<svelte:head><title>{plainText(title)} · Blueprint Atlas</title></svelte:head>
+<PageMeta {...meta} {image} />
 
 <a href="/" class="text-sm text-stone-400 hover:text-amber-300">← Search</a>
 
@@ -116,12 +130,15 @@
 				total={pages.length}
 				printId={p.id}
 				rendered={rendered.has(selected.path)}
-				onstep={step}
+				prev={pages[selectedIndex - 1]?.path ?? null}
+				next={pages[selectedIndex + 1]?.path ?? null}
+				href={pageHref}
+				onselect={select}
 				copyLabel={copyLabel(copied.page, 'Copy this page')}
 				oncopy={() => copy('page')}
 				icons={data.icons}
 			/>
-			<PagesSection {pages} {books} selected={selected.path} onselect={select} {filter} onclearfilter={() => (filter = null)} icons={data.icons} />
+			<PagesSection {pages} {books} selected={selected.path} href={pageHref} onselect={select} {filter} onclearfilter={() => (filter = null)} icons={data.icons} />
 		{/if}
 
 		{#if data.descriptionHtml}

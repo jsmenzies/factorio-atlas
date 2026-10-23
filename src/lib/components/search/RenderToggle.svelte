@@ -3,11 +3,14 @@
 	 * The "Only prints with a render" switch beside the search box: a link to the current search
 	 * with `render` toggled, so it works without JS. The icon matches the render badge on cards.
 	 */
+	import { searchRel } from '#lib/search-seo.js';
+
 	let { on, href }: { on: boolean; href: string } = $props();
 </script>
 
 <a
 	{href}
+	rel={searchRel(href)}
 	role="switch"
 	aria-checked={on}
 	title="Only prints with a game render"

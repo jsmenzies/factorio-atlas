@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { PrintAnalysis } from '#lib/server/pipeline/analyze.js';
+	import { searchRel } from '#lib/search-seo.js';
 
 	/** The print at a glance: version, Space Age, contents, planets, mods. Rows with nothing to say are dropped. */
 	let { analysis: a }: { analysis: PrintAnalysis } = $props();
@@ -35,9 +36,9 @@
 			<dt class="text-stone-400">{k}</dt>
 			<dd class="text-right">
 				{#if k === 'Claims'}
-					{#each a.claimedVersions as cv, i (cv)}{i ? ', ' : ''}<a class="underline decoration-stone-600 hover:text-amber-300" href={versionHref(cv)}>{cv}</a
+					{#each a.claimedVersions as cv, i (cv)}{i ? ', ' : ''}<a class="underline decoration-stone-600 hover:text-amber-300" href={versionHref(cv)} rel={searchRel(versionHref(cv))}>{cv}</a
 						>{/each}
-				{:else if href}<a class="underline decoration-stone-600 hover:text-amber-300" {href} title="Search prints saved in this version">{v}</a>
+				{:else if href}<a class="underline decoration-stone-600 hover:text-amber-300" {href} rel={searchRel(href)} title="Search prints saved in this version">{v}</a>
 				{:else}{v}{/if}
 			</dd>
 		</div>

@@ -4,6 +4,7 @@
 	import { describeNode, pageTitle } from '#lib/describe.js';
 	import { formatRate } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
+	import { plainClick } from '#lib/links.js';
 	import { plainText } from '#lib/richtext.js';
 	import type { NodeAnalysis } from '#lib/server/pipeline/analyze.js';
 
@@ -18,9 +19,18 @@
 		pages,
 		books,
 		selected,
+		href,
 		onselect,
 		icons
-	}: { pages: NodeAnalysis[]; books: NodeAnalysis[]; selected: string; onselect: (path: string) => void; icons: IconSet } = $props();
+	}: {
+		pages: NodeAnalysis[];
+		books: NodeAnalysis[];
+		selected: string;
+		/** A page's URL: tiles are links, so search engines find every page and they open in new tabs. */
+		href: (path: string) => string;
+		onselect: (path: string) => void;
+		icons: IconSet;
+	} = $props();
 
 	const parentOf = (path: string) => path.split('/').slice(0, -1).join('/');
 	const bookTitle = (path: string) => {
@@ -199,8 +209,13 @@
 					{@const t = pageTitle(n)}
 					{@const rate = rateOf(n)}
 					<li class="snap-start">
-						<button
-							onclick={() => onselect(n.path)}
+						<a
+							href={href(n.path)}
+							onclick={(e) => {
+								if (!plainClick(e)) return;
+								e.preventDefault();
+								onselect(n.path);
+							}}
 							aria-current={n.path === selected ? 'true' : undefined}
 							class="flex h-full w-full items-center gap-2 rounded-md border text-left transition {compact ? 'px-1.5 py-1' : 'p-1.5'} {n.path === selected
 								? 'border-amber-500/70 bg-amber-500/10'
@@ -219,7 +234,7 @@
 									</span>
 								{/if}
 							</span>
-						</button>
+						</a>
 					</li>
 				{/each}
 			</ul>

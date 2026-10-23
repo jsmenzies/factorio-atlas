@@ -7,6 +7,7 @@
 	import type { NodeAnalysis, Role } from '#lib/server/pipeline/analyze.js';
 	import type { PrintDoc } from '#lib/server/pipeline/print-doc.js';
 	import type { AuthorTag } from '#lib/tags.js';
+	import { searchRel } from '#lib/search-seo.js';
 
 	/**
 	 * The print's icons, title, author and source link, then its role chips (in a book, buttons
@@ -75,6 +76,7 @@
 		{/each}
 		{#each showAllTags ? tags : tags.slice(0, TAG_LIMIT) as t (t.raw)}<a
 				href="/?{t.param.key}={encodeURIComponent(t.param.value)}"
+				rel={searchRel(`/?${t.param.key}=${encodeURIComponent(t.param.value)}`)}
 				title="Author tag {t.raw}: search for it"
 				class="rounded bg-stone-800 px-1.5 py-0.5 text-stone-300 hover:bg-stone-700 hover:text-amber-300"
 				><span class="text-stone-500">{t.category}</span> {t.label}</a

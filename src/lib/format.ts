@@ -7,10 +7,14 @@ export const signalName = (signal: string) => {
 
 export const formatRate = (perSecond: number) => (perSecond >= 1 ? `${+perSecond.toFixed(2)}/s` : `${+(perSecond * 60).toFixed(1)}/min`);
 
-/** Imgur-hosted screenshot (the image factorioprints itself links to): "m" 320px, "l" 640px, or the original. */
-export const imgurUrl = (id: string, type: string | null, size: 'thumb' | 'large' | 'original' = 'thumb') => {
-	const ext = type?.split('/')[1]?.replace('jpeg', 'jpg') ?? 'png';
-	const suffix = { thumb: 'm', large: 'l', original: '' }[size];
+/**
+ * Imgur-hosted screenshot (the image factorioprints itself links to): "m" 320px, "l" 640px, "h"
+ * 1024px (link previews), or the original. Imgur's resized copies are JPEG whatever the upload, so
+ * the preview says so in its name.
+ */
+export const imgurUrl = (id: string, type: string | null, size: 'thumb' | 'large' | 'preview' | 'original' = 'thumb') => {
+	const ext = size === 'preview' ? 'jpg' : (type?.split('/')[1]?.replace('jpeg', 'jpg') ?? 'png');
+	const suffix = { thumb: 'm', large: 'l', preview: 'h', original: '' }[size];
 	return `https://i.imgur.com/${id}${suffix}.${ext}`;
 };
 

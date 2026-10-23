@@ -186,6 +186,36 @@ export const describePrint = (a: PrintAnalysis): string => {
 	return `Book of ${pages.length} pages: ${mix}.${makes}`;
 };
 
+/** Search engines show about this many characters of a description. */
+const META_DESCRIPTION_MAX = 160;
+
+/**
+ * The print page's `<meta name="description">`: `describePrint`, then what it is and who made it
+ * ("Factorio 2.0 blueprint book by Nilaus."). For a book page (`?page=`, its own URL), that page's
+ * summary and where it sits ("Page 3 of 45 in a Factorio 0.16 blueprint book by Nilaus."). With
+ * `rendered` (the print, or that page, has a game render) it says so, a reason to pick the result.
+ * Too long, the summary is cut at a word, never the sentences after it.
+ */
+export const metaDescription = (
+	a: PrintAnalysis,
+	author: string | null,
+	{ page, rendered = false }: { page?: { node: NodeAnalysis; index: number }; rendered?: boolean } = {}
+): string => {
+	const version = /^\d+\.\d+/.exec(a.gameVersion ?? '')?.[0];
+	const total = a.nodes.filter((n) => n.kind === 'blueprint').length;
+	const by = author?.trim() ? ` by ${author.trim()}` : '';
+	const kind = `Factorio${version ? ` ${version}` : ''}${a.requiresSpaceAge ? ' Space Age' : ''} blueprint${total > 1 ? ' book' : ''}${by}.`;
+	const what = `${page ? `Page ${page.index + 1} of ${total} in a ${kind}` : kind}${rendered ? ' With a zoomable in-game render.' : ''}`;
+	let summary = (page ? describeNode(page.node, { withRate: true }) : describePrint(a)).trim();
+	if (summary && !/[.!?]$/.test(summary)) summary += '.';
+	const room = META_DESCRIPTION_MAX - what.length - 1;
+	if (summary.length > room) {
+		const cut = summary.slice(0, room - 1);
+		summary = `${cut.slice(0, cut.lastIndexOf(' ') > 0 ? cut.lastIndexOf(' ') : cut.length).replace(/[\s,·:;.]+$/, '')}…`;
+	}
+	return summary ? `${summary} ${what}` : what;
+};
+
 /** Infra categories worth a card for this print, in display order, with their headline. */
 export const infraCards = (a: PrintAnalysis): { cat: Category; title: string; headline: string }[] => {
 	const ctx: CategoryContext = { beltThroughput: a.beltThroughput, trainStops: a.trainStops, wires: a.wires, signs: a.signs };
