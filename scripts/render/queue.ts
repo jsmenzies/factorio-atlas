@@ -20,10 +20,6 @@ export const MAX_ATTEMPTS = 3;
 export const gaveUp = (row: Pick<RenderJobRow, 'status' | 'attempts'> & Partial<Pick<RenderJobRow, 'input_key'>>, key?: string): boolean =>
 	row.status === 'failed' && row.attempts >= MAX_ATTEMPTS && (key === undefined || row.input_key === key);
 
-/** `<ISO time to the second>-<4 random chars>`: sorts by start, unique enough. */
-export const newRunId = (now = new Date()) =>
-	`${now.toISOString().replace(/\.\d{3}Z$/, 'Z')}-${Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('')}`;
-
 const alive = (pid: number) => {
 	try {
 		process.kill(pid, 0);

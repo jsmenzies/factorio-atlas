@@ -118,7 +118,7 @@ import { localAssets } from '@rickyzhangca/fpsr/node';
 import { getPlatformProxy } from 'wrangler';
 import { gameCatalog } from '#lib/viewer/catalog.server.js';
 import { overviewFile, PAGE_DATA_VERSION, pageBase } from '#lib/viewer/game-render.js';
-import type { RunControl } from '#lib/server/pipeline/runs.js';
+import { newRunId, type RunControl } from '#lib/server/pipeline/runs.js';
 import { RENDER_HEARTBEAT_MS, type RenderJobRow } from '#lib/server/render-queue.js';
 import type { PageJob, PageResult } from './render/draw.js';
 import {
@@ -137,7 +137,7 @@ import { readSidecar, removePage, renameOverview, sweepTiles, writeIndex, writeP
 import { childWorkerd, stopOrphanedWorkerd } from './render/orphans.js';
 import { admit, maxWorkers, memEstimateMb, pagePeakMb, readMeminfo, type Admission, type WorkerMemory } from './render/memory.js';
 import { createPool, type Outcome, type Pool, type Slot } from './render/pool.js';
-import { gaveUp, MAX_ATTEMPTS, newRunId, renderQueue, type DeferredUpdate, type JobWrite, type RunnerRun } from './render/queue.js';
+import { gaveUp, MAX_ATTEMPTS, renderQueue, type DeferredUpdate, type JobWrite, type RunnerRun } from './render/queue.js';
 import { favoritesCacheFile, favoritesDb, refreshFavorites, topIds, type FavoritesMeta } from './render/favorites.js';
 import { entityCount, PageCache, prepared, preparedSkipped, skipReason, type Prepared } from './render/prepare.js';
 import { renderProgress } from './render/progress.js';
