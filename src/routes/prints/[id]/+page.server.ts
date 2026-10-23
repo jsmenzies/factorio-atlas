@@ -61,6 +61,13 @@ export const load: PageServerLoad = async ({ params }) => {
 			return [signal, section];
 		})
 	);
+	// The crafting menu's order (tab|row|item) per item a page makes or uses inside, for the Produces tab.
+	const menuOrder = Object.fromEntries(
+		[...new Set(a.nodes.flatMap((n) => [...n.outputs, ...n.products, ...n.intermediates]))].map((signal) => [
+			signal,
+			gameData.itemInfo[signal.slice(signal.indexOf(':') + 1)]?.sort ?? 'z|z|'
+		])
+	);
 	// Untrusted Markdown from factorioprints.com users, sanitised here so the page can use {@html}. The
 	// Markdown itself stays here: the page needs only the HTML, and whether to fold a long one.
 	const { description_md, ...print } = found.print;
@@ -71,6 +78,7 @@ export const load: PageServerLoad = async ({ params }) => {
 		print,
 		icons,
 		sections,
+		menuOrder,
 		recipes,
 		descriptionHtml,
 		descriptionLong: markdown.length > 900,

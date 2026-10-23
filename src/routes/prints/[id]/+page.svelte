@@ -315,6 +315,7 @@
 							main={scopedProducts.main}
 							groups={scopedProducts.groups}
 							sections={data.sections}
+							order={data.menuOrder}
 							intermediates={scopedInside}
 							byQuality={(scoped ?? a).productsByQuality}
 							empty={scoped ? `This page makes nothing: ${describeNode(scoped)}.` : null}

@@ -8,8 +8,9 @@
 	import QualityChips from './QualityChips.svelte';
 
 	/**
-	 * Everything a print makes, by crafting-menu section (mall and shop products together): rated
-	 * items as icon and rate, the rest as a row of icons, then what is made and used up inside. A
+	 * Everything a print makes, by crafting-menu section (mall and shop products together, under one
+	 * subheading per crafting-menu tab), in the game's own order: one row per item with its rate, a gap
+	 * where the menu starts a new row, then what is made and used up inside. A
 	 * search box, section chips and quality chips (the quality machines craft at) narrow it; an item
 	 * made above normal quality has the game's badge. In a book, clicking an item finds its pages.
 	 */
@@ -17,6 +18,7 @@
 		main,
 		groups,
 		sections,
+		order = {},
 		intermediates,
 		byQuality = {},
 		empty = null,
@@ -27,6 +29,8 @@
 		groups: ProductGroup[];
 		/** Crafting-menu section per signal. */
 		sections: Record<string, string>;
+		/** The crafting menu's sort key per signal (tab|row|item). */
+		order?: Record<string, string>;
 		/** Made and consumed inside the print, never leaving it. */
 		intermediates: string[];
 		/** Machines per product and recipe quality (`item:name@quality`, plain for normal). */
@@ -37,13 +41,28 @@
 		icons: IconSet;
 	} = $props();
 
+	const keyOf = (signal: string) => order[signal] ?? 'z|z|';
+	/** The crafting-menu row an item sits in, so a list can leave a gap where the next row starts. */
+	const rowOf = (signal: string) => keyOf(signal).split('|', 2).join('|');
+	const inMenuOrder = <T,>(items: T[], signal: (t: T) => string) =>
+		items.toSorted((x, y) => (keyOf(signal(x)) < keyOf(signal(y)) ? -1 : keyOf(signal(x)) > keyOf(signal(y)) ? 1 : 0));
+	/** A section's items in blocks: a mall's by crafting-menu tab, in the menu's order (headed when there are several), others one block. */
+	const blocksOf = (name: string, items: MadeItem[]) => {
+		if (name !== 'Mall & shops') return [{ name: null, items }];
+		const byTab = new Map<string, MadeItem[]>();
+		for (const m of items) byTab.set(sections[m.signal] ?? 'Other', [...(byTab.get(sections[m.signal] ?? 'Other') ?? []), m]);
+		const blocks = [...byTab].map(([tab, items]) => ({ name: tab as string | null, items }));
+		// Items come sorted, so each block's first item gives its tab's place in the menu.
+		return blocks.length > 1 ? inMenuOrder(blocks, (b) => b.items[0].signal) : [{ name: null, items }];
+	};
+
 	const all = $derived.by(() => {
 		const bySection = new Map<string, MadeItem[]>();
 		const add = (name: string, m: MadeItem) => bySection.set(name, [...(bySection.get(name) ?? []), m]);
 		for (const m of main) add(sections[m.signal] ?? 'Other', m);
 		for (const g of groups) for (const m of g.items) add(g.name, m);
 		return [...bySection]
-			.map(([name, items]) => ({ name, items }))
+			.map(([name, items]) => ({ name, items: inMenuOrder(items, (m) => m.signal) }))
 			.sort((x, y) => GROUP_ORDER.indexOf(x.name) - GROUP_ORDER.indexOf(y.name));
 	});
 	const total = $derived(all.reduce((s, g) => s + g.items.length, 0));
@@ -73,7 +92,7 @@
 			}))
 			.filter((g) => g.items.length);
 	});
-	const inside = $derived(!section && !query.trim() ? intermediates.filter((s) => !quality || levelsOf(s).includes(quality)) : []);
+	const inside = $derived(!section && !query.trim() ? inMenuOrder(intermediates, (s) => s).filter((s) => !quality || levelsOf(s).includes(quality)) : []);
 
 	const madeAt = (signal: string) => {
 		const ps = parts.get(signal);
@@ -85,32 +104,42 @@
 		}.${madeAt(m.signal)}${onpick ? ' Click to find the pages that make it.' : ''}`;
 </script>
 
-{#snippet item(m: MadeItem, small: boolean)}
-	{@const best = badgeOf(m.signal)}
-	<svelte:element
-		this={onpick ? 'button' : 'span'}
-		role={onpick ? undefined : 'listitem'}
-		type={onpick ? 'button' : undefined}
-		onclick={onpick ? () => onpick(m.signal) : undefined}
-		title={tip(m)}
-		class="flex items-center gap-1.5 text-sm"
-	>
-		<span
-			class="relative grid place-items-center rounded border bg-stone-900/80 {small ? 'size-8' : 'size-10'} border-stone-700 {onpick ? 'hover:border-stone-500' : ''}"
+<!-- One row per item, as the Entities tab's lists: icon, name, rate on the right. -->
+{#snippet row(signal: string, title: string, rate: string | null, gap: boolean, pick: ((signal: string) => void) | null | undefined = onpick)}
+	{@const best = badgeOf(signal)}
+	<li class="break-inside-avoid {gap ? 'mt-2' : ''}">
+		<svelte:element
+			this={pick ? 'button' : 'div'}
+			role={pick ? 'button' : undefined}
+			type={pick ? 'button' : undefined}
+			onclick={pick ? () => pick(signal) : undefined}
+			{title}
+			class="group flex w-full items-center gap-2.5 py-1 text-left"
 		>
-			<Icon {icons} signal={m.signal} label={signalName(m.signal)} size={small ? 22 : 30} />
-			{#if best && best !== 'normal'}
-				<span class="absolute bottom-0 left-0 leading-none"><Icon {icons} kind="quality" name={best} label={signalName(best)} size={small ? 10 : 13} /></span>
-			{/if}
-		</span>
-		{#if m.rate}<span class="text-stone-100 tabular-nums">{m.claimed ? '' : '≈ '}{formatRate(m.rate)}</span>{/if}
-	</svelte:element>
+			<span class="relative inline-block shrink-0">
+				<Icon {icons} {signal} label={signalName(signal)} size={24} />
+				{#if best && best !== 'normal'}
+					<span class="absolute -bottom-0.5 -left-0.5 leading-none"><Icon {icons} kind="quality" name={best} label={signalName(best)} size={11} /></span>
+				{/if}
+			</span>
+			<span class="min-w-0 flex-1 truncate text-stone-200 {pick ? 'group-hover:text-amber-300' : ''}">{signalName(signal)}</span>
+			{#if rate !== null}<span class="shrink-0 text-right tabular-nums {rate ? 'text-stone-300' : 'text-stone-500'}">{rate || '—'}</span>{/if}
+		</svelte:element>
+	</li>
+{/snippet}
+
+{#snippet list(items: MadeItem[], label: string, columns: string)}
+	<ul class="mt-1.5 gap-10 text-sm {columns}" aria-label={label}>
+		{#each items as m, i (m.signal)}
+			{@render row(m.signal, tip(m), m.rate ? `${m.claimed ? '' : '≈ '}${formatRate(m.rate)}` : '', i > 0 && rowOf(m.signal) !== rowOf(items[i - 1].signal))}
+		{/each}
+	</ul>
 {/snippet}
 
 {#if empty && !total && !intermediates.length}
 	<p class="rounded border border-dashed border-stone-700 p-4 text-sm text-stone-400"><RichText text={empty} {icons} size={16} /></p>
 {:else}
-<div class="space-y-6">
+<div class="@container space-y-6">
 	<div class="flex flex-wrap items-center gap-2">
 		<label class="flex min-w-48 flex-1 items-center gap-2 rounded border border-stone-700 bg-stone-900 px-2 py-1 text-sm sm:max-w-xs">
 			<span class="sr-only">Find an item</span>
@@ -141,22 +170,25 @@
 
 	{#each shown as g (g.name)}
 		{@const rated = g.items.filter((m) => m.rate)}
-		{@const unrated = g.items.filter((m) => !m.rate)}
+		{@const blocks = blocksOf(g.name, g.items)}
 		<section>
 			<h3 class="flex items-baseline justify-between gap-3 border-b border-stone-800 pb-2">
 				<span class="font-semibold text-stone-100">{g.name} <span class="text-sm font-normal text-stone-500">{g.items.length}</span></span>
 				<span class="text-xs text-stone-400">{rated.length === g.items.length ? 'all rated' : `${rated.length} rated`}</span>
 			</h3>
-			{#if rated.length}
-				<div class="mt-3 flex flex-wrap gap-x-5 gap-y-2" role={onpick ? 'group' : 'list'} aria-label="{g.name}, rated">
-					{#each rated as m (m.signal)}{@render item(m, false)}{/each}
+			{#if blocks.length > 1}
+				<div class="mt-3 gap-10 @3xl:columns-2">
+					{#each blocks as b (b.name)}
+						<div class="break-inside-avoid pb-5">
+							<h4 class="flex items-baseline justify-between gap-3 border-b border-stone-800/70 pb-1 text-xs font-semibold tracking-wide text-stone-400 uppercase">
+								<span>{b.name}</span><span class="font-normal tabular-nums">{b.items.length}</span>
+							</h4>
+							{@render list(b.items, `${g.name}: ${b.name}`, '')}
+						</div>
+					{/each}
 				</div>
-			{/if}
-			{#if unrated.length}
-				<div class="mt-3 flex flex-wrap items-center gap-1.5" role={onpick ? 'group' : 'list'} aria-label="{g.name}, not rated">
-					<span class="mr-1 text-xs text-stone-500" title="Smelting, mining and mall items are not rated yet">not rated</span>
-					{#each unrated as m (m.signal)}{@render item(m, true)}{/each}
-				</div>
+			{:else}
+				{@render list(g.items, g.name, '@lg:columns-2 @5xl:columns-3')}
 			{/if}
 		</section>
 	{:else}
@@ -169,21 +201,9 @@
 				<span class="font-semibold text-stone-100">Made and used inside <span class="text-sm font-normal text-stone-500">{inside.length}</span></span>
 				<span class="text-xs text-stone-400">intermediates that never leave the page</span>
 			</h3>
-			<div class="mt-3 flex flex-wrap gap-1.5" role="list">
-				{#each inside as s (s)}
-					{@const best = badgeOf(s)}
-					<span
-						role="listitem"
-						class="relative grid size-8 place-items-center rounded border border-stone-800 bg-stone-900/60"
-						title="{signalName(s)}.{madeAt(s)}"
-					>
-						<Icon {icons} signal={s} label={signalName(s)} size={22} />
-						{#if best && best !== 'normal'}
-							<span class="absolute bottom-0 left-0 leading-none"><Icon {icons} kind="quality" name={best} label={signalName(best)} size={10} /></span>
-						{/if}
-					</span>
-				{/each}
-			</div>
+			<ul class="mt-1.5 gap-10 text-sm @lg:columns-2 @5xl:columns-3">
+				{#each inside as s, i (s)}{@render row(s, `${signalName(s)}.${madeAt(s)}`, null, i > 0 && rowOf(s) !== rowOf(inside[i - 1]), null)}{/each}
+			</ul>
 		</section>
 	{/if}
 
