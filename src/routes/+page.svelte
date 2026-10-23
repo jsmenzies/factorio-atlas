@@ -95,11 +95,12 @@
 
 	/**
 	 * For search engines (lib/search-seo.ts): the home page and landing pages for one known item or
-	 * building with results are indexed under one canonical URL, with a visible heading; every other
-	 * search is noindex, with a heading only screen readers see. Results pages past the first are
+	 * building with results are indexed under one canonical URL; landing pages have a visible heading,
+	 * the home page a heading only screen readers see. Every other search is noindex, with the same
+	 * hidden heading. Results pages past the first are
 	 * noindex too, titled after the search they page through.
 	 */
-	const seo = $derived.by((): { meta: ComponentProps<typeof PageMeta>; heading: string; style: 'intro' | 'title' | 'hidden' } => {
+	const seo = $derived.by((): { meta: ComponentProps<typeof PageMeta>; heading: string; style: 'title' | 'hidden' } => {
 		const n = data.params.page;
 		const unpaged = new URLSearchParams(page.url.search);
 		unpaged.delete('p');
@@ -119,9 +120,8 @@
 						'Search Factorio blueprints by what they make, the buildings they use, game version and Space Age, and explore them in zoomable in-game renders.',
 					canonical: '/'
 				},
-				heading:
-					'Search Factorio blueprints by what they make and the buildings they use, and explore thousands of them in zoomable in-game renders.',
-				style: 'intro'
+				heading: 'Search Factorio blueprints',
+				style: 'hidden'
 			};
 		}
 		const item = kind ? data.picker.find((p) => p.signal === kind.value) : undefined;
@@ -148,8 +148,8 @@
 
 <PageMeta {...seo.meta} />
 
-<!-- The home page's one-line intro, a landing page's title, or (other searches) a heading for screen readers only. -->
-<h1 class={{ intro: 'mb-3 text-sm text-stone-400', title: 'mb-3 text-xl font-semibold text-stone-100', hidden: 'sr-only' }[seo.style]}>
+<!-- A landing page's title, or (the home page and other searches) a heading for screen readers only. -->
+<h1 class={{ title: 'mb-3 text-xl font-semibold text-stone-100', hidden: 'sr-only' }[seo.style]}>
 	{seo.heading}
 </h1>
 
