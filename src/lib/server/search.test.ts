@@ -9,7 +9,7 @@ import { ingestText, type IngestOutcome } from './pipeline/pipeline';
 import { RawStore } from './pipeline/raw-store';
 import { PrintRepository, PrintRepositoryD1, RENDER_TOKEN } from './pipeline/repository';
 import { syncRenderFlags } from './pipeline/render-flags';
-import { matchExpression, MULTI_FILTERS, searchStatements, type MultiFilter, type SearchParams } from './queries';
+import { MAX_PAGES, matchExpression, MULTI_FILTERS, PAGE_SIZE, searchStatements, type MultiFilter, type SearchParams } from './queries';
 
 const ROOT = join(import.meta.dirname, '../../..');
 const SCIENCE = '-KnQ865j-qQ21WoUPbd3'; // Tileable science book, 0.17, claims 0.15–2.0, tagged tileable
@@ -58,6 +58,7 @@ const params = (p: TestParams): SearchParams => ({
 	trains: false,
 	render: false,
 	sort: 'favorites',
+	page: 1,
 	...p,
 	...(Object.fromEntries(MULTI_FILTERS.map((k) => [k, p[k] === undefined ? [] : [p[k]].flat()])) as Record<MultiFilter, string[]>)
 });
@@ -67,6 +68,7 @@ const run = (p: TestParams) => {
 	const all = (s: { sql: string; binds: unknown[] }) => sqlite.query(s.sql).all(...(s.binds as string[])) as Record<string, unknown>[];
 	return {
 		ids: all(st.results).map((r) => r.id as string),
+		total: all(st.total)[0].n as number,
 		makes: Object.fromEntries(all(st.makes).map((r) => [r.value as string, r.n as number])),
 		uses: Object.fromEntries(all(st.uses).map((r) => [r.value as string, r.n as number])),
 		versions: all(st.versions).map((r) => r.value as string)
@@ -84,6 +86,18 @@ describe('search over the slim schema', () => {
 		expect(r.ids).toEqual([SCIENCE, BELTS, SPACE]);
 		expect(r.makes['item:automation-science-pack']).toBe(1);
 		expect(r.makes['item:space-science-pack']).toBe(1);
+	});
+
+	test('the total counts every match; pages past the results are empty', () => {
+		expect([run({}).total, run({ spaceAge: 'no' }).total, run({ makes: 'item:nothing-makes-this' }).total]).toEqual([3, 2, 0]);
+		expect(run({ page: 2 }).ids).toEqual([]);
+		expect(run({ spaceAge: 'no', page: 2 })).toMatchObject({ ids: [], total: 2 });
+	});
+
+	test('page n skips the first n − 1 pages, and never goes past MAX_PAGES', () => {
+		expect(searchStatements(params({ page: 3 })).results.sql.endsWith(`LIMIT ${PAGE_SIZE} OFFSET ${2 * PAGE_SIZE}`)).toBe(true);
+		expect(searchStatements(params({ q: 'belt', page: 2 })).results.sql.endsWith(`LIMIT ${PAGE_SIZE} OFFSET ${PAGE_SIZE}`)).toBe(true);
+		expect(searchStatements(params({ page: 500 })).results.sql.endsWith(`OFFSET ${(MAX_PAGES - 1) * PAGE_SIZE}`)).toBe(true);
 	});
 
 	test('makes, Space Age, tag and version filters', () => {
@@ -270,7 +284,7 @@ describe('query plans', () => {
 	test('no search query scans a whole table', () => {
 		for (const c of cases) {
 			const st = searchStatements(params(c));
-			for (const s of [st.results, st.makes, st.uses, st.versions]) {
+			for (const s of [st.results, st.total, st.makes, st.uses, st.versions]) {
 				const plan = (sqlite.query(`EXPLAIN QUERY PLAN ${s.sql}`).all(...(s.binds as string[])) as { detail: string }[]).map(
 					(r) => r.detail
 				);

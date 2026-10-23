@@ -9,7 +9,8 @@
  * as `bun run preview` runs it), D1 database and two R2 buckets. Prod also owns the one sprites
  * bucket. A staging stage can be added to STAGES; it gets the same resources and links to prod's
  * sprites bucket.
- * Binding names (DB, RAW, RENDERS, SPRITES), vars, compatibility date and flags come from wrangler.jsonc,
+ * Binding names (DB, RAW, RENDERS, SPRITES), the rate limits (PAGE_LIMIT, SEARCH_LIMIT), vars,
+ * compatibility date and flags come from wrangler.jsonc,
  * which stays the config for local tooling (`vite dev`, `wrangler d1 --local`, `wrangler types`,
  * scripts/ingest.ts), so local and deployed Workers can't drift apart. Alchemy adds ASSETS.
  *
@@ -33,17 +34,46 @@ interface LocalConfig {
 	vars: Record<string, unknown>;
 	d1_databases: { binding: string }[];
 	r2_buckets: { binding: string }[];
+	ratelimits: { name: string; namespace_id: string; simple: { limit: number; period: 10 | 60 } }[];
 }
 const local: LocalConfig = unstable_readConfig({ config: 'wrangler.jsonc' }, { hideWarnings: true });
 
 // Fail fast if wrangler.jsonc gains a binding this file doesn't provision.
-const expected = { d1: ['DB'], r2: ['RAW', 'RENDERS', 'SPRITES'] };
-const actual = { d1: local.d1_databases.map((d) => d.binding), r2: local.r2_buckets.map((b) => b.binding) };
+const expected = { d1: ['DB'], r2: ['RAW', 'RENDERS', 'SPRITES'], ratelimits: ['PAGE_LIMIT', 'SEARCH_LIMIT'] };
+const actual = {
+	d1: local.d1_databases.map((d) => d.binding),
+	r2: local.r2_buckets.map((b) => b.binding),
+	ratelimits: local.ratelimits.map((r) => r.name)
+};
 if (JSON.stringify(actual) !== JSON.stringify(expected)) {
 	throw new Error(`wrangler.jsonc bindings ${JSON.stringify(actual)} differ from alchemy.run.ts ${JSON.stringify(expected)}`);
 }
 /** Names our one cache rule; every other rule in the zone's cache-rules phase stops a deploy. */
 const CACHE_RULE = 'Cache sprites and renders, keeping their own cache-control';
+/** Names our one WAF rate-limiting rule; likewise for the zone's rate-limit phase. */
+const FLOOD_RULE = 'Block floods on the site';
+
+/**
+ * Prod owns the whole of these zone phases (a Ruleset is the phase's entire rule list), so a deploy
+ * would delete any rule made elsewhere, e.g. in the dashboard. Stop first when the phase holds a
+ * rule not named `ours`.
+ */
+const ownPhase = (zoneId: string, rulesetPhase: 'http_request_cache_settings' | 'http_ratelimit', ours: string) =>
+	rulesets.getPhasForZone({ zoneId, rulesetPhase }).pipe(
+		Effect.map((ruleset) => ruleset.rules ?? []),
+		Effect.catchTag('RulesetNotFound', () => Effect.succeed([])),
+		Effect.orDie,
+		Effect.flatMap((existing) => {
+			const foreign = existing.filter((rule) => rule.description !== ours);
+			if (foreign.length === 0) return Effect.void;
+			const list = foreign.map((rule) => `"${rule.description ?? ''}" (${rule.expression ?? ''})`).join(', ');
+			return Effect.die(
+				new Error(
+					`The zone's ${rulesetPhase} rules include ${list}, which this deploy would delete. Add them to that ruleset in alchemy.run.ts, or remove them from the zone, then deploy again.`
+				)
+			);
+		})
+	);
 
 const vars = Object.fromEntries(
 	Object.entries(local.vars).map(([key, value]) => {
@@ -136,20 +166,7 @@ export default Alchemy.Stack(
 			if (zoneIds.some((z) => z !== zoneId)) {
 				return yield* Effect.die(new Error(`${cachedHosts.join(' and ')} must be in one zone for the cache rule`));
 			}
-			const existing = yield* rulesets.getPhasForZone({ zoneId, rulesetPhase: 'http_request_cache_settings' }).pipe(
-				Effect.map((ruleset) => ruleset.rules ?? []),
-				Effect.catchTag('RulesetNotFound', () => Effect.succeed([])),
-				Effect.orDie
-			);
-			const foreign = existing.filter((rule) => rule.description !== CACHE_RULE);
-			if (foreign.length > 0) {
-				const list = foreign.map((rule) => `"${rule.description ?? ''}" (${rule.expression ?? ''})`).join(', ');
-				return yield* Effect.die(
-					new Error(
-						`The zone's cache rules include ${list}, which this deploy would delete. Add them to the CacheRules ruleset in alchemy.run.ts, or remove them from the zone, then deploy again.`
-					)
-				);
-			}
+			yield* ownPhase(zoneId, 'http_request_cache_settings', CACHE_RULE);
 			yield* Cloudflare.Ruleset.Ruleset('CacheRules', {
 				zone: { zoneId } as unknown as Cloudflare.Zone.Zone,
 				phase: 'http_request_cache_settings',
@@ -163,6 +180,35 @@ export default Alchemy.Stack(
 				]
 			});
 			yield* Cloudflare.Cache.SmartTieredCache('TieredCache', { zoneId });
+		}
+
+		// One WAF rate-limiting rule (the Free plan's one; docs/deploy.md, "Rate limits"): a backstop
+		// against floods on the site's hostname, at the edge, so blocked requests never run (or bill)
+		// the Worker. Steady scraping is the Worker's own PAGE_LIMIT and SEARCH_LIMIT. The Free plan
+		// fixes the rest: counted per IP and data centre over 10 s, blocked for 10 s. /_app/ (the
+		// build's scripts and styles, many per first visit) doesn't count. Prod owns the zone's
+		// rate-limit phase, as with the cache rule.
+		if (stage === 'prod' && domain !== undefined) {
+			const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
+			const zoneId = yield* Cloudflare.Zone.resolveZoneId({ accountId, zone: undefined, hostname: domain }).pipe(Effect.orDie);
+			yield* ownPhase(zoneId, 'http_ratelimit', FLOOD_RULE);
+			yield* Cloudflare.Ruleset.Ruleset('RateLimitRules', {
+				zone: { zoneId } as unknown as Cloudflare.Zone.Zone,
+				phase: 'http_ratelimit',
+				rules: [
+					{
+						description: FLOOD_RULE,
+						expression: `(http.host eq ${JSON.stringify(domain)} and not starts_with(http.request.uri.path, "/_app/"))`,
+						action: 'block',
+						ratelimit: { characteristics: ['ip.src', 'cf.colo.id'], period: 10, requestsPerPeriod: 60, mitigationTimeout: 10 }
+					}
+				]
+			});
+			// Bot Fight Mode (Free plan): challenges traffic Cloudflare is sure is automated; verified
+			// bots (search engines, link previews) pass. It covers the whole zone and can't be skipped
+			// per path. Only this field is written, so the zone's AI-crawler settings stay as they are;
+			// removing it restores the setting it had before.
+			yield* Cloudflare.BotManagement.BotManagement('Bots', { zoneId, fightMode: true });
 		}
 
 		// /admin (docs/deploy.md, "Admin page"): a Cloudflare Access application on `<domain>/admin*`
@@ -207,6 +253,9 @@ export default Alchemy.Stack(
 				RAW: raw,
 				RENDERS: renders,
 				...(sprites ? { SPRITES: sprites } : {}),
+				...Object.fromEntries(
+					local.ratelimits.map((r) => [r.name, Cloudflare.RateLimit(r.name, { namespaceId: r.namespace_id, simple: r.simple })])
+				),
 				...vars,
 				SPRITES_URL: spritesDomain === undefined ? '' : `https://${spritesDomain}`,
 				RENDERS_URL: rendersDomain === undefined ? '' : `https://${rendersDomain}`,

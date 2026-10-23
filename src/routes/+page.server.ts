@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { retryBusy } from '#lib/server/admin/busy.js';
-import { parseSearch, searchPrints } from '#lib/server/queries.js';
+import { PAGE_SIZE, parseSearch, searchPrints } from '#lib/server/queries.js';
 import { iconSet } from '#lib/server/icon-set.js';
 import { pickerItems } from '#lib/server/picker-items.js';
 import { TABS } from '#lib/picker.js';
@@ -32,5 +32,5 @@ export const load: PageServerLoad = async ({ url }) => {
 		},
 		found.results.map((r) => r.title)
 	);
-	return { params, ...found, icons, picker };
+	return { params, ...found, pageSize: PAGE_SIZE, icons, picker };
 };

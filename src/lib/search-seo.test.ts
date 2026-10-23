@@ -8,6 +8,7 @@ describe('searchPage', () => {
 		expect(page('')).toEqual({ kind: 'home' });
 		expect(page('utm_source=reddit&fbclid=x')).toEqual({ kind: 'home' });
 		expect(page('sort=favorites&q=')).toEqual({ kind: 'home' });
+		expect(page('p=1')).toEqual({ kind: 'home' });
 	});
 
 	test('one makes or uses value is a landing page', () => {
@@ -24,7 +25,9 @@ describe('searchPage', () => {
 			'makes=item:rail&render=1',
 			'version=2.0',
 			'spaceAge=yes',
-			'tag=/x/'
+			'tag=/x/',
+			'p=2',
+			'makes=item:rail&p=2'
 		])
 			expect(page(q)).toBeNull();
 	});
@@ -36,6 +39,8 @@ describe('links and meta', () => {
 		expect(searchRel('/?makes=item%3Arail')).toBeUndefined();
 		expect(searchRel('/?makes=item%3Arail&makes=item%3Apipe')).toBe('nofollow');
 		expect(searchRel('/?version=2.0')).toBe('nofollow');
+		expect(searchRel('/?makes=item%3Arail&p=1')).toBeUndefined();
+		expect(searchRel('/?makes=item%3Arail&p=3')).toBe('nofollow');
 	});
 
 	test('a landing page has one URL', () => {

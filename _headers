@@ -1,0 +1,7 @@
+# Files served without the Worker (the build's /_app/ files and static/): the same headers as
+# src/lib/server/security-headers.ts sets on everything else, minus those that only apply to pages.
+# adapter-cloudflare adds its own /_app/ rules below these; it wants this file in the project root.
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin

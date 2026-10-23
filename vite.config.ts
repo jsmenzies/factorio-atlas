@@ -20,7 +20,34 @@ export default defineConfig({
 				// Force runes mode for the project, except for libraries. Can be removed in svelte 6.
 				runes: ({ filename }) => (filename.split(/[/\\]/).includes('node_modules') ? undefined : true)
 			},
-			adapter: adapter()
+			adapter: adapter(),
+			// Content Security Policy on every page (the other security headers: src/lib/server/security-headers.ts).
+			// Nonce mode: a new nonce per response on SvelteKit's start-up script, and Cloudflare reads it from this
+			// header and adds it to the scripts it injects at the edge (Bot Fight Mode's JavaScript detections, Web
+			// Analytics). A cached page keeps its matching header and nonce. Inline styles are allowed for the icons'
+			// style attributes; images may come from any https host, as authors' descriptions embed them
+			// (lib/server/markdown.ts allows https only).
+			csp: {
+				mode: 'nonce',
+				directives: {
+					'default-src': ['self'],
+					// Web Analytics' automatic setup loads beacon.min.js from here and reports to /cdn-cgi/rum (connect-src 'self').
+					'script-src': ['self', 'https://static.cloudflareinsights.com'],
+					// Svelte's server output puts onload/onerror="this.__e=event" on <img> tags with handlers (Icon's
+					// fallback), so events before hydration are replayed. Only that exact string may run; any other
+					// inline handler stays blocked. If Svelte ever changes the string, icons that fail before
+					// hydration lose their blank fallback and the browser logs a violation.
+					'script-src-attr': ['unsafe-hashes', 'sha256-7dQwUgLau1NFCCGjfn9FsYptB6ZtWxJin6VohGIu20I='],
+					'style-src': ['self', 'unsafe-inline'],
+					'img-src': ['self', 'data:', 'https:'],
+					'connect-src': ['self'],
+					'font-src': ['self'],
+					'object-src': ['none'],
+					'base-uri': ['self'],
+					'form-action': ['self'],
+					'frame-ancestors': ['none']
+				}
+			}
 		})
 	]
 });

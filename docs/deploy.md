@@ -13,16 +13,19 @@ resources as prod, under its own names, and links to prod's sprites bucket.
 
 The stage gets:
 
-| Resource | Name                              | Binding   | Notes                                                           |
-| -------- | --------------------------------- | --------- | --------------------------------------------------------------- |
-| Worker   | `factorio-prints-<stage>`         |           | the SvelteKit app; preview URLs off                             |
-| D1       | `factorio-prints-<stage>-db-<n>`  | `DB`      | migrations from `./migrations` applied on deploy                |
-| R2       | `factorio-prints-<stage>-raw`     | `RAW`     | retained on destroy                                             |
-| R2       | `factorio-prints-<stage>-renders` | `RENDERS` | game renders; optional custom domain; retained on destroy       |
-| R2       | `factorio-prints-sprites`         | `SPRITES` | game icons, owned by prod; optional custom domain; retained     |
-| Assets   | `.svelte-kit/cloudflare`          | `ASSETS`  | client files; honours the adapter's `.assetsignore`, `_headers` |
-| Access   | `factorio-prints-<stage> admin`   |           | Zero Trust application on `<domain>/admin*`; see "Admin page"   |
-| Cache    | the zone's cache rules            |           | prod, with a sprites or renders domain; see "Edge cache"        |
+| Resource | Name                              | Binding                      | Notes                                                           |
+| -------- | --------------------------------- | ---------------------------- | --------------------------------------------------------------- |
+| Worker   | `factorio-prints-<stage>`         |                              | the SvelteKit app; preview URLs off                             |
+| D1       | `factorio-prints-<stage>-db-<n>`  | `DB`                         | migrations from `./migrations` applied on deploy                |
+| R2       | `factorio-prints-<stage>-raw`     | `RAW`                        | retained on destroy                                             |
+| R2       | `factorio-prints-<stage>-renders` | `RENDERS`                    | game renders; optional custom domain; retained on destroy       |
+| R2       | `factorio-prints-sprites`         | `SPRITES`                    | game icons, owned by prod; optional custom domain; retained     |
+| Assets   | `.svelte-kit/cloudflare`          | `ASSETS`                     | client files; honours the adapter's `.assetsignore`, `_headers` |
+| Access   | `factorio-prints-<stage> admin`   |                              | Zero Trust application on `<domain>/admin*`; see "Admin page"   |
+| Cache    | the zone's cache rules            |                              | prod, with a sprites or renders domain; see "Edge cache"        |
+| Limits   | two Workers rate limits           | `PAGE_LIMIT`, `SEARCH_LIMIT` | per visitor; see "Rate limits"                                  |
+| WAF      | the zone's rate-limiting rules    |                              | prod, with a site domain; see "Rate limits"                     |
+| Bots     | the zone's Bot Fight Mode         |                              | prod, with a site domain; see "Rate limits"                     |
 
 Prod's D1 database is retained on destroy (a staging stage's would be deleted). `<n>` is the D1
 generation from `infra/databases.ts` (1 by default).
@@ -200,6 +203,43 @@ request then reads it from R2 again (a Class B read; R2 has no egress fees). Che
 `curl -s -o /dev/null -D - https://renders.example.com/<id>/index.json` (a GET: Cloudflare reports
 every HEAD request, `curl -I`, as `DYNAMIC`): `cf-cache-status` is `MISS` the first time
 and `HIT` after, and `age` counts up.
+
+## Rate limits
+
+Two layers keep one visitor from running up the bill:
+
+- **In the Worker** (`src/lib/server/rate-limit.ts`, run from `hooks.server.ts`): the Workers Rate
+  Limiting bindings declared in `wrangler.jsonc` (`ratelimits`). Every request counts towards
+  `PAGE_LIMIT` (150 per 60 s) and every search, the home page with a query string, towards
+  `SEARCH_LIMIT` (40 per 60 s) as well. A visitor is the client's IPv4 address or IPv6 /64, and
+  counts are kept per Cloudflare location and are approximate. Over a limit the answer is a `429`
+  with `Retry-After: 60`. `/admin` is exempt, and `bun run dev` has no limits (`bun run preview`
+  does). Periods can only be 10 or 60 s; `namespace_id` must be unique in the account.
+- **At the edge**, with a site domain: one WAF rate-limiting rule (the one the Free plan allows) on
+  the site's hostname, outside `/_app/`, blocks an IP for 10 s once it sends 60 requests in 10 s in
+  one data centre. Blocked requests never run the Worker. Prod owns the zone's whole rate-limit
+  phase, so, as with the cache rule, plan and deploy stop if it holds a rule made elsewhere.
+- **Bot Fight Mode**, with a site domain, on the same zone: Cloudflare challenges traffic it is sure
+  is automated, while verified bots (search engines, link previews, the larger uptime monitors)
+  pass. It covers every hostname in the zone and can't be skipped per path on the Free plan.
+
+Test the Worker's limits with `bun run preview`, or on the site with
+`for i in $(seq 160); do curl -s -o /dev/null -w '%{http_code}\n' https://example.com/robots.txt; done | sort | uniq -c`
+(the edge rule may answer first: its block is a `429` from Cloudflare, not the Worker's text).
+
+## Security headers
+
+Every response the Worker sends carries HSTS (a year, this host's subdomains), `nosniff`,
+`Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, a Permissions-Policy and
+`Cross-Origin-Opener-Policy: same-origin` (`src/lib/server/security-headers.ts`). Files served
+without the Worker (`/_app/`, `static/`) get the first three from `_headers` in the project root,
+which adapter-cloudflare copies into the build. Pages also get a Content Security Policy from
+SvelteKit's `csp` option in `vite.config.ts`, in nonce mode: scripts from the site only (SvelteKit's
+start-up script carries the nonce, and the one inline handler Svelte writes on images is allowed by
+its hash), images from any https host (descriptions embed them), no framing. Cloudflare reads the
+nonce from the header and adds it to the scripts it injects (Bot Fight Mode's JavaScript detections);
+Web Analytics' `static.cloudflareinsights.com` is allowed too. Check a deployed page in the browser
+console: any CSP violation there means something it needs is blocked.
 
 ## Uploading renders
 

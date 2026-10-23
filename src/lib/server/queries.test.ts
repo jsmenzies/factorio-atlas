@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { facetText, RENDER_TOKEN } from './pipeline/repository.js';
-import { filterTokens, parseSearch } from './queries.js';
+import { clipQuery, filterTokens, MAX_FILTER_VALUES, MAX_PAGES, MAX_QUERY_LENGTH, parsePage, parseSearch } from './queries.js';
 
 const sortOf = (search: string) => parseSearch(new URL(`http://x/${search}`)).sort;
 
@@ -73,5 +73,41 @@ describe('facetText', () => {
 		expect(text.length <= 32 * 1024).toBe(true);
 		expect(text.split(' ').every((t, i) => t === tokens[i])).toBe(true);
 		expect(facetText(['a', 'b'])).toBe('a b');
+	});
+});
+
+describe('parseSearch page', () => {
+	test('?p= is a whole page number from 1 to MAX_PAGES', () => {
+		expect(parsePage(null)).toBe(1);
+		expect(parsePage('3')).toBe(3);
+		expect(parsePage('0')).toBe(1);
+		expect(parsePage('-2')).toBe(1);
+		expect(parsePage('2.5')).toBe(1);
+		expect(parsePage('two')).toBe(1);
+		expect(parsePage('999')).toBe(MAX_PAGES);
+		expect(parseSearch(new URL('http://x/?q=belt&p=4')).page).toBe(4);
+		expect(parseSearch(new URL('http://x/')).page).toBe(1);
+	});
+});
+
+describe('search caps', () => {
+	test('long text is cut at a word, short text is kept', () => {
+		const words = 'electronic circuits '.repeat(20).trim();
+		const clipped = clipQuery(words);
+		expect(clipped.length).toBeLessThan(MAX_QUERY_LENGTH + 1);
+		expect(words.startsWith(clipped)).toBe(true);
+		expect(clipped.endsWith('circuits') || clipped.endsWith('electronic')).toBe(true);
+		expect(clipQuery('red science')).toBe('red science');
+		expect(clipQuery('x'.repeat(300))).toBe('x'.repeat(MAX_QUERY_LENGTH));
+		expect(parseSearch(new URL(`http://x/?q=${encodeURIComponent(words)}`)).q).toBe(clipped);
+	});
+	test('a 172-character query fits', () => {
+		const q =
+			'nilaus base in a book red green blue science electronic circuits advanced circuits processing units space age tileable beaconed 2.0 belt balancer train station oil refinery';
+		expect(clipQuery(q)).toBe(q);
+	});
+	test('a repeated filter keeps its first MAX_FILTER_VALUES values', () => {
+		const url = new URL(`http://x/?${Array.from({ length: 15 }, (_, i) => `makes=item:x${i}`).join('&')}`);
+		expect(parseSearch(url).makes).toEqual(Array.from({ length: MAX_FILTER_VALUES }, (_, i) => `item:x${i}`));
 	});
 });

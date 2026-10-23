@@ -21,7 +21,31 @@ export interface SearchParams {
 	/** Only prints with a game render in this stage's bucket (`?render=1`; print_renders, migration 0015). */
 	render: boolean;
 	sort: 'favorites' | 'recent' | 'relevance';
+	/** 1-based results page (`?p=2`), at most MAX_PAGES. */
+	page: number;
 }
+
+/** Results per page, and how deep a search can page: 20 × 60 = the first 1,200 matches. */
+export const PAGE_SIZE = 60;
+export const MAX_PAGES = 20;
+/** Typed text past this is cut at a word (FTS cost grows with every term); about 30 words. */
+export const MAX_QUERY_LENGTH = 200;
+/** Values kept per repeated filter (`?makes=a&makes=b…`); the rest are dropped. */
+export const MAX_FILTER_VALUES = 10;
+
+/** Text cut to MAX_QUERY_LENGTH characters, at the last space before it when there is one. */
+export const clipQuery = (q: string) => {
+	if (q.length <= MAX_QUERY_LENGTH) return q;
+	const cut = q.slice(0, MAX_QUERY_LENGTH + 1);
+	const space = cut.lastIndexOf(' ');
+	return (space > 0 ? cut.slice(0, space) : cut.slice(0, MAX_QUERY_LENGTH)).trim();
+};
+
+/** `?p=`: a whole number from 1 to MAX_PAGES; anything else is page 1, anything deeper the last page. */
+export const parsePage = (v: string | null) => {
+	const n = v !== null && /^\d+$/.test(v) ? Number(v) : 1;
+	return Math.min(Math.max(n, 1), MAX_PAGES);
+};
 
 /**
  * Read search params from a URL. `sort` defaults to best match when there is text to match and
@@ -29,10 +53,10 @@ export interface SearchParams {
  */
 export const parseSearch = (url: URL): SearchParams => {
 	const g = (k: string) => url.searchParams.get(k)?.trim() || null;
-	// Every value of a repeated filter, trimmed, blanks and repeats dropped.
-	const all = (k: MultiFilter) => [...new Set(url.searchParams.getAll(k).map((v) => v.trim()))].filter(Boolean);
+	// Every value of a repeated filter, trimmed, blanks and repeats dropped, at most MAX_FILTER_VALUES.
+	const all = (k: MultiFilter) => [...new Set(url.searchParams.getAll(k).map((v) => v.trim()))].filter(Boolean).slice(0, MAX_FILTER_VALUES);
 	const sa = g('spaceAge');
-	const q = g('q') ?? '';
+	const q = clipQuery(g('q') ?? '');
 	const sort = g('sort');
 	return {
 		q,
@@ -48,7 +72,8 @@ export const parseSearch = (url: URL): SearchParams => {
 		circuits: g('circuits') === '1',
 		trains: g('trains') === '1',
 		render: g('render') === '1',
-		sort: sort === 'recent' || sort === 'favorites' ? sort : q ? 'relevance' : 'favorites'
+		sort: sort === 'recent' || sort === 'favorites' ? sort : q ? 'relevance' : 'favorites',
+		page: parsePage(g('p'))
 	};
 };
 
@@ -122,24 +147,26 @@ const CARD = `p.id, p.title, p.author_name, p.favorites, p.image_id, p.image_typ
 /** Title counts most for relevance, then page labels and nicknames (weights by FTS column). */
 const RELEVANCE = 'bm25(print_search, 0, 10, 1, 3, 1, 1, 2, 0)';
 
-export const PAGE_SIZE = 60;
-
 export interface Statement {
 	sql: string;
 	binds: unknown[];
 }
 
+export type SearchStatements = Record<'results' | 'total' | 'makes' | 'uses' | 'versions', Statement>;
+
 /**
- * The queries behind the search page: result cards, "Makes", "Built with" and version counts.
- * Unfiltered searches read precomputed `facet_counts`; filtered ones count exactly over the
- * FTS matches. Pure, so tests can EXPLAIN them (search.test.ts).
+ * The queries behind the search page: one page of result cards, the number of matches, "Makes",
+ * "Built with" and version counts. Unfiltered searches read precomputed `facet_counts`; filtered
+ * ones count exactly over the FTS matches. Pure, so tests can EXPLAIN them (search.test.ts).
  */
-export const searchStatements = (s: SearchParams): { results: Statement; makes: Statement; uses: Statement; versions: Statement } => {
+export const searchStatements = (s: SearchParams): SearchStatements => {
 	const match = matchExpression(s);
+	const page = `LIMIT ${PAGE_SIZE} OFFSET ${(parsePage(String(s.page)) - 1) * PAGE_SIZE}`;
 	if (!match) {
 		const order = s.sort === 'recent' ? 'p.updated_at DESC' : 'p.favorites DESC';
 		return {
-			results: { sql: `SELECT ${CARD} FROM prints p ORDER BY ${order} LIMIT ${PAGE_SIZE}`, binds: [] },
+			results: { sql: `SELECT ${CARD} FROM prints p ORDER BY ${order} ${page}`, binds: [] },
+			total: { sql: 'SELECT COUNT(*) AS n FROM prints', binds: [] },
 			makes: { sql: `SELECT value, n FROM facet_counts WHERE kind = 'makes' ORDER BY n DESC, value`, binds: [] },
 			uses: { sql: `SELECT value, n FROM facet_counts WHERE kind = 'uses' ORDER BY n DESC, value`, binds: [] },
 			versions: { sql: `SELECT value, n FROM facet_counts WHERE kind = 'version' ORDER BY value`, binds: [] }
@@ -150,9 +177,10 @@ export const searchStatements = (s: SearchParams): { results: Statement; makes: 
 	return {
 		results: {
 			sql: `SELECT ${CARD} FROM print_search JOIN prints p ON p.id = print_search.print_id
-				WHERE print_search MATCH ?1 ORDER BY ${order} LIMIT ${PAGE_SIZE}`,
+				WHERE print_search MATCH ?1 ORDER BY ${order} ${page}`,
 			binds: [match]
 		},
+		total: { sql: 'SELECT COUNT(*) AS n FROM print_search WHERE print_search MATCH ?1', binds: [match] },
 		makes: {
 			sql: `SELECT item AS value, COUNT(*) AS n FROM print_items
 				WHERE role = 'output' AND print_id IN (${matched}) GROUP BY item ORDER BY n DESC, value`,
@@ -173,9 +201,10 @@ export const searchStatements = (s: SearchParams): { results: Statement; makes: 
 
 export const searchPrints = async (db: D1Database, s: SearchParams) => {
 	const q = searchStatements(s);
-	const [rows, makes, uses, versions] = await db.batch<Record<string, unknown>>(
-		[q.results, q.makes, q.uses, q.versions].map((st) => db.prepare(st.sql).bind(...st.binds))
+	const [rows, total, makes, uses, versions] = await db.batch<Record<string, unknown>>(
+		[q.results, q.total, q.makes, q.uses, q.versions].map((st) => db.prepare(st.sql).bind(...st.binds))
 	);
+	const matches = Number(total.results?.[0]?.n ?? 0);
 	const parse = (v: unknown) => (typeof v === 'string' ? (JSON.parse(v) as string[]) : []);
 	return {
 		results: (rows.results ?? []).map(
@@ -188,6 +217,9 @@ export const searchPrints = async (db: D1Database, s: SearchParams) => {
 					mods: parse(r.mods)
 				}) as PrintCard
 		),
+		/** Every match, and the pages they fill (at most MAX_PAGES, however many match). */
+		total: matches,
+		pages: Math.min(Math.ceil(matches / PAGE_SIZE), MAX_PAGES),
 		facets: {
 			makes: (makes.results ?? []) as { value: string; n: number }[],
 			uses: (uses.results ?? []) as { value: string; n: number }[],
