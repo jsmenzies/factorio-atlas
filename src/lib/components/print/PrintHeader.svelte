@@ -5,7 +5,7 @@
 	import { sourceUrl } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import type { NodeAnalysis, Role } from '#lib/server/pipeline/analyze.js';
-	import type { PrintDoc } from '#lib/server/pipeline/print-doc.js';
+	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
 	import type { AuthorTag } from '#lib/tags.js';
 	import { searchRel } from '#lib/search-seo.js';
 
@@ -26,7 +26,7 @@
 		oncopy,
 		icons
 	}: {
-		print: PrintDoc['print'];
+		print: PagePrint;
 		title: string;
 		root: NodeAnalysis | undefined;
 		roles: Record<string, number>;

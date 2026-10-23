@@ -157,7 +157,7 @@
 		{/if}
 
 		{#if data.descriptionHtml}
-			<Description html={data.descriptionHtml} long={String(p.description_md ?? '').length > 900} />
+			<Description html={data.descriptionHtml} long={data.descriptionLong} />
 		{/if}
 
 		{#if cards.length}

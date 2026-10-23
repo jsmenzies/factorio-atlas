@@ -4,7 +4,7 @@
 	import { formatRate, signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import type { PrintAnalysis } from '#lib/server/pipeline/analyze.js';
-	import type { PrintDoc } from '#lib/server/pipeline/print-doc.js';
+	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
 	import CountList from './CountList.svelte';
 	import FactsTable from './FactsTable.svelte';
 	import Screenshot from './Screenshot.svelte';
@@ -22,7 +22,7 @@
 		oncopy,
 		icons
 	}: {
-		print: PrintDoc['print'];
+		print: PagePrint;
 		analysis: PrintAnalysis;
 		main: MadeItem[];
 		/** The print's title as plain text. */

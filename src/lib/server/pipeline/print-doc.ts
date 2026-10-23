@@ -30,6 +30,9 @@ export interface PrintDoc {
 	analysis: PrintAnalysis;
 }
 
+/** The print as its page gets it: the description arrives as sanitised HTML, so the Markdown stays on the server. */
+export type PagePrint = Omit<PrintDoc['print'], 'description_md'>;
+
 export const toPrintDoc = (id: string, sourceUrl: string, r: FirebaseRecord, analysis: PrintAnalysis): PrintDoc => ({
 	v: PRINT_DOC_VERSION,
 	print: {

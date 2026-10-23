@@ -35,7 +35,10 @@ export const load: PageServerLoad = async ({ params }) => {
 			return [signal, section];
 		})
 	);
-	// Untrusted Markdown from factorioprints.com users, sanitised here so the page can use {@html}.
-	const descriptionHtml = renderDescription(String(found.print.description_md ?? ''));
-	return { ...found, icons, sections, descriptionHtml, rendered };
+	// Untrusted Markdown from factorioprints.com users, sanitised here so the page can use {@html}. The
+	// Markdown itself stays here: the page needs only the HTML, and whether to fold a long one.
+	const { description_md, ...print } = found.print;
+	const markdown = String(description_md ?? '');
+	const descriptionHtml = renderDescription(markdown);
+	return { ...found, print, icons, sections, descriptionHtml, descriptionLong: markdown.length > 900, rendered };
 };
