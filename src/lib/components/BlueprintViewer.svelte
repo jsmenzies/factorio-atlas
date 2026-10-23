@@ -13,12 +13,23 @@
 	 * zoom needs. `page` is the same page's entity data, in the render's world coordinates, for
 	 * hover tooltips and outlines of modded entities fpsr can't draw. `tooltip` has the icons,
 	 * English names and module slot counts for the names the page uses.
+	 *
+	 * `full` is the full-screen page's look: the controls float over the render (zoom bar, minimap,
+	 * key hints) and the keys work anywhere on the page. `onexit` is what Esc does there.
 	 */
 	let {
 		page,
 		render,
-		tooltip = null
-	}: { page: CompactPage; render: { sidecar: RenderSidecar; base: string }; tooltip?: TooltipData | null } = $props();
+		tooltip = null,
+		full = false,
+		onexit
+	}: {
+		page: CompactPage;
+		render: { sidecar: RenderSidecar; base: string };
+		tooltip?: TooltipData | null;
+		full?: boolean;
+		onexit?: () => void;
+	} = $props();
 
 	const NO_ICONS = { base: '', of: {} };
 	const icons = $derived(tooltip?.icons ?? NO_ICONS);
@@ -32,6 +43,8 @@
 	let zoomPct = $state(100);
 	let failed = $state(false);
 	let level = $state<number | null>(null);
+	/** Whether the view is still the fitted one (the Fit button shows it). */
+	let atFit = $state(true);
 	const unknownNames = $derived(new Set(Object.keys(render.sidecar.stats.unknown)));
 
 	/** screen = world × s + t, in CSS pixels. Not reactive: drawing is imperative. */
@@ -54,10 +67,15 @@
 		const { x0, y0, x1, y1 } = inspector?.bounds ?? { x0: minX, y0: minY, x1: maxX, y1: maxY };
 		const bw = Math.max(4, x1 - x0 + 2);
 		const bh = Math.max(4, y1 - y0 + 2);
-		view.s = Math.min(MAX_S, Math.max(MIN_S, Math.min(size.w / bw, size.h / bh)));
+		// Full screen keeps the fitted render clear of the floating header (top) and zoom bar (bottom).
+		const top = full && size.h > 400 ? 76 : 0;
+		const bottom = full && size.h > 400 ? 64 : 0;
+		const h = size.h - top - bottom;
+		view.s = Math.min(MAX_S, Math.max(MIN_S, Math.min(size.w / bw, h / bh)));
 		view.tx = size.w / 2 - ((x0 + x1) / 2) * view.s;
-		view.ty = size.h / 2 - ((y0 + y1) / 2) * view.s;
+		view.ty = top + h / 2 - ((y0 + y1) / 2) * view.s;
 		needsFit = false;
+		atFit = true;
 		zoomPct = Math.round(view.s * 100) / 100;
 		requestDraw();
 	};
@@ -68,6 +86,7 @@
 		view.tx = px - (px - view.tx) * k;
 		view.ty = py - (py - view.ty) * k;
 		view.s = s;
+		atFit = false;
 		zoomPct = Math.round(view.s * 100) / 100;
 		requestDraw();
 	};
@@ -112,8 +131,9 @@
 	});
 
 	$effect(() => {
-		// Redraw when the hover changes.
+		// Redraw when the hover changes, or the minimap comes or goes.
 		void hovered;
+		void mapCanvas;
 		requestDraw();
 	});
 
@@ -169,6 +189,7 @@
 		const wx1 = (w - tx) / s;
 		const wy1 = (h - ty) / s;
 		drawRender(ctx, render.sidecar, wx0, wy0, wx1, wy1);
+		drawMap(wx0, wy0, wx1, wy1);
 		if (!ins) return;
 		ctx.setTransform(dpr * s, 0, 0, dpr * s, dpr * tx, dpr * ty);
 		ctx.globalAlpha = 1;
@@ -239,6 +260,55 @@
 		}
 	}
 
+	// --- minimap (full screen): the overview with the view's outline; click or drag to move there
+	let mapCanvas = $state<HTMLCanvasElement>();
+	let showMap = $state(true);
+	const MAP_W = 180;
+	const MAP_H = 110;
+	/** The minimap's size in CSS pixels and its CSS pixels per world tile. */
+	const map = $derived.by(() => {
+		const o = render.sidecar.overview;
+		const k = Math.min(MAP_W / o.width, MAP_H / o.height);
+		return { w: Math.round(o.width * k), h: Math.round(o.height * k), ppt: k * o.ppt };
+	});
+
+	function drawMap(wx0: number, wy0: number, wx1: number, wy1: number) {
+		const cv = mapCanvas;
+		if (!cv) return;
+		const ctx = cv.getContext('2d');
+		if (!ctx) return;
+		const { dpr } = size;
+		const { w, h, ppt } = map;
+		if (cv.width !== Math.round(w * dpr)) cv.width = Math.round(w * dpr);
+		if (cv.height !== Math.round(h * dpr)) cv.height = Math.round(h * dpr);
+		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		ctx.clearRect(0, 0, w, h);
+		const ov = images.get(`${render.base}/${render.sidecar.overview.file}`);
+		if (ov instanceof HTMLImageElement) {
+			ctx.imageSmoothingQuality = 'high';
+			ctx.drawImage(ov, 0, 0, w, h);
+		}
+		const { minX, minY } = render.sidecar.frame;
+		const x0 = Math.max(1, (wx0 - minX) * ppt);
+		const y0 = Math.max(1, (wy0 - minY) * ppt);
+		const x1 = Math.min(w - 1, (wx1 - minX) * ppt);
+		const y1 = Math.min(h - 1, (wy1 - minY) * ppt);
+		if (x1 <= x0 || y1 <= y0) return;
+		ctx.strokeStyle = '#fbbf24';
+		ctx.lineWidth = 1.5;
+		ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+	}
+
+	let mapDrag = false;
+	const mapMove = (e: PointerEvent) => {
+		const r = mapCanvas!.getBoundingClientRect();
+		const { minX, minY } = render.sidecar.frame;
+		view.tx = size.w / 2 - (minX + (e.clientX - r.left) / map.ppt) * view.s;
+		view.ty = size.h / 2 - (minY + (e.clientY - r.top) / map.ppt) * view.s;
+		atFit = false;
+		requestDraw();
+	};
+
 	// --- pointer interaction: drag to pan, pinch to zoom, hover/tap to inspect
 	const pointers = new Map<number, { x: number; y: number }>();
 	let moved = 0;
@@ -286,13 +356,17 @@
 			view.tx += pos.x - prev.x;
 			view.ty += pos.y - prev.y;
 			moved += Math.abs(pos.x - prev.x) + Math.abs(pos.y - prev.y);
-			if (moved > 4) hovered = null;
+			if (moved > 4) {
+				hovered = null;
+				atFit = false;
+			}
 			requestDraw();
 		} else if (pointers.size === 2 && pinch) {
 			const p = pinchState();
 			view.s = Math.min(MAX_S, Math.max(MIN_S, (pinch.s * p.d) / pinch.d));
 			view.tx = p.mx - pinch.wx * view.s;
 			view.ty = p.my - pinch.wy * view.s;
+			atFit = false;
 			zoomPct = Math.round(view.s * 100) / 100;
 			moved += 10;
 			requestDraw();
@@ -316,9 +390,19 @@
 		else if (e.key === 'ArrowRight') view.tx -= step;
 		else if (e.key === 'ArrowUp') view.ty += step;
 		else if (e.key === 'ArrowDown') view.ty -= step;
+		else if (e.key === 'Escape' && onexit) onexit();
 		else return;
 		e.preventDefault();
+		if (e.key.startsWith('Arrow')) atFit = false;
 		requestDraw();
+	};
+	/** Full screen: the keys work wherever focus is, except in form fields and dialogs. */
+	const onwindowkey = (e: KeyboardEvent) => {
+		const t = e.target;
+		if (e.ctrlKey || e.metaKey || e.altKey || e.defaultPrevented) return;
+		if (t instanceof HTMLInputElement || t instanceof HTMLSelectElement || t instanceof HTMLTextAreaElement) return;
+		if (document.querySelector('dialog[open]')) return;
+		onkeydown(e);
 	};
 
 	const info = $derived(
@@ -332,28 +416,41 @@
 	);
 </script>
 
+<svelte:window onkeydown={full ? onwindowkey : undefined} />
+
+{#snippet zoomButton(label: string, title: string, onclick: () => void, pressed?: boolean)}
+	<button
+		class="rounded-md px-2.5 py-1 hover:bg-stone-800 hover:text-stone-100 {pressed ? 'bg-stone-700/80 text-stone-100' : ''}"
+		aria-pressed={pressed}
+		{title}
+		{onclick}>{label}</button
+	>
+{/snippet}
+
 <div class="flex h-full min-h-0 flex-col">
-	<div class="flex flex-wrap items-center gap-2 border-b border-stone-800 bg-stone-900/80 px-3 py-1.5 text-xs">
-		{#if failed}
-			<span class="text-red-300">render failed to load</span>
-		{/if}
-		{#if unknownNames.size}
-			<span class="text-orange-300" title={[...unknownNames].join(', ')}>{unknownNames.size} modded types outlined</span>
-		{/if}
-		<span class="text-stone-500" title="Rendered offline by fpsr {render.sidecar.fpsr} for Factorio {render.sidecar.assets.gameVersion}"
-			>{level ? `${level} px/tile tiles` : 'overview'}</span
-		>
-		<span class="mx-1 h-4 w-px bg-stone-700"></span>
-		<button class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700" onclick={fit} title="Fit to view (F)">Fit</button>
-		<button class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700" onclick={() => zoomAt(size.w / 2, size.h / 2, 1.25)} title="Zoom in (+)"
-			>+</button
-		>
-		<button class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700" onclick={() => zoomAt(size.w / 2, size.h / 2, 0.8)} title="Zoom out (−)"
-			>−</button
-		>
-		<span class="text-stone-500">{zoomPct} px/tile</span>
-		<span class="ml-auto text-stone-500">{page.entities.length.toLocaleString()} entities</span>
-	</div>
+	{#if !full}
+		<div class="flex flex-wrap items-center gap-2 border-b border-stone-800 bg-stone-900/80 px-3 py-1.5 text-xs">
+			{#if failed}
+				<span class="text-red-300">render failed to load</span>
+			{/if}
+			{#if unknownNames.size}
+				<span class="text-orange-300" title={[...unknownNames].join(', ')}>{unknownNames.size} modded types outlined</span>
+			{/if}
+			<span class="text-stone-500" title="Rendered offline by fpsr {render.sidecar.fpsr} for Factorio {render.sidecar.assets.gameVersion}"
+				>{level ? `${level} px/tile tiles` : 'overview'}</span
+			>
+			<span class="mx-1 h-4 w-px bg-stone-700"></span>
+			<button class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700" onclick={fit} title="Fit to view (F)">Fit</button>
+			<button class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700" onclick={() => zoomAt(size.w / 2, size.h / 2, 1.25)} title="Zoom in (+)"
+				>+</button
+			>
+			<button class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700" onclick={() => zoomAt(size.w / 2, size.h / 2, 0.8)} title="Zoom out (−)"
+				>−</button
+			>
+			<span class="text-stone-500">{zoomPct} px/tile</span>
+			<span class="ml-auto text-stone-500">{page.entities.length.toLocaleString()} entities</span>
+		</div>
+	{/if}
 	<div {@attach fitToContainer} class="relative min-h-0 flex-1 overflow-hidden">
 		<canvas
 			bind:this={canvas}
@@ -366,8 +463,60 @@
 			{onpointerup}
 			onpointercancel={onpointerup}
 			{onpointerleave}
-			{onkeydown}
+			onkeydown={full ? undefined : onkeydown}
 		></canvas>
+		{#if full}
+			<div class="pointer-events-none absolute inset-x-3 bottom-3 flex items-end justify-center gap-3 sm:inset-x-5 sm:bottom-5 sm:justify-between">
+				<!-- Hints sit on the render, so a faint backing keeps them readable over busy builds. -->
+				<div class="hidden min-w-0 flex-1 space-y-1 text-xs text-stone-500 sm:block [&>p]:w-fit [&>p]:rounded [&>p]:bg-stone-950/70 [&>p]:px-1.5 [&>p]:py-0.5">
+					{#if failed}<p class="text-red-300">The render failed to load.</p>{/if}
+					{#if unknownNames.size}
+						<p class="pointer-events-auto text-orange-300" title={[...unknownNames].join(', ')}>
+							{unknownNames.size} modded {unknownNames.size === 1 ? 'type' : 'types'} outlined
+						</p>
+					{/if}
+					<p>Scroll to zoom · drag to pan · F to fit{onexit ? ' · Esc to go back' : ''}</p>
+				</div>
+				<div
+					class="pointer-events-auto flex shrink-0 items-center gap-0.5 rounded-lg border border-stone-700 bg-stone-900/90 p-1 text-sm text-stone-300 shadow-lg backdrop-blur"
+					role="toolbar"
+					aria-label="Zoom"
+				>
+					{@render zoomButton('Fit', 'Fit to view (F)', fit, atFit)}
+					{@render zoomButton('−', 'Zoom out (−)', () => zoomAt(size.w / 2, size.h / 2, 0.8))}
+					<span
+						class="w-24 text-center font-mono text-xs text-stone-300 tabular-nums"
+						title="{level ? `Drawing ${level} px/tile tiles` : 'Drawing the overview'}; rendered offline by fpsr {render.sidecar
+							.fpsr} for Factorio {render.sidecar.assets.gameVersion}">{zoomPct < 10 ? zoomPct.toFixed(2) : zoomPct.toFixed(1)} px/tile</span
+					>
+					{@render zoomButton('+', 'Zoom in (+)', () => zoomAt(size.w / 2, size.h / 2, 1.25))}
+					<!-- Phones have no room for the minimap, so no switch for it either. -->
+					<span class="hidden sm:contents">
+						<span class="mx-1 h-5 w-px bg-stone-700"></span>
+						{@render zoomButton('Overview', showMap ? 'Hide the minimap' : 'Show the minimap', () => (showMap = !showMap), showMap)}
+					</span>
+				</div>
+				<div class="hidden flex-1 justify-end sm:flex">
+					{#if showMap}
+						<canvas
+							bind:this={mapCanvas}
+							class="pointer-events-auto hidden cursor-pointer touch-none rounded-md border border-stone-700 bg-stone-950/90 shadow-lg sm:block"
+							style:width="{map.w}px"
+							style:height="{map.h}px"
+							aria-label="Minimap. Click or drag to move the view."
+							onpointerdown={(e) => {
+								mapCanvas!.setPointerCapture(e.pointerId);
+								mapDrag = true;
+								mapMove(e);
+							}}
+							onpointermove={(e) => mapDrag && mapMove(e)}
+							onpointerup={() => (mapDrag = false)}
+							onpointercancel={() => (mapDrag = false)}
+						></canvas>
+					{/if}
+				</div>
+			</div>
+		{/if}
 		{#if info}
 			{@const slots = tooltip?.slots[info.title] ?? 0}
 			{@const filled = info.modules.reduce((n, m) => n + m.count, 0)}

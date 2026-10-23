@@ -23,6 +23,16 @@ export const load: PageServerLoad = async ({ params, url }) => {
 			{
 				title: pageTitle(n),
 				summary: n.kind === 'blueprint' ? describeNode(n, { withRate: true }) : null,
+				// The header's "611.84/s Space science pack": the author's rate where the label gives one.
+				makes:
+					n.kind === 'blueprint' && n.role === 'production' && n.outputs.length && (n.claimedRate ?? n.estimatedRate)
+						? {
+								signal: n.outputs[0],
+								rate: (n.claimedRate ?? n.estimatedRate)!,
+								claimed: n.claimedRate != null,
+								more: n.outputs.length - 1
+							}
+						: null,
 				setup: n.kind === 'blueprint' && n.role === 'production' ? describeSetup(n) : '',
 				icons: n.icons,
 				kind: n.kind,
