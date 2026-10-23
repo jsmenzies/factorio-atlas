@@ -1,6 +1,6 @@
 # Blueprint Atlas
 
-**Find Factorio blueprints by what they actually do, and see them the way the game draws them.**
+**Find Factorio blueprints by what they actually do, and view each blueprint's high-res render.**
 Blueprint Atlas is a searchable index of the blueprints shared on
 [factorioprints.com](https://factorioprints.com). Every blueprint string is decoded and analysed,
 and the blueprints are drawn as high-resolution in-game renders you can pan and zoom, down to
@@ -12,11 +12,7 @@ every inserter, belt and module.
 12,052-entity space science build, zoomed in to the game's full sprite resolution. Hovering a
 machine shows its recipe, modules, size and direction.</sub>
 
-## What it adds
-
-factorioprints.com is where the community shares its blueprints: each print has the author's
-title, description, tags, a screenshot and the exchange string. Blueprint Atlas reads the
-blueprint inside the string as well, which makes these possible:
+## Features
 
 - **Search by contents, not just titles.** Filter by what a print makes or takes, the buildings,
   recipes and modules it uses, game version, Space Age, planets, mods, circuits and trains. The
@@ -29,7 +25,7 @@ blueprint inside the string as well, which makes these possible:
 - **Only prints with a render.** One switch beside the search box keeps the results to prints you
   can look at before you copy anything.
 
-![Search with four stacked filters: makes automation and logistic science packs, uses beacons, has a render](docs/screenshots/filters.webp)
+![Search with four stacked filters: makes firearm magazines, uses asteroid collectors, needs Space Age, has a render: 26 space platforms](docs/screenshots/filters.webp)
 
 - **Game renders of every page.** Pages saved in Factorio 2.0 or later, and the pages of the
   1,000 most-favourited prints whatever their version, are drawn offline with the game's own
@@ -40,15 +36,19 @@ blueprint inside the string as well, which makes these possible:
 ![The whole of Big Boy Space Science in the full-screen viewer](docs/screenshots/render-overview.webp)
 
 - **Books you can navigate.** Big books get tabs for their books and sub-books, with the selected
-  page's render first. Every page can be copied on its own as a blueprint, as can the whole book.
+  page's render first.
 - **Pick from the game's crafting menu.** The search box opens on the game's own item groups,
   with how many prints make each item.
 
 ![Search, with the item picker open on Science: pick what a print makes](docs/screenshots/search.webp)
 
+- **Copy the whole book, or a single blueprint.** "Copy whole book" puts the print's exchange
+  string on your clipboard; "Copy this page" copies just the selected page as a blueprint of its
+  own, ready to paste into the game.
+
 ![A blueprint book: the selected page's game render, then tabs for its books and sub-books over the pages](docs/screenshots/book.webp)
 
-Every print links back to its page on factorioprints.com and credits its author.
+- Every print links back to its page on factorioprints.com and credits its author.
 
 ## How it works
 
