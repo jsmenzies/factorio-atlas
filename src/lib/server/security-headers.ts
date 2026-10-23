@@ -1,7 +1,8 @@
 /**
  * Security headers on every response the Worker sends, from hooks.server.ts. The Content Security
- * Policy itself comes from SvelteKit (`csp` in vite.config.ts, hash mode, so cached HTML stays
- * valid); files served without the Worker (/_app/, static/) get these from static/_headers.
+ * Policy itself comes from SvelteKit (`csp` in vite.config.ts, nonce mode; a cached page keeps the
+ * header it was made with, so its nonce still matches); files served without the Worker (/_app/,
+ * static/) get these from `_headers` in the project root.
  */
 export const SECURITY_HEADERS: Record<string, string> = {
 	// One year. includeSubDomains reaches only this host's own subdomains (renders, sprites), all HTTPS.
