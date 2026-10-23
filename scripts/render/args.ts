@@ -40,6 +40,11 @@ export interface RenderArgs {
 	timeoutScale: number;
 	upload: UploadTarget | null;
 	uploadConcurrency: number;
+	/**
+	 * After the uploads: `render:flags` for the upload target (scripts/render/stage-flags.ts), and a
+	 * page-cache bump when the run replaced or removed files. Non-fatal; needs `upload`.
+	 */
+	flags: boolean;
 	/** Bring finished prints' page thumbnails up to date (scripts/render/thumb-step.ts); `--no-thumbs` turns it off. */
 	thumbs: boolean;
 	/** Prints whose thumbnails are made at once, in the runner's process. */
@@ -51,7 +56,7 @@ export class UsageError extends Error {}
 export const USAGE =
 	'usage: render --from-clone <dir> | --from-disk [dir]  [--ids a,b | --ids-file f] [--limit N | --next N] [--top N [--refresh-top]]\n' +
 	'              [--force] [--retry-failed]\n' +
-	'              [--plan-only] [--upload local|prod] [--upload-concurrency N] [--no-thumbs] [--thumb-jobs N]\n' +
+	'              [--plan-only] [--upload local|prod [--flags]] [--upload-concurrency N] [--no-thumbs] [--thumb-jobs N]\n' +
 	'              [--workers N] [--encode-parallel N] [--mem-cap-mb N] [--recycle-mb N] [--mem-budget-mb N]\n' +
 	'              [--mem-reserve-mb N] [--timeout-scale X]\n' +
 	'       render --resume [any flag above, to override]';
@@ -76,6 +81,7 @@ export const defaultArgs = (machine: { threads: number; ramMb: number }): Omit<R
 	timeoutScale: 1,
 	upload: null,
 	uploadConcurrency: 32,
+	flags: false,
 	thumbs: true,
 	thumbJobs: 1
 });
@@ -113,6 +119,7 @@ export function parseArgs(argv: string[], defaultDisk: string): { given: Partial
 		else if (arg === '--retry-failed') given.retryFailed = true;
 		else if (arg === '--plan-only') given.planOnly = true;
 		else if (arg === '--no-thumbs') given.thumbs = false;
+		else if (arg === '--flags') given.flags = true;
 		else if (arg === '--refresh-top') given.refreshTop = true;
 		else if (arg === '--from-clone') given.clone = value(arg);
 		else if (arg === '--from-disk') given.disk = a[0] && !a[0].startsWith('--') ? a.shift()! : defaultDisk;
@@ -172,6 +179,7 @@ export function validate(args: RenderArgs) {
 	if (args.next !== null && args.limit !== null) throw new UsageError('pick one of --limit and --next');
 	if (args.refreshTop && args.top === null) throw new UsageError('--refresh-top needs --top N');
 	if (args.planOnly && args.upload) throw new UsageError('--plan-only renders nothing, so it uploads nothing: drop --upload');
+	if (args.flags && !args.upload) throw new UsageError('--flags sets the flags of the stage it uploads to: it needs --upload local|prod');
 }
 
 /** What the latest run recorded about its batch (`--next`). */
@@ -209,6 +217,7 @@ export function resumeArgs(recorded: RecordedOptions, runId: string, given: Part
 		// Runs recorded before thumbnails were part of the pipeline have neither field.
 		thumbs: base.thumbs ?? true,
 		thumbJobs: base.thumbJobs ?? 1,
+		flags: base.flags ?? false,
 		top: base.top ?? null,
 		refreshTop: false,
 		planOnly: false,
@@ -245,6 +254,7 @@ export function commandLine(a: RenderArgs): string {
 	if (a.retryFailed) parts.push('--retry-failed');
 	if (a.planOnly) parts.push('--plan-only');
 	if (a.upload) parts.push('--upload', a.upload);
+	if (a.flags) parts.push('--flags');
 	if (!a.thumbs) parts.push('--no-thumbs');
 	parts.push('--workers', String(a.workers));
 	return parts.join(' ');

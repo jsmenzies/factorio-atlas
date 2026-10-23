@@ -101,8 +101,12 @@ GitHub mirror of factorioprints (motlin/factorio-blueprint-firebase-cdn, one JSO
   most-favourited prints (`--top N`), whose older pages fpsr migrates and draws too. The viewer
   (Canvas2D, pan and zoom) shows the renders; pages without one have no viewer. Deployed, render
   images are served from the renders bucket's own hostname through Cloudflare's cache (or by the
-  Worker without one); see docs/deploy.md, "Edge cache". Sprite atlases and renders are never
-  committed.
+  Worker without one); see docs/deploy.md, "Edge cache". Once a print's pages are drawn (or found
+  unchanged), the run also brings its page thumbnails up to date: each overview at its own aspect,
+  with transparency, as AVIF at up to three sizes (`<page>.<stamp>.t320|t640|t960.avif` plus a
+  `thumbs.json` listing them, in `data/thumbs/` or `THUMBS_DIR`), made in the run's own process and
+  uploaded after the print's render files; `bun run render:thumbs` does the same for any prints on
+  its own. Sprite atlases and renders are never committed.
 - **Icons:** the game's own icons (items, fluids, recipes, entities, signals, tiles, planets…),
   exported with Factorio's `--dump-icon-sprites` and turned into one 64 px WebP each by
   `bun run icons`. They live in one R2 bucket, shared by every stage, under a content-hashed path, served from its own
@@ -165,8 +169,12 @@ this repository.
 | `bun run render:top N --from-clone <dir>`                      | recompute the top-N list from the clone without rendering                                                                                                                                                                                            |
 | `bun run render:check --from-clone <dir>`                      | find prints whose record changed since a run looked at them (the next `--next` batch redraws only their changed pages)                                                                                                                               |
 | `bun run render … --upload local\|prod`                        | also upload each finished page to the local RENDERS bucket or the deployed one (needs an R2 API token; see docs/deploy.md, "Uploading renders")                                                                                                      |
+| `bun run render … --upload local\|prod --flags`                | then run `render:flags` for that stage and bump its page cache when files were replaced (never fails the run; prints the command to run by hand if it can't)                                                                                         |
+| `bun run render … --no-thumbs`                                 | leave page thumbnails alone (`--thumb-jobs N`: prints whose thumbnails are made at once, default 1)                                                                                                                                                  |
+| `bun run render:thumbs --ids a,b \| --all`                     | make the page thumbnails of rendered prints into `data/thumbs/` or `THUMBS_DIR` (pages already up to date are left alone; `--force`, `--jobs N`)                                                                                                     |
+| `bun run render:thumbs --upload local\|prod --all`             | upload the thumbnails beside the renders; an unchanged print costs no request (`--flags` as above)                                                                                                                                                   |
 | `bun run render:resume`                                        | a new run with the latest run's options (`--resume`; flags given override them)                                                                                                                                                                      |
-| `bun run render:flags --stage local\|prod`                     | mark the prints with a render in that stage's bucket for the search filter (after uploads; `--dry-run`, `--db N`, `--yes`; see docs/deploy.md, "Uploading renders")                                                                                  |
+| `bun run render:flags --stage local\|prod`                     | mark the prints with a render in that stage's bucket for the search filter, with each one's cover thumbnail (after uploads; `--dry-run`, `--db N`, `--yes`, `--bump`; see docs/deploy.md, "Uploading renders")                                       |
 | `bun run authors --stage local\|prod`                          | put author names on prints whose record has only the author's id: records first, then one Firebase lookup per author, at most 5/s, never repeated (`--dry-run`, `--limit N`, `--db N`, `--yes`; see docs/deploy.md, "Author names")                  |
 | `bun run views:sync --stage local\|prod`                       | total prod's page views over the last 30 days into that stage's D1 for the Popular sort (`--dry-run`, `--db N`, `--yes`; needs `ANALYTICS_API_TOKEN`; see docs/deploy.md, "Page views")                                                              |
 | `bun run game-data <script-output dir> <factorio data dir>`    | regenerate `data/game/game-data-*.json` from the game's `--dump-data` and `--dump-prototype-locale` output (steps in `scripts/build-game-data.ts`)                                                                                                   |

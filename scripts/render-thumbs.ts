@@ -10,14 +10,17 @@
  *       pages are done. Pages whose thumbnails match their overview's stamp are left alone (--force
  *       makes them again); thumbnails of older stamps and removed pages are deleted.
  *
- *   bun run render:thumbs --upload local|prod (--ids a,b | --ids-file f | --all) [--jobs N]
+ *   bun run render:thumbs --upload local|prod (--ids a,b | --ids-file f | --all) [--jobs N] [--flags]
  *       Put the thumbs folder's thumbnails and thumbs.json of those prints (--all: every print in the
  *       thumbs folder) into the stage's RENDERS bucket under the same keys: local = the miniflare
  *       bucket `bun run dev` uses, prod = the deployed one through R2's S3 API (R2_ACCESS_KEY_ID,
  *       R2_SECRET_ACCESS_KEY). What each bucket has is kept in the local D1 (thumb_uploads), so an
  *       unchanged print costs no request; replaced thumbnails are deleted after the renders' grace
  *       period (RENDER_DELETE_GRACE_S). Makes nothing. Then `bun run render:flags --stage …` gives
- *       the stage's search cards their cover thumbnail.
+ *       the stage's search cards their cover thumbnail; `--flags` does that at the end, as
+ *       `bun run render --upload … --flags` does (scripts/render/stage-flags.ts), bumping the page
+ *       cache when thumbnails were scheduled for deletion. Never fatal: on failure it prints the
+ *       command to run by hand (exit 4).
  *
  * Pages run --jobs at a time (default: half the CPUs), each encode on one thread.
  */
@@ -32,7 +35,7 @@ import { finishPrint, makePage, mapPool, planPrint, type PageResult } from './re
 
 const USAGE =
 	'usage: render-thumbs (--ids a,b | --ids-file f | --all) [--force] [--jobs N]\n' +
-	'       render-thumbs --upload local|prod (--ids a,b | --ids-file f | --all) [--jobs N]';
+	'       render-thumbs --upload local|prod (--ids a,b | --ids-file f | --all) [--jobs N] [--flags]';
 
 function fail(problem: string): never {
 	console.error(`${problem}\n${USAGE}`);
@@ -52,6 +55,7 @@ const readIds = async (file: string) =>
 		.filter(Boolean);
 
 let upload: 'local' | 'prod' | null = null;
+let withFlags = false;
 let all = false;
 let force = false;
 let ids: string[] | null = null;
@@ -61,7 +65,8 @@ while (argv.length) {
 	if (a === '--upload') {
 		const t = value(a);
 		upload = t === 'local' || t === 'prod' ? t : fail('--upload takes local or prod');
-	} else if (a === '--all') all = true;
+	} else if (a === '--flags') withFlags = true;
+	else if (a === '--all') all = true;
 	else if (a === '--force') force = true;
 	else if (a === '--ids') ids = value(a).split(',').filter(Boolean);
 	else if (a === '--ids-file') ids = await readIds(value(a));
@@ -72,6 +77,7 @@ if (!Number.isInteger(jobs) || jobs < 1) fail('--jobs needs a whole number above
 if (!ids && !all) fail('pick the prints: --ids, --ids-file or --all');
 if (ids && all) fail('--all and --ids together');
 if (upload && force) fail('--upload only uploads: no --force with it');
+if (withFlags && !upload) fail('--flags sets the flags of the stage it uploads to: it needs --upload local|prod');
 
 const RENDERS = rendersDir(ROOT);
 const THUMBS = thumbsDir(ROOT);
@@ -168,6 +174,7 @@ async function runUpload(target: 'local' | 'prod') {
 	const list = ids ?? (await subdirs(THUMBS));
 	const proxy = await getPlatformProxy<Env>({ persist: true });
 	let code = 0;
+	let thumbDeletes = 0;
 	try {
 		const graceMs = deleteGraceMs(process.env.RENDER_DELETE_GRACE_S, target);
 		const store = (await openStore(target, proxy.env.RENDERS))!;
@@ -189,11 +196,26 @@ async function runUpload(target: 'local' | 'prod') {
 				`${((performance.now() - started) / 1000).toFixed(1)} s`
 		);
 		if (stats.failed) code = 2;
+		thumbDeletes = stats.deletesScheduled;
 	} catch (e) {
 		console.error(e instanceof Error ? e.message : String(e));
 		code = 1;
 	} finally {
 		await proxy.dispose();
+	}
+	if (withFlags && code !== 1) {
+		const { needsPageBump, runStageFlags } = await import('./render/stage-flags.js');
+		const bump = needsPageBump({ replaced: 0, removed: 0, renderDeletes: 0, thumbDeletes });
+		try {
+			// `--flags` is the consent: no typed "prod".
+			await runStageFlags(target, { confirm: async () => {}, bump, log: (line) => console.log(line) });
+		} catch (e) {
+			console.log(
+				`flags: failed: ${e instanceof Error ? e.message : String(e)}\n` +
+					`  the thumbnails are up; run by hand: bun run render:flags --stage ${target}${bump ? ' --bump' : ''}`
+			);
+			code ||= 4;
+		}
 	}
 	process.exit(code);
 }

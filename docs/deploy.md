@@ -297,6 +297,7 @@ local bucket instead. Pages rendered by an earlier run that aren't up yet go fir
    bun run render --from-clone ~/factorio-mirror --next 100 --upload prod
    bun run render:resume        # after a stop or a crash: the same options again
    bun run render --from-clone ~/factorio-mirror --next 1000 --top 1000 --upload prod   # the 1,000 most-favourited first
+   bun run render --from-clone ~/factorio-mirror --next 100 --upload prod --flags       # then the search flags and a page-cache bump
    ```
 
 Per page, in this order: its tiles not in the bucket yet (checked against one listing of the
@@ -320,6 +321,14 @@ bucket, `RENDER_DELETE_GRACE_S=<seconds>` shortens the wait (below 360 s only wi
 `--upload local`). Files in the renders folder itself are removed at once, since the local site reads
 them from disk.
 
+Page thumbnails (`<page>.<stamp>.t320|t640|t960.avif` and `thumbs.json` per print) are made by the
+run from each print's finished overviews into `data/thumbs/`, or the folder `THUMBS_DIR` names, and
+with `--upload` go up after that print's render files: the new thumbnails, then `thumbs.json`. What
+each bucket holds is recorded per print in the local D1 (`thumb_uploads`), so an unchanged print
+costs no request, and replaced thumbnails wait in `render_deletes` like replaced overviews.
+`bun run render:thumbs --ids … | --all` makes them for any rendered prints without a render run, and
+`bun run render:thumbs --upload prod --all` uploads them.
+
 `--upload-concurrency N` sets the requests in flight (default 32); requests, deletions included,
 are retried with backoff on network errors, 429 and 5xx, and a 401 or 403 stops the uploads for the
 run (rendering goes on). The run exits with code 3 when pages are left to upload. `/admin/render`
@@ -342,7 +351,18 @@ and unsetting rows and tokens; running it again writes nothing. Rows may name pr
 hasn't ingested yet: the backfill adds the token whenever a print's row exists, so the order of
 backfill and renders doesn't matter, and a re-ingest keeps it. `--stage local` also counts renders in
 the renders folder, which the local site reads first. Prod goes through the backfill's remote bindings
-(`wrangler login`, Node on PATH), and the deployed database must have migration 0015.
+(`wrangler login`, Node on PATH), and the deployed database must have migration 0018.
+
+It also gives each flagged print its cover thumbnail for search cards (the first page of the
+`thumbs.json` uploaded to that bucket; `print_renders`' cover columns), and bumps the stage's page
+cache when it writes anything.
+
+`--flags` on an upload run (`bun run render … --upload prod --flags`, or `bun run render:thumbs
+--upload prod --all --flags`) runs the same thing for the upload target once the uploads are done,
+without asking (the flag is the consent). It also bumps the page cache when the run replaced a page
+at a new stamp, removed a page, or scheduled files for deletion, since cached pages name those files
+and they go after the grace period. It never fails the run: when it can't finish, it prints the
+command to run by hand (`bun run render:flags --stage prod --bump`) and the run exits with code 4.
 
 ## Page views
 

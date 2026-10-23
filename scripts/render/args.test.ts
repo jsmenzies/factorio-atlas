@@ -54,4 +54,16 @@ describe('render args', () => {
 		expect(resumeArgs({ args: old as RenderArgs }, 'r0', {}).args).toMatchObject({ thumbs: true, thumbJobs: 1 });
 		expect(() => resolved('--from-clone /m --thumb-jobs 0')).toThrow(UsageError);
 	});
+
+	test('--flags needs --upload, is kept by --resume and shows in the command line', () => {
+		const a = resolved('--from-clone /m --next 10 --upload prod --flags');
+		expect(a).toMatchObject({ upload: 'prod', flags: true });
+		expect(commandLine(a)).toBe('--from-clone /m --next 10 --upload prod --flags --workers 8');
+		expect(resolved('--from-clone /m').flags).toBe(false);
+		expect(() => resolved('--from-clone /m --flags')).toThrow(UsageError);
+		expect(resumeArgs({ args: a }, 'r1', {}).args).toMatchObject({ upload: 'prod', flags: true });
+		const old = { ...resolved('--from-clone /m --upload local') } as Partial<RenderArgs>;
+		delete old.flags;
+		expect(resumeArgs({ args: old as RenderArgs }, 'r0', {}).args.flags).toBe(false);
+	});
 });

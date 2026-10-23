@@ -14,6 +14,7 @@ These are gitignored and exist only on the machine that made them:
 | `raw/factorioprints/<id>.json` | Sanitised factorioprints records saved by `bun run ingest`, read by `bun run ingest --from-disk` and `bun run render --from-disk`. Fields the site doesn't use, such as `favorites`, are removed by `sanitizeRaw` in `src/lib/server/pipeline/pipeline.ts` |
 | `source/` | Local id lists |
 | `renders/<id>/` | Output of `bun run render`, per print: `<page>.<stamp>.avif` (overview, named by its render's stamp), `<page>.json` (sidecar: frame, levels, tile maps), `<page>.page.json` (entity data for the viewer's hover details), `t/<hash>.avif` (map tiles, stored once per print by pixel hash) and `index.json` (the rendered pages). `<page>` is the book path (`3`, `3/1`) or `root` for a lone blueprint. `renders/logs/` holds the logs of runs started from `/admin/render` |
+| `thumbs/<id>/` | Page thumbnails made from the renders by `bun run render` and `bun run render:thumbs` (or in the folder `THUMBS_DIR` names): `<page>.<stamp>.t<size>.avif` (the page's overview at its own aspect within a 320, 640 or 960 px wide 16:9 box, never larger than the overview) and `thumbs.json` (the pages, their overview's size and the sizes made). Uploaded beside the renders under the same keys |
 | `sprites/` | Output of `bun run icons`: `icons/<set>/<type>/<name>.webp`, the same keys as the SPRITES bucket |
 
 Prints belong to their authors. To get prints locally, use `bun run backfill --stage local

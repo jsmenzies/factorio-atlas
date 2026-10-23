@@ -34,6 +34,11 @@
  * waits while the print's uploaded tiles aren't known. A page that goes up (sent or reused) cancels
  * the pending deletions of every key it uses, so a stamp going A → B → A never loses A's files, and
  * a key scheduled again keeps its first time only while nothing has used it since.
+ *
+ * Page thumbnails (thumb-step.ts) go up after a print's render files: the thumb step waits on
+ * `settled(id)`, which resolves once the print has no sync queued or running. A sync that failed
+ * and waits on its retry timer counts as settled, so a print's thumbs.json can go up before its
+ * re-sent overview does. That is harmless: thumbnails are files of their own, named by the stamp.
  */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -175,6 +180,9 @@ export interface UploadStats {
 	deleted: number;
 	/** Keys put into render_deletes, and pending deletions dropped because a page uses the key again. */
 	deletesScheduled: number;
+	/** Pages put at a new stamp over an older one in the bucket, and pages dropped from the index. */
+	replaced: number;
+	removed: number;
 	deletesCancelled: number;
 	indexes: number;
 	/** Sweeps of unused objects put off because the bucket holds older versions of some pages. */
@@ -243,6 +251,8 @@ export function createUploader(opts: UploaderOptions) {
 		reused: 0,
 		deleted: 0,
 		deletesScheduled: 0,
+		replaced: 0,
+		removed: 0,
 		deletesCancelled: 0,
 		indexes: 0,
 		sweepsDeferred: 0,
@@ -495,6 +505,7 @@ export function createUploader(opts: UploaderOptions) {
 		// The index no longer names the page's previous overview (or one from before stamps), but a
 		// cached sidecar may: it goes after the grace period.
 		const before = listed.find((u) => u.path === job.path)?.stamp;
+		if (before && before !== sc.stamp) stats.replaced++;
 		await deleteLater(
 			id,
 			[before ? overviewFile(job.path, before) : null, legacyOverview(job.path)].filter(
@@ -620,6 +631,7 @@ export function createUploader(opts: UploaderOptions) {
 					id,
 					plan.orphans.map((u) => u.path)
 				);
+				stats.removed += plan.orphans.length;
 				log(`  upload: ${id}: removed ${plan.orphans.length} pages that no longer render`);
 			}
 			if (!failures) await sweep(id, listed, ctx);

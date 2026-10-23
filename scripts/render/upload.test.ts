@@ -292,6 +292,9 @@ describe('uploader', () => {
 		expect([...db.deletes.keys()]).toEqual([`${ID}/1.bbbbbbbbbb.avif`]);
 		expect(store.objects.has(`${ID}/1.bbbbbbbbbb.avif`)).toBe(true);
 		expect(v.stats.sweepsDeferred).toBe(1);
+		// What the --flags step's page-cache bump goes by.
+		expect(v.stats).toMatchObject({ replaced: 1, removed: 0 });
+		expect(u.stats).toMatchObject({ replaced: 0, removed: 0 });
 
 		// Page 2 done: now every uploaded page is on disk as uploaded, and tiles 1 and 3 are scheduled.
 		db.jobs = [job('1', 'eeeeeeeeee', 'done', 5000), job('2', 'ffffffffff', 'done', 5000)];
@@ -463,6 +466,7 @@ describe('uploader', () => {
 		expect(db.uploads.has(`local\n${ID}\n2`)).toBe(false);
 		expect(store.objects.has(`${ID}/2.json`)).toBe(true);
 		expect(db.deletes.get(`${ID}/2.json`)?.reason).toBe('page removed');
+		expect(v.stats).toMatchObject({ removed: 1, replaced: 0 });
 		expect(db.deletes.get(`${ID}/t/${H(2)}.avif`)?.reason).toBe('unused');
 		const later = () => uploader(store, db, { now: () => 10_000_000 });
 		await later().processDeletes();

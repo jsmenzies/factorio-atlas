@@ -13,6 +13,7 @@
  *     --plan-only                                   # enqueue (decode every print, write the rows) and exit without rendering
  *     --upload local|prod                           # put each finished page into a RENDERS bucket as the run goes
  *     --upload-concurrency N                        # upload requests in flight (default 32)
+ *     --flags                                       # with --upload: then render:flags for that stage, and a page-cache bump (below)
  *     --no-thumbs                                   # don't make (or upload) page thumbnails
  *     --thumb-jobs N                                # prints whose thumbnails are made at once (default 1)
  *   bun run render --resume [flags]                 # a new run with the latest run's options (flags given override them)
@@ -92,7 +93,15 @@
  * bucket through R2's S3 API, with R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY (an R2 API token with
  * Object Read & Write on it) and the account from CLOUDFLARE_ACCOUNT_ID or `wrangler whoami`.
  * Exit codes: 1 the run failed (or bad flags); 2 some pages are failed (this run's, or pages earlier
- * runs left failed that it didn't queue again); 3 rendering went fine but some pages are still to upload.
+ * runs left failed that it didn't queue again); 3 rendering went fine but some pages are still to upload;
+ * 4 all that went fine but the `--flags` step failed.
+ * `--flags` (with --upload): once the uploads are done, the upload target's `render:flags` (the
+ * same code, scripts/render/stage-flags.ts: print_renders, the search filter's token, cover
+ * thumbnails) and, when the run replaced a page's stamp, removed a page or scheduled any deletion,
+ * a bump of the stage's page cache, so cached pages stop naming files that go after the grace period.
+ * At most one bump. With `--upload prod` the flag is the consent (no typed "prod"); prod is reached
+ * like render:flags does it (wrangler login, Node on PATH). It never fails the run: on failure it
+ * prints the command to run by hand.
  * Files a re-render replaced (old overviews, tiles no page uses, files of removed pages) are not
  * deleted from the bucket at once: a browser or the edge may still hold a sidecar (cached 300 s) or
  * an index (60 s) that names them, and would get a 404. They wait in render_deletes for 15 minutes;
@@ -171,6 +180,7 @@ import { createUploader, DELETE_GRACE_MS, hasUploadWork, planPrint, type Uploade
 import { thumbsDir } from '#lib/server/renders-dir.js';
 import { createThumbStep, THUMB_STEP_MB, type ThumbStep } from './render/thumb-step.js';
 import { createThumbUploader, thumbUploadDb } from './render/thumbs-upload.js';
+import { needsPageBump, runStageFlags } from './render/stage-flags.js';
 
 /** Decoded pages kept between enqueueing and rendering, so small runs decode each print once. */
 const PAGE_CACHE_BYTES = 256 * 1024 * 1024;
@@ -1304,4 +1314,32 @@ function thumbSummary() {
 	);
 }
 const uploadsLeft = uploader && (uploader.broken || run.uploads_pending > 0);
-process.exit(exitCode || (run.failed ? 2 : 0) || (uploadsLeft ? 3 : 0));
+const flagsFailed = uploader && args.flags ? !(await flagsStep()) : false;
+process.exit(exitCode || (run.failed ? 2 : 0) || (uploadsLeft ? 3 : 0) || (flagsFailed ? 4 : 0));
+
+/**
+ * `--flags`: the upload target's render flags and cover thumbnails (`render:flags`, the same code),
+ * and a page-cache bump when the run replaced or removed files cached pages may name. Last, after
+ * the run's state is saved, and never fatal: a failure prints the command to run by hand.
+ */
+async function flagsStep(): Promise<boolean> {
+	const u = uploader!.stats;
+	const bump = needsPageBump({
+		replaced: u.replaced,
+		removed: u.removed,
+		renderDeletes: u.deletesScheduled,
+		thumbDeletes: thumbUploader?.stats.deletesScheduled ?? 0
+	});
+	log(`flags: render:flags --stage ${args.upload}${bump ? ', and a page-cache bump' : ''}`);
+	try {
+		// `--flags` is the consent: no typed "prod".
+		await runStageFlags(args.upload!, { confirm: async () => {}, bump, log });
+		return true;
+	} catch (e) {
+		log(
+			`flags: failed: ${e instanceof Error ? e.message : String(e)}\n` +
+				`  the renders and uploads stand; run by hand: bun run render:flags --stage ${args.upload}${bump ? ' --bump' : ''}`
+		);
+		return false;
+	}
+}
