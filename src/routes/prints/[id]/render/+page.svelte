@@ -4,7 +4,9 @@
 	import BlueprintViewer from '#lib/components/BlueprintViewer.svelte';
 	import Lightbox from '#lib/components/Lightbox.svelte';
 	import PageMeta from '#lib/components/PageMeta.svelte';
+	import PagePicker from '#lib/components/PagePicker.svelte';
 	import RichText from '#lib/components/RichText.svelte';
+	import { groupPages } from '#lib/book-groups.js';
 	import { plainText } from '#lib/richtext.js';
 	import { formatRate, imgurUrl, signalName } from '#lib/format.js';
 	import type { PageProps } from './$types';
@@ -21,13 +23,8 @@
 		if (next) select(next.path);
 	};
 	// Untitled pages are named from their icons ("#1 · Assembling machine 2 · Electronic circuit").
-	const titleOf = (path: string, label: string | null) => plainText(data.info[path]?.title.text ?? label ?? 'Untitled');
-	const optionLabel = (n: (typeof data.pages)[number]) => {
-		const indent = '  '.repeat(Math.max(0, n.depth - 1));
-		if (n.kind !== 'blueprint') return `${indent}${titleOf(n.path, n.label)}`;
-		const summary = data.info[n.path]?.summary;
-		return `${indent}${Number(n.path.split('/').at(-1)) + 1}. ${titleOf(n.path, n.label)}${summary ? ` — ${summary}` : ''}`;
-	};
+	const titleOf = (path: string) => plainText(data.info[path]?.title.text ?? data.info[path]?.label ?? 'Untitled');
+	const groups = $derived(groupPages(data.pages, titleOf));
 	const here = $derived(data.path !== null ? data.info[data.path] : undefined);
 	const book = $derived(blueprints.length > 1);
 
@@ -37,10 +34,15 @@
 	);
 
 	let infoOpen = $state(false);
+	let pickerOpen = $state(false);
+	// Esc closes what's open first, then leaves.
 	const exit = () => {
-		if (infoOpen) infoOpen = false;
+		if (pickerOpen) pickerOpen = false;
+		else if (infoOpen) infoOpen = false;
 		else goto(back);
 	};
+	const stepButton =
+		'grid size-9 place-items-center rounded-lg border border-stone-700 bg-stone-800 text-stone-200 hover:bg-stone-700 disabled:opacity-40 disabled:hover:bg-stone-800';
 
 	let lightbox = $state<Lightbox>();
 
@@ -63,6 +65,28 @@
 	const copyLabel = $derived({ idle: 'Copy string', copying: 'Copying…', done: 'Copied!', failed: 'Copy failed' }[copied]);
 </script>
 
+{#snippet chevron(d: string)}
+	<svg viewBox="0 0 16 16" class="size-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+		><path {d} /></svg
+	>
+{/snippet}
+
+{#snippet stats(here: NonNullable<typeof data.info[string]>)}
+	{#if here.makes}
+		<span class="font-mono text-emerald-300" title={here.makes.claimed ? 'Rate given by the author' : 'Nameplate estimate'}
+			>{here.makes.claimed ? '' : '≈ '}{formatRate(here.makes.rate)}</span
+		>
+		{signalName(here.makes.signal).toLowerCase()}{here.makes.more ? ` +${here.makes.more}` : ''}
+	{:else if here.summary}
+		{here.summary}
+	{/if}
+	{[here.size, here.entities != null && `${here.entities.toLocaleString()} entities`]
+		.filter(Boolean)
+		.map((part) => ` · ${part}`)
+		.join('')}
+	{#if here.gameVersion}· <span title="Saved in Factorio {here.gameVersion}">{here.gameVersion}</span>{/if}
+{/snippet}
+
 <!-- The print page is the one to index; this full-screen view repeats it with less text. -->
 <PageMeta
 	title="Render · {plainText(p.title)} · Blueprint Atlas"
@@ -73,11 +97,13 @@
 
 <svelte:window
 	onpointerdown={(e) => {
-		if (infoOpen && !(e.target instanceof Element && e.target.closest('[data-info]'))) infoOpen = false;
+		const inside = (sel: string) => e.target instanceof Element && !!e.target.closest(sel);
+		if (infoOpen && !inside('[data-info]')) infoOpen = false;
+		if (pickerOpen && !inside('[data-picker]')) pickerOpen = false;
 	}}
 	onkeydown={(e) => {
 		// Without a render there is no viewer to take Esc.
-		if (e.key === 'Escape' && !data.render && !document.querySelector('dialog[open]')) exit();
+		if (e.key === 'Escape' && !e.defaultPrevented && !data.render && !document.querySelector('dialog[open]')) exit();
 	}}
 />
 
@@ -97,63 +123,34 @@
 		{/if}
 
 		<div class="pointer-events-none absolute inset-x-3 top-3 flex flex-wrap items-start justify-between gap-2 sm:inset-x-5 sm:top-5">
-			<!-- What this is: back, the page's in-game icons, the title, and what it makes and how big it is. -->
+			<!-- What this is: back, the title, and what it makes and how big it is; a book's page stepper and picker. -->
 			<header
-				class="pointer-events-auto relative flex max-w-full min-w-0 items-center gap-3 rounded-xl border border-stone-700 bg-stone-900/90 p-2 pr-3 shadow-lg backdrop-blur sm:max-w-xl"
+				class="pointer-events-auto relative z-10 flex max-w-full min-w-0 items-center gap-2 rounded-xl border border-stone-700 bg-stone-900/90 p-2 shadow-lg backdrop-blur sm:gap-3 {book
+					? 'flex-wrap sm:max-w-3xl sm:flex-nowrap'
+					: 'pr-3 sm:max-w-xl'}"
 			>
 				<a href={back} class="shrink-0 rounded-lg border border-stone-700 bg-stone-800 px-3 py-1.5 text-sm text-stone-200 hover:bg-stone-700"
 					>← Back</a
 				>
-				{#if here?.icons.length}
+				{#if !book && here?.icons.length}
 					<span class="hidden shrink-0 rounded-md bg-stone-950/60 p-0.5 sm:block"><BlueprintIcons icons={data.icons} signals={here.icons} size={36} /></span>
 				{/if}
 				<div class="min-w-0 flex-1">
-					<h1 class="truncate font-semibold text-stone-100" title={plainText(p.title)}>
-						<RichText text={p.title} icons={data.icons} size={18} />
-					</h1>
-					{#if here}
-						<p class="truncate text-xs text-stone-400">
-							{#if here.makes}
-								<span class="font-mono text-emerald-300" title={here.makes.claimed ? 'Rate given by the author' : 'Nameplate estimate'}
-									>{here.makes.claimed ? '' : '≈ '}{formatRate(here.makes.rate)}</span
-								>
-								{signalName(here.makes.signal).toLowerCase()}{here.makes.more ? ` +${here.makes.more}` : ''}
-							{:else if here.summary}
-								{here.summary}
-							{/if}
-							{[here.size, here.entities != null && `${here.entities.toLocaleString()} entities`]
-								.filter(Boolean)
-								.map((part) => ` · ${part}`)
-								.join('')}
-							{#if here.gameVersion}· <span title="Saved in Factorio {here.gameVersion}">{here.gameVersion}</span>{/if}
-						</p>
-					{/if}
 					{#if book}
-						<div class="mt-1 flex items-center gap-1 text-xs">
-							<button
-								class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700 disabled:opacity-40"
-								disabled={index <= 0}
-								onclick={() => step(-1)}
-								aria-label="Previous page">‹</button
+						<h1 class="min-w-0">
+							<span class="block truncate text-xs text-stone-400" title={plainText(p.title)}><RichText text={p.title} icons={data.icons} size={14} /></span>
+							<span
+								class="block truncate font-semibold {here?.title.derived ? 'text-stone-300 italic' : 'text-stone-100'}"
+								title={here?.title.derived ? 'Untitled page, named from its icons' : undefined}
 							>
-							<select
-								class="min-w-0 flex-1 truncate rounded border border-stone-700 bg-stone-950 px-2 py-0.5"
-								value={data.path ?? ''}
-								onchange={(e) => select(e.currentTarget.value)}
-								aria-label="Book page"
-							>
-								{#each data.pages as n, i (i)}
-									<option value={n.path} disabled={n.kind !== 'blueprint'}>{optionLabel(n)}</option>
-								{/each}
-							</select>
-							<button
-								class="rounded bg-stone-800 px-2 py-0.5 hover:bg-stone-700 disabled:opacity-40"
-								disabled={index >= blueprints.length - 1}
-								onclick={() => step(1)}
-								aria-label="Next page">›</button
-							>
-							<span class="shrink-0 text-stone-500 tabular-nums">{index + 1} / {blueprints.length}</span>
-						</div>
+								<RichText text={here?.title.text ?? here?.label ?? 'Untitled'} icons={data.icons} size={18} />
+							</span>
+						</h1>
+					{:else}
+						<h1 class="truncate font-semibold text-stone-100" title={plainText(p.title)}>
+							<RichText text={p.title} icons={data.icons} size={18} />
+						</h1>
+						{#if here}<p class="truncate text-xs text-stone-400">{@render stats(here)}</p>{/if}
 					{/if}
 				</div>
 				{#if here}
@@ -176,18 +173,58 @@
 						<div
 							id="page-info"
 							data-info
-							class="absolute top-full right-0 left-0 z-10 mt-2 space-y-1.5 rounded-xl border border-stone-700 bg-stone-900/95 p-3 text-xs shadow-lg backdrop-blur"
+							class="absolute top-full left-0 z-10 mt-2 w-full max-w-xl space-y-1.5 rounded-xl border border-stone-700 bg-stone-900/95 p-3 text-xs shadow-lg backdrop-blur"
 						>
-							{#if book}
-								<p class="font-medium {here.title.derived ? 'text-stone-300 italic' : 'text-stone-100'}">
-									<RichText text={here.title.text ?? here.label ?? 'Untitled'} icons={data.icons} size={14} />
-								</p>
-							{/if}
+							{#if book}<p class="text-stone-300">{@render stats(here)}</p>{/if}
 							{#if here.summary}<p class="text-stone-300">{here.summary}</p>{/if}
 							{#if here.setup}<p class="text-stone-400">{here.setup}</p>{/if}
 							<p class="text-stone-500">
 								{[p.author_name && `By ${p.author_name}`, here.gameVersion && `Saved in Factorio ${here.gameVersion}`].filter(Boolean).join(' · ')}
 							</p>
+						</div>
+					{/if}
+				{/if}
+				{#if book}
+					<span class="mx-1 hidden h-8 w-px shrink-0 bg-stone-700 sm:block"></span>
+					<!-- On phones the stepper takes its own row, so the titles keep their width. -->
+					<div class="flex w-full shrink-0 items-center gap-1.5 sm:w-auto" data-picker>
+						<button class={stepButton} disabled={index <= 0} onclick={() => step(-1)} aria-label="Previous page" title="Previous page"
+							>{@render chevron('M10.25 3.5 5.75 8l4.5 4.5')}</button
+						>
+						<button
+							class="flex h-9 flex-1 items-center justify-center gap-2 rounded-lg border px-3 text-sm transition sm:flex-none {pickerOpen
+								? 'border-amber-500/70 bg-amber-500/10 text-amber-200'
+								: 'border-stone-700 bg-stone-800 text-stone-200 hover:bg-stone-700'}"
+							aria-expanded={pickerOpen}
+							aria-haspopup="dialog"
+							aria-label="Page {index + 1} of {blueprints.length}: all pages"
+							onclick={() => (pickerOpen = !pickerOpen)}
+						>
+							<span class="font-mono tabular-nums">{index + 1} / {blueprints.length}</span>
+							<span class="text-stone-400">Pages</span>
+							<span class="text-[0.6rem] text-stone-400" aria-hidden="true">▼</span>
+						</button>
+						<button
+							class={stepButton}
+							disabled={index >= blueprints.length - 1}
+							onclick={() => step(1)}
+							aria-label="Next page"
+							title="Next page">{@render chevron('M5.75 3.5 10.25 8 5.75 12.5')}</button>
+					</div>
+					{#if pickerOpen}
+						<div class="absolute top-full left-0 z-10 mt-2" data-picker>
+							<PagePicker
+								{groups}
+								current={data.path}
+								pages={data.info}
+								icons={data.icons}
+								href={(path) => `?page=${encodeURIComponent(path)}`}
+								onpick={(path) => {
+									pickerOpen = false;
+									select(path);
+								}}
+								onclose={() => (pickerOpen = false)}
+							/>
 						</div>
 					{/if}
 				{/if}

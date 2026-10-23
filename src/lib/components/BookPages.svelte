@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { uniqueTails } from '#lib/book-groups.js';
 	import BlueprintIcons from '#lib/components/BlueprintIcons.svelte';
 	import RichText from '#lib/components/RichText.svelte';
 	import { describeNode, pageTitle } from '#lib/describe.js';
@@ -56,29 +57,11 @@
 	}
 
 	/** Names each group by the shortest tail of its book chain that no other group shares, numbering any still alike. */
-	const label = (gs: { chain: string[] }[]) => {
-		const depth = gs.map(() => 1);
-		const name = (i: number) => gs[i].chain.slice(-depth[i]).map(plainText).join(' › ');
-		for (let changed = true; changed; ) {
-			changed = false;
-			const counts = new Map<string, number>();
-			gs.forEach((_, i) => counts.set(name(i), (counts.get(name(i)) ?? 0) + 1));
-			gs.forEach((g, i) => {
-				if (counts.get(name(i))! > 1 && depth[i] < g.chain.length) {
-					depth[i]++;
-					changed = true;
-				}
-			});
-		}
-		const totals = new Map<string, number>();
-		gs.forEach((_, i) => totals.set(name(i), (totals.get(name(i)) ?? 0) + 1));
-		const seen = new Map<string, number>();
-		return gs.map((g, i) => {
-			const n = (seen.get(name(i)) ?? 0) + 1;
-			seen.set(name(i), n);
-			return { label: g.chain.slice(-depth[i]), number: totals.get(name(i))! > 1 ? n : null };
-		});
-	};
+	const label = (gs: { chain: string[] }[]) =>
+		uniqueTails(
+			gs.map((g) => g.chain),
+			plainText
+		).map(({ depth, number }, i) => ({ label: gs[i].chain.slice(-depth), number }));
 
 	// One group per book that holds pages, in order of its first page (a book that comes back
 	// after a sub-book stays one group), gathered under its top-level book.

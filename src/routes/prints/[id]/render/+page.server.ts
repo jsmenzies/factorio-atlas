@@ -1,5 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { describeNode, describeSetup, pageTitle } from '#lib/describe.js';
+import { signalName } from '#lib/format.js';
+import { plainText } from '#lib/richtext.js';
 import { iconSet } from '#lib/server/icon-set.js';
 import { loadPrintDoc, loadViewerPage, printTexts } from '#lib/server/print-pages.js';
 import { renderBase } from '#lib/server/renders.js';
@@ -34,6 +36,11 @@ export const load: PageServerLoad = async ({ params, url }) => {
 							}
 						: null,
 				setup: n.kind === 'blueprint' && n.role === 'production' ? describeSetup(n) : '',
+				// What the page picker's search matches: the title, what the page does and every item it makes.
+				find:
+					n.kind === 'blueprint'
+						? [plainText(pageTitle(n).text), describeNode(n), ...[...n.outputs, ...n.products].map(signalName)].join(' ').toLowerCase()
+						: null,
 				icons: n.icons,
 				kind: n.kind,
 				label: n.label,
