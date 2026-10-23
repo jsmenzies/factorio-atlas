@@ -2,7 +2,7 @@
 -- Firebase's public `users/<id>/displayName`. `bun run authors --stage …` fills this table (names
 -- from records first, then Firebase for the rest) and puts the names on prints that lack one; the
 -- ingest seeds it with every record's own name and reads it for prints whose record has none.
-CREATE TABLE authors (
+CREATE TABLE IF NOT EXISTS authors (
 	author_id TEXT PRIMARY KEY,
 	-- NULL: Firebase has no name for this id (kept, so it isn't asked again).
 	display_name TEXT,
@@ -14,7 +14,10 @@ CREATE TABLE authors (
 
 -- The search index gains an `author` column, so typed text finds an author's prints, and a
 -- `by_<author id>` facet token for the `?author=` filter. FTS5 tables can't add columns, so the
--- index is rebuilt from the old one; the author's name comes from `prints`.
+-- index is rebuilt from the old one; the author's name comes from `prints`. The live table is only
+-- touched once the copy is complete, and a copy left by a failed attempt is dropped first, so the
+-- migration can simply run again.
+DROP TABLE IF EXISTS print_search_next;
 CREATE VIRTUAL TABLE print_search_next USING fts5 (
 	print_id UNINDEXED,
 	title,
@@ -35,6 +38,6 @@ FROM print_search s LEFT JOIN prints p ON p.id = s.print_id;
 DROP TABLE print_search;
 ALTER TABLE print_search_next RENAME TO print_search;
 
-INSERT INTO authors (author_id, display_name, source, fetched_at)
+INSERT OR IGNORE INTO authors (author_id, display_name, source, fetched_at)
 SELECT author_id, max(author_name), 'record', CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)
 FROM prints WHERE author_id IS NOT NULL AND author_name IS NOT NULL GROUP BY author_id;
