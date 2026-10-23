@@ -4,8 +4,19 @@ import { signalName } from '#lib/format.js';
 import { plainText } from '#lib/richtext.js';
 import { iconSet } from '#lib/server/icon-set.js';
 import { loadPrintDoc, loadViewerPage, printTexts } from '#lib/server/print-pages.js';
-import { renderBase } from '#lib/server/renders.js';
+import { getThumbsIndex, renderBase } from '#lib/server/renders.js';
+import { thumbSrcset } from '#lib/viewer/thumbs.js';
+import type { PageThumb } from '#lib/components/PagePicker.svelte';
 import type { PageServerLoad } from './$types';
+
+/** The print's page thumbnails as srcsets for the page picker; none until `render:thumbs` has made them. */
+const pageThumbs = async (id: string): Promise<Record<string, PageThumb>> => {
+	const index = await getThumbsIndex(id);
+	const base = renderBase(id);
+	return Object.fromEntries(
+		Object.entries(index?.pages ?? {}).map(([path, p]) => [path, { srcset: thumbSrcset(base, path, p), w: p.w, h: p.h }])
+	);
+};
 
 /**
  * One book page's game render, with its entity data (made with the render) for hover tooltips.
@@ -13,6 +24,7 @@ import type { PageServerLoad } from './$types';
  * analysis document, so it shows whether or not the page has a render.
  */
 export const load: PageServerLoad = async ({ params, url }) => {
+	const thumbs = pageThumbs(params.id);
 	const [doc, found] = await loadPrintDoc(params.id, loadViewerPage(params.id, url.searchParams.get('page')));
 	const row = doc.print;
 	if (!found) error(404, 'No viewer files');
@@ -52,5 +64,5 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	);
 	const icons = iconSet({ signals: nodes.flatMap((n) => n.icons) }, printTexts(doc));
 	const print = { id: row.id, title: row.title, author_name: row.author_name, image_id: row.image_id, image_type: row.image_type };
-	return { print, pages, path, page, info, icons, render, base: renderBase(params.id), tooltip };
+	return { print, pages, path, page, info, icons, render, base: renderBase(params.id), tooltip, thumbs: await thumbs };
 };

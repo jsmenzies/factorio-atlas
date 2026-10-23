@@ -11,6 +11,7 @@ import { dev } from '$app/env';
 import { env } from 'cloudflare:workers';
 import { readDataFile } from './dev-files.js';
 import { PAGE_DATA_VERSION, type RenderIndex, type RenderPageData, type RenderSidecar } from '#lib/viewer/game-render.js';
+import { THUMBS_INDEX, type ThumbsIndex } from '#lib/viewer/thumbs.js';
 
 export interface RenderFile {
 	body: ReadableStream;
@@ -67,3 +68,6 @@ export const renderOverviews = async (id: string): Promise<Record<string, string
 
 /** Book paths of the print's pages that have a render; empty when it has none or its index can't be read. */
 export const renderedPages = async (id: string): Promise<string[]> => Object.keys(await renderOverviews(id));
+
+/** The print's page thumbnails (`<id>/thumbs.json`); null when it has none or it can't be read. */
+export const getThumbsIndex = (id: string) => getJson<ThumbsIndex>(`${id}/${THUMBS_INDEX}`, 1);

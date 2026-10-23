@@ -217,6 +217,7 @@
 								{groups}
 								current={data.path}
 								pages={data.info}
+								thumbs={data.thumbs}
 								icons={data.icons}
 								href={(path) => `?page=${encodeURIComponent(path)}`}
 								onpick={(path) => {
