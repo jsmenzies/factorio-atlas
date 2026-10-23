@@ -8,47 +8,43 @@ every inserter, belt and module.
 
 ![Big Boy Space Science, zoomed in to 64 px per tile: assembling machines with their productivity modules, inserters and belts, and the hover details for one machine](docs/screenshots/render-zoom.webp)
 
-<sub>[Big Boy Space Science](https://factorioprints.com/view/-P4BtyxSn1soAT9w849N) by Zachary s, a
+<sub>[Big Boy Space Science](https://factorio.menzies.io/prints/-P4BtyxSn1soAT9w849N) by Zachary s, a
 12,052-entity space science build, zoomed in to the game's full sprite resolution. Hovering a
 machine shows its recipe, modules, size and direction.</sub>
 
 ## Features
 
-- **Search by contents, not just titles.** Filter by what a print makes or takes, the buildings,
-  recipes and modules it uses, game version, Space Age, planets, mods, circuits and trains. The
-  analysis comes from the blueprint itself, so a print is found even when its title and tags say
-  little.
-- **Filters that stack.** Each click narrows the results: pick red science, then green science,
-  then Beacon, and you get the prints that make both packs with beacons. The sidebar counts follow
-  along, so every option shows how many prints you'd be left with. Free text ("red science",
-  "gc", "prod 3" and other community nicknames) works alongside them.
-- **Only prints with a render.** One switch beside the search box keeps the results to prints you
-  can look at before you copy anything.
+### Search by what's inside
+
+Filter by what a print makes, the buildings, recipes and modules it uses, game version, Space Age,
+planets, mods, circuits and trains, all read from the blueprint itself. Filters stack, so each
+click narrows the results, and community nicknames ("red science", "gc") work as search text.
 
 ![Search with four stacked filters: makes firearm magazines, uses asteroid collectors, needs Space Age, has a render: 26 space platforms](docs/screenshots/filters.webp)
 
-- **Game renders of every page.** Pages saved in Factorio 2.0 or later, and the pages of the
-  1,000 most-favourited prints whatever their version, are drawn offline with the game's own
-  sprites. You see the whole build at a glance, then zoom in to 64 px per tile, where module
-  slots, inserter hands and belt directions are all legible. Hover any entity for its name,
-  recipe, modules, quality, filters and connections.
+### High-res game renders
+
+Every page saved in Factorio 2.0 or later, plus the 1,000 most-favourited prints, drawn with the
+game's own sprites. See the whole build, zoom in to 64 px per tile, and hover any entity for its
+recipe, modules and connections.
 
 ![The whole of Big Boy Space Science in the full-screen viewer](docs/screenshots/render-overview.webp)
 
-- **Books you can navigate.** Big books get tabs for their books and sub-books, with the selected
-  page's render first.
-- **Pick from the game's crafting menu.** The search box opens on the game's own item groups,
-  with how many prints make each item.
+### Books you can navigate
 
-![Search, with the item picker open on Science: pick what a print makes](docs/screenshots/search.webp)
-
-- **Copy the whole book, or a single blueprint.** "Copy whole book" puts the print's exchange
-  string on your clipboard; "Copy this page" copies just the selected page as a blueprint of its
-  own, ready to paste into the game.
+Tabs for every book and sub-book, with the selected page's render first. Copy the whole book, or
+just the page you're looking at.
 
 ![A blueprint book: the selected page's game render, then tabs for its books and sub-books over the pages](docs/screenshots/book.webp)
 
-- Every print links back to its page on factorioprints.com and credits its author.
+### Calculated rates
+
+No rate in the description? It's worked out from the page's machines and recipes, with their
+modules and beacons, so you see what a build makes per second at nameplate speed.
+
+![Big Boy Space Science's print page: about 611.84 space science packs per second, from 464 assembling machines with 1,876 productivity modules, 586 speed modules and 112 beacons](docs/screenshots/rates.webp)
+
+Every print links back to its page on factorioprints.com and credits its author.
 
 ## How it works
 
