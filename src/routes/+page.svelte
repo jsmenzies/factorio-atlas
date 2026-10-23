@@ -72,6 +72,15 @@
 		beyond: data.results.length === 0 && data.total > 0
 	});
 	const plural = (n: number) => `${n.toLocaleString('en')} print${n === 1 ? '' : 's'}`;
+
+	/**
+	 * Phone widths: the filters sit in a drawer behind a button, so results come first. It stays open
+	 * while filters are picked (each pick reloads the counts) until "Show N prints" or ×.
+	 */
+	let filtersOpen = $state(false);
+	$effect(() => {
+		document.documentElement.classList.toggle('max-md:overflow-hidden', filtersOpen);
+	});
 	const itemLabel = (signal: string) => data.picker.find((p) => p.signal === signal)?.label ?? signalName(signal);
 
 	/** Every active filter value as a removable tag; clicking one clears just that value. */
@@ -166,17 +175,43 @@
 	{/each}
 </form>
 
+<svelte:window onkeydown={(e) => e.key === 'Escape' && (filtersOpen = false)} />
+
 <div class="grid gap-6 md:grid-cols-[16rem_1fr]">
-	<SearchFacets
-		makes={data.facets.makes}
-		uses={data.facets.uses}
-		versions={data.facets.versions}
-		makesLabel={signalName}
-		usesLabel={itemLabel}
-		{toggle}
-		{active}
-		icons={data.icons}
-	/>
+	<!-- From md up the sidebar; below it a drawer. Closed, it is hidden, not removed, so its links stay in the page. -->
+	{#if filtersOpen}
+		<button type="button" class="fixed inset-0 z-40 bg-black/60 md:hidden" aria-label="Close filters" onclick={() => (filtersOpen = false)}></button>
+	{/if}
+	<div
+		id="filters"
+		class="max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-50 max-md:flex max-md:w-80 max-md:max-w-[85vw] max-md:flex-col max-md:bg-stone-900 max-md:shadow-xl max-md:transition-[translate,visibility] {filtersOpen
+			? ''
+			: 'max-md:invisible max-md:-translate-x-full'}"
+	>
+		<div class="flex items-center justify-between border-b border-stone-800 px-4 py-3 md:hidden">
+			<h2 class="font-semibold text-stone-100">Filters</h2>
+			<button type="button" class="rounded px-2 text-xl leading-none text-stone-400 hover:bg-stone-800" aria-label="Close filters" onclick={() => (filtersOpen = false)}
+				>×</button
+			>
+		</div>
+		<div class="max-md:flex-1 max-md:overflow-y-auto max-md:overscroll-contain max-md:p-4">
+			<SearchFacets
+				makes={data.facets.makes}
+				uses={data.facets.uses}
+				versions={data.facets.versions}
+				makesLabel={signalName}
+				usesLabel={itemLabel}
+				{toggle}
+				{active}
+				icons={data.icons}
+			/>
+		</div>
+		<div class="border-t border-stone-800 p-3 md:hidden">
+			<button type="button" class="w-full rounded bg-amber-500 px-3 py-2 font-medium text-stone-950 hover:bg-amber-400" onclick={() => (filtersOpen = false)}>
+				Show {plural(data.total)}
+			</button>
+		</div>
+	</div>
 
 	<section>
 		{#if chips.length}
@@ -198,9 +233,21 @@
 			</div>
 		{/if}
 		<div class="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-sm text-stone-400">
-			<p>
-				{plural(data.total)}{#if data.pages > 1 && !pager.beyond}<span class="text-stone-500">{` · page ${data.params.page} of ${data.pages}`}</span>{/if}
-			</p>
+			<div class="flex items-center gap-3">
+				<button
+					type="button"
+					class="flex items-center gap-1.5 rounded border border-stone-700 px-2.5 py-1 text-stone-200 hover:bg-stone-800 md:hidden"
+					aria-controls="filters"
+					aria-expanded={filtersOpen}
+					onclick={() => (filtersOpen = true)}
+				>
+					<svg aria-hidden="true" viewBox="0 0 16 16" class="size-3.5 fill-current"><path d="M1 3h14v1.5H1zm3 4.25h8v1.5H4zM6.5 11.5h3V13h-3z" /></svg>
+					Filters{#if chips.length}<span class="rounded-full bg-amber-500/20 px-1.5 text-xs text-amber-300">{chips.length}</span>{/if}
+				</button>
+				<p>
+					{plural(data.total)}{#if data.pages > 1 && !pager.beyond}<span class="text-stone-500">{` · page ${data.params.page} of ${data.pages}`}</span>{/if}
+				</p>
+			</div>
 			<!-- A GET form, so it works without JS; with JS, changing the select submits it and keeps focus and scroll. -->
 			<form method="GET" data-sveltekit-reset="false">
 				<!-- A new order starts again at its first page. -->
