@@ -6,8 +6,10 @@
 
 	/**
 	 * What a print makes: main products with the best page's rate, then the rest folded into
-	 * groups ("Intermediates 9", "Mall & shops 27") that open in place. With `onpick`, items
-	 * are buttons that filter the page grid to the pages making them.
+	 * groups ("Intermediates 9", "Mall & shops 27") that open in place. Each item is its icon and
+	 * rate in a plain row; the name (and how many pages make it) is the tooltip, and the icon's alt
+	 * text names it for screen readers. With `onpick`, items are buttons that filter the page grid
+	 * to the pages making them.
 	 */
 	let {
 		main,
@@ -33,20 +35,18 @@
 		aria-pressed={onpick ? pressed : undefined}
 		onclick={onpick ? () => onpick(m.signal) : undefined}
 		title={tip(m)}
-		class="flex items-center gap-2 rounded-md border text-left {small ? 'py-0.5 pr-2 pl-1 text-xs' : 'py-1 pr-2.5 pl-1.5 text-sm'} {pressed
-			? 'border-amber-500/70 bg-amber-500/10'
-			: 'border-stone-800 bg-stone-950/60'} {onpick ? 'hover:border-stone-600' : ''}"
+		class="flex items-center gap-1 rounded px-1 py-0.5 text-left {small ? 'text-xs' : 'text-sm'} {pressed
+			? 'bg-amber-500/15 ring-1 ring-amber-500/60'
+			: ''} {onpick ? 'hover:bg-stone-800' : ''}"
 	>
-		<Icon {icons} signal={m.signal} label={signalName(m.signal)} size={small ? 18 : 24} />
-		<span class="text-stone-200">{signalName(m.signal)}</span>
+		<Icon {icons} signal={m.signal} label={signalName(m.signal)} size={small ? 20 : 24} />
 		{#if m.rate}<span class="text-emerald-300">{m.claimed ? '' : '≈ '}{formatRate(m.rate)}</span>{/if}
-		{#if m.pages.length > 1}<span class="text-xs text-stone-500">×{m.pages.length}</span>{/if}
 	</svelte:element>
 {/snippet}
 
 <div class="space-y-2">
 	{#if main.length}
-		<div class="flex flex-wrap gap-2" role={onpick ? 'group' : 'list'} aria-label="Main products">
+		<div class="flex flex-wrap gap-x-3 gap-y-1" role={onpick ? 'group' : 'list'} aria-label="Main products">
 			{#each main as m (m.signal)}{@render chip(m, false)}{/each}
 		</div>
 	{/if}
@@ -69,7 +69,7 @@
 		</div>
 		{#each groups as g (g.name)}
 			{#if open === g.name}
-				<div class="flex flex-wrap gap-1.5 rounded-md border border-stone-800 bg-stone-900/40 p-2" role={onpick ? 'group' : 'list'} aria-label={g.name}>
+				<div class="flex flex-wrap gap-x-2 gap-y-1 rounded-md border border-stone-800 bg-stone-900/40 p-2" role={onpick ? 'group' : 'list'} aria-label={g.name}>
 					{#each g.items as m (m.signal)}{@render chip(m, true)}{/each}
 				</div>
 			{/if}
