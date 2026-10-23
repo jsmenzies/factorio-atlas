@@ -35,6 +35,7 @@
 		"render:thumbs": "bun scripts/render-thumbs.ts",
 		"views:sync": "bun scripts/views-sync.ts",
 		"authors": "bun scripts/authors.ts",
+		"screenshots": "bun scripts/screenshots.ts",
 		"game-data": "bun scripts/build-game-data.ts",
 		"icons": "bun scripts/icons.ts",
 		"lint": "oxlint",

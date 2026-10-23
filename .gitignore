@@ -39,6 +39,8 @@ vite.config.ts.timestamp-*
 /data/renders/
 # Card thumbnails made from those renders (`bun run render:thumbs`).
 /data/thumbs/
+# Copies of the prints' Imgur screenshots (`bun run screenshots`): their authors' images, never committed.
+/data/screenshots/
 # Game icons and other sprite files from `bun run icons`: Wube's art, never committed.
 /data/sprites/
 /.cache/
