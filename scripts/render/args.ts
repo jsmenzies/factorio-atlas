@@ -40,6 +40,10 @@ export interface RenderArgs {
 	timeoutScale: number;
 	upload: UploadTarget | null;
 	uploadConcurrency: number;
+	/** Bring finished prints' page thumbnails up to date (scripts/render/thumb-step.ts); `--no-thumbs` turns it off. */
+	thumbs: boolean;
+	/** Prints whose thumbnails are made at once, in the runner's process. */
+	thumbJobs: number;
 }
 
 export class UsageError extends Error {}
@@ -47,7 +51,7 @@ export class UsageError extends Error {}
 export const USAGE =
 	'usage: render --from-clone <dir> | --from-disk [dir]  [--ids a,b | --ids-file f] [--limit N | --next N] [--top N [--refresh-top]]\n' +
 	'              [--force] [--retry-failed]\n' +
-	'              [--plan-only] [--upload local|prod] [--upload-concurrency N]\n' +
+	'              [--plan-only] [--upload local|prod] [--upload-concurrency N] [--no-thumbs] [--thumb-jobs N]\n' +
 	'              [--workers N] [--encode-parallel N] [--mem-cap-mb N] [--recycle-mb N] [--mem-budget-mb N]\n' +
 	'              [--mem-reserve-mb N] [--timeout-scale X]\n' +
 	'       render --resume [any flag above, to override]';
@@ -71,7 +75,9 @@ export const defaultArgs = (machine: { threads: number; ramMb: number }): Omit<R
 	memReserveMb: defaultReserveMb(machine.ramMb),
 	timeoutScale: 1,
 	upload: null,
-	uploadConcurrency: 32
+	uploadConcurrency: 32,
+	thumbs: true,
+	thumbJobs: 1
 });
 
 const NUMBERS = {
@@ -83,11 +89,12 @@ const NUMBERS = {
 	'--mem-reserve-mb': 'memReserveMb',
 	'--timeout-scale': 'timeoutScale',
 	'--upload-concurrency': 'uploadConcurrency',
+	'--thumb-jobs': 'thumbJobs',
 	'--limit': 'limit',
 	'--next': 'next',
 	'--top': 'top'
 } as const satisfies Record<string, keyof RenderArgs>;
-const INTEGER = new Set<keyof RenderArgs>(['workers', 'encodeParallel', 'uploadConcurrency', 'limit', 'next', 'top']);
+const INTEGER = new Set<keyof RenderArgs>(['workers', 'encodeParallel', 'uploadConcurrency', 'thumbJobs', 'limit', 'next', 'top']);
 
 /** The flags given, and whether `--resume` was one. `defaultDisk` is `--from-disk`'s folder when none follows it. */
 export function parseArgs(argv: string[], defaultDisk: string): { given: Partial<RenderArgs>; resume: boolean } {
@@ -105,6 +112,7 @@ export function parseArgs(argv: string[], defaultDisk: string): { given: Partial
 		else if (arg === '--force') given.force = true;
 		else if (arg === '--retry-failed') given.retryFailed = true;
 		else if (arg === '--plan-only') given.planOnly = true;
+		else if (arg === '--no-thumbs') given.thumbs = false;
 		else if (arg === '--refresh-top') given.refreshTop = true;
 		else if (arg === '--from-clone') given.clone = value(arg);
 		else if (arg === '--from-disk') given.disk = a[0] && !a[0].startsWith('--') ? a.shift()! : defaultDisk;
@@ -198,6 +206,9 @@ export function resumeArgs(recorded: RecordedOptions, runId: string, given: Part
 	// Runs recorded before --top existed have neither field.
 	let args: RenderArgs = {
 		...base,
+		// Runs recorded before thumbnails were part of the pipeline have neither field.
+		thumbs: base.thumbs ?? true,
+		thumbJobs: base.thumbJobs ?? 1,
 		top: base.top ?? null,
 		refreshTop: false,
 		planOnly: false,
@@ -234,6 +245,7 @@ export function commandLine(a: RenderArgs): string {
 	if (a.retryFailed) parts.push('--retry-failed');
 	if (a.planOnly) parts.push('--plan-only');
 	if (a.upload) parts.push('--upload', a.upload);
+	if (!a.thumbs) parts.push('--no-thumbs');
 	parts.push('--workers', String(a.workers));
 	return parts.join(' ');
 }

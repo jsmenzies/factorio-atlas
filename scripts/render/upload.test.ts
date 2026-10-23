@@ -196,6 +196,21 @@ describe('uploader', () => {
 		expect(r.pages).toBeGreaterThan(0);
 	});
 
+	test('settled() waits for a print to sync, resolving at once when nothing is queued or after a stop', async () => {
+		await renderPage('', 'aaaaaaaaaa', [H(1)]);
+		const store = fakeStore();
+		const u = uploader(store, fakeDb([job('', 'aaaaaaaaaa')]));
+		await u.settled('other');
+		u.schedule(ID, 1);
+		await u.settled(ID);
+		// Its index went up before settled() resolved.
+		expect(index(store)?.pages['']?.stamp).toBe(A);
+		u.schedule(ID, 1);
+		u.stop();
+		await u.settled(ID);
+		await u.drain();
+	});
+
 	test('tiles shared by pages go up once, and the index lists only pages whose files are up', async () => {
 		await renderPage('1', 'bbbbbbbbbb', [H(1), H(2)]);
 		await renderPage('2', 'cccccccccc', [H(2), H(3)]);

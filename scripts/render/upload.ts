@@ -258,6 +258,19 @@ export function createUploader(opts: UploaderOptions) {
 	const queue: string[] = [];
 	const queued = new Set<string>();
 	const running = new Map<string, Promise<void>>();
+	/** settled(): callers waiting for a print to have no sync queued or running. */
+	const settleWaiters = new Map<string, (() => void)[]>();
+	const notifySettled = (id: string) => {
+		if (queued.has(id) || running.has(id)) return;
+		const ws = settleWaiters.get(id);
+		settleWaiters.delete(id);
+		for (const w of ws ?? []) w();
+	};
+	const settleAll = () => {
+		const all = [...settleWaiters.values()].flat();
+		settleWaiters.clear();
+		for (const w of all) w();
+	};
 	const again = new Set<string>();
 	const pendingByPrint = new Map<string, number>();
 	const failingPages = new Set<string>();
@@ -719,6 +732,7 @@ export function createUploader(opts: UploaderOptions) {
 		stats.lastError = msg;
 		if (e instanceof StoreError && e.fatal && !broken) {
 			broken = message(e);
+			settleAll();
 			log(`upload: ${msg}\nupload: stopping uploads for this run; rendering goes on, and the next run uploads what's left`);
 			wake();
 		} else log(`  upload failed: ${msg}`);
@@ -751,6 +765,7 @@ export function createUploader(opts: UploaderOptions) {
 			running.delete(id);
 			if (again.delete(id)) schedule(id);
 			pump();
+			notifySettled(id);
 			checkIdle();
 		});
 		running.set(id, p);
@@ -789,6 +804,14 @@ export function createUploader(opts: UploaderOptions) {
 	return {
 		schedule,
 		stats,
+		/**
+		 * Resolves once the print has no sync queued or running (a retry waiting on its timer doesn't
+		 * count), at once after a stop or once uploads broke. Thumbnails go up after the render files this way.
+		 */
+		settled(id: string): Promise<void> {
+			if (stopping || broken || (!queued.has(id) && !running.has(id))) return Promise.resolve();
+			return new Promise((resolve) => settleWaiters.set(id, [...(settleWaiters.get(id) ?? []), resolve]));
+		},
 		/** Bytes/s and files/s put over the last minute, pages/s up over the last 5 minutes; null before the first request. */
 		rates: () => ({ bytes: byteWindow.perSecond(), files: fileWindow.perSecond(), pages: pageWindow.perSecond() }),
 		/** Rendered pages waiting to go up. */
@@ -824,6 +847,7 @@ export function createUploader(opts: UploaderOptions) {
 		/** No new pages; prints finish the page they're on. */
 		stop() {
 			stopping = true;
+			settleAll();
 			for (const t of timers.values()) clearTimeout(t);
 			timers.clear();
 			checkIdle();
@@ -831,6 +855,7 @@ export function createUploader(opts: UploaderOptions) {
 		/** Cancel requests in flight too. */
 		abort() {
 			stopping = true;
+			settleAll();
 			paused = false;
 			for (const t of timers.values()) clearTimeout(t);
 			timers.clear();

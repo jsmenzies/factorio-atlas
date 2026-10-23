@@ -13,6 +13,8 @@
  *     --plan-only                                   # enqueue (decode every print, write the rows) and exit without rendering
  *     --upload local|prod                           # put each finished page into a RENDERS bucket as the run goes
  *     --upload-concurrency N                        # upload requests in flight (default 32)
+ *     --no-thumbs                                   # don't make (or upload) page thumbnails
+ *     --thumb-jobs N                                # prints whose thumbnails are made at once (default 1)
  *   bun run render --resume [flags]                 # a new run with the latest run's options (flags given override them)
  *     --workers N                                   # render processes (default: half the CPU threads)
  *     --encode-parallel N                           # AVIF encodes in flight per worker (default 4)
@@ -99,6 +101,15 @@
  * RENDER_DELETE_GRACE_S=<seconds> shortens the wait, for testing: below 360 s only with --upload local.
  * The run's own files in the renders folder are swept at once (the local site reads them from disk).
  *
+ * Thumbnails (scripts/render/thumb-step.ts): once a print's pages are final, or at once when it has
+ * nothing to draw, its page thumbnails in THUMBS_DIR are brought up to date from the overviews on disk
+ * (the same code as `bun run render:thumbs`, in this process, never in a worker, `--thumb-jobs` prints
+ * at a time, counted against --mem-budget-mb), so a redrawn page gets new ones and missing ones fill
+ * in as runs pass over prints (`--next` picks prints by their render work only). With `--upload`
+ * they go up after the print's render files, as `render:thumbs --upload` does them (thumb_uploads;
+ * replaced ones through render_deletes after the same grace). `--plan-only` counts the pages that
+ * need them.
+ *
  * Output (<renders dir>/<id>/: RENDERS_DIR, else data/renders; layout in src/lib/viewer/game-render.ts): `<page>.<stamp>.avif` overview,
  * `<page>.json` sidecar, `<page>.page.json` entity data for the viewer's hover tooltips (from the
  * same decoded page, so it shares the render's coordinates; written for already rendered pages
@@ -157,6 +168,9 @@ import {
 import type { RenderStore } from './render/store.js';
 import { deleteGraceMs, openStore } from './render/target.js';
 import { createUploader, DELETE_GRACE_MS, hasUploadWork, planPrint, type Uploader, type UploadRow } from './render/upload.js';
+import { thumbsDir } from '#lib/server/renders-dir.js';
+import { createThumbStep, THUMB_STEP_MB, type ThumbStep } from './render/thumb-step.js';
+import { createThumbUploader, thumbUploadDb } from './render/thumbs-upload.js';
 
 /** Decoded pages kept between enqueueing and rendering, so small runs decode each print once. */
 const PAGE_CACHE_BYTES = 256 * 1024 * 1024;
@@ -390,6 +404,37 @@ const uploader: Uploader | null = store
 			log
 		})
 	: null;
+/** Page thumbnails (THUMBS_DIR), kept apart from the renders: made from finished overviews by the thumb step. */
+const THUMBS = thumbsDir(ROOT);
+if (args.thumbs && (resolve(THUMBS) === resolve(OUT_DIR) || resolve(THUMBS).startsWith(`${resolve(OUT_DIR)}/`))) {
+	console.error(`THUMBS_DIR (${THUMBS}) must not be in the renders folder; set it elsewhere, or run with --no-thumbs`);
+	process.exit(1);
+}
+const thumbUploader =
+	store && args.thumbs
+		? await createThumbUploader({
+				store,
+				db: thumbUploadDb(proxy.env.DB),
+				target: args.upload!,
+				dir: THUMBS,
+				graceMs,
+				log,
+				stopped: () => stopping
+			})
+		: null;
+/** After a print's pages are final: its thumbnails (and, uploading, their upload after its render files). */
+const thumbStep: ThumbStep | null = args.thumbs
+	? createThumbStep({
+			rendersDir: OUT_DIR,
+			thumbsDir: THUMBS,
+			concurrency: args.thumbJobs,
+			planOnly,
+			log,
+			upload: uploader && thumbUploader ? { uploader: thumbUploader, renderFilesSettled: (id) => uploader.settled(id) } : undefined,
+			stopped: () => stopping
+		})
+	: null;
+
 /** Upload rows of the target when the run started, by print: what enqueueing compares the rows with. */
 const uploadsAtStart = new Map<string, UploadRow[]>();
 
@@ -611,10 +656,16 @@ const flushSeen = () => queue.markSeen(seenBuffer.splice(0));
  * records what it would be without the favourites (has a 2.0+ page, or no decodable record).
  */
 async function enqueuePrint(id: string): Promise<{ taken: boolean; queued: number }> {
+	const had = withRows.has(id);
 	const r = await enqueueRows(id);
 	await noteSeen(id, r.modern);
+	// Nothing to draw: its thumbnails can be brought up to date now (a print that lost its rows, to
+	// clear them), once scheduleUpload has handed its render files to the uploader.
+	if ((r.taken && r.queued === 0) || (!r.taken && had)) thumbsAfterUpload.add(id);
 	return r;
 }
+/** Prints whose thumbnails are offered after scheduleUpload (so they go up after the render files). */
+const thumbsAfterUpload = new Set<string>();
 
 async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number; modern: boolean }> {
 	const t = Date.now();
@@ -761,9 +812,18 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 
 /**
  * After queueing a print: hand its upload work (rendered pages not up at their current version,
- * pages to drop from the bucket) to the uploader. Returns whether there was any.
+ * pages to drop from the bucket) to the uploader, then offer its thumbnails when it has nothing to
+ * draw. Returns whether there was upload work.
  */
 async function scheduleUpload(id: string, taken: boolean): Promise<boolean> {
+	try {
+		return await scheduleRenderUpload(id, taken);
+	} finally {
+		if (thumbsAfterUpload.delete(id)) thumbStep?.offer(id);
+	}
+}
+
+async function scheduleRenderUpload(id: string, taken: boolean): Promise<boolean> {
 	if (!uploader) return false;
 	if (!taken && !uploadsAtStart.has(id)) return false;
 	// Fresh rows: queueing may have just marked some stale (an overview renamed, page data rewritten).
@@ -801,6 +861,8 @@ async function finishPrint(id: string, open?: number) {
 	remaining.set(id, left);
 	if (left > 0) return;
 	remaining.delete(id);
+	// Every queued page is final: thumbnails from its overviews (after the index.json written above).
+	thumbStep?.offer(id);
 	if (printsTracked.has(id)) printsFinished.add(id);
 	if (!renderedPrints.has(id) || (open ?? (await queue.openJobs(id)))) return;
 	const swept = await sweepTiles(OUT_DIR, id);
@@ -902,7 +964,8 @@ async function admission(slot: Slot): Promise<(w: Work) => Admission> {
 			workerMb,
 			workers: workersNow,
 			inFlight,
-			budgetMb: memBudgetMb,
+			// The thumb step's sharp work in this process takes from the same RAM.
+			budgetMb: memBudgetMb - (thumbStep && !planOnly ? THUMB_STEP_MB * args.thumbJobs : 0),
 			availableMb: mem?.availableMb ?? null,
 			reserveMb: memReserveMb
 		});
@@ -1129,6 +1192,7 @@ try {
 		for (const [id, list] of byPrint(await queue.allUploads(args.upload!))) uploadsAtStart.set(id, list);
 		// Before any print syncs (never alongside one): replaced files whose grace period is over.
 		await uploader.processDeletes();
+		await thumbUploader?.processDue();
 	}
 	// --top: its prints first (by rank), then the selection without them.
 	const ids = withTopFirst(topPicked, wanted ?? (await source.ids()));
@@ -1168,11 +1232,16 @@ try {
 		await heartbeat();
 		if (todo.length) await renderAll();
 	}
+	if (thumbStep) {
+		if (!stopping && thumbStep.pending) log(`rendering done; bringing ${thumbStep.pending} prints' thumbnails up to date`);
+		await thumbStep.drain();
+	}
 	if (uploader) {
 		if (!stopping && (uploader.pending || uploader.inFlight)) log(`rendering done; waiting for ${uploader.pending} pages to upload`);
 		await uploader.drain();
 		// Not after a stop (it does nothing then): what's due stays for the next run.
 		await uploader.processDeletes();
+		if (!stopping) await thumbUploader?.processDue();
 	}
 	// A plan-only run leaves its pages pending: it ends 'stopped', not 'finished'.
 	run.state = stopping || planOnly ? 'stopped' : 'finished';
@@ -1187,6 +1256,7 @@ try {
 	uploader?.abort();
 	await pool?.close(0);
 	await Promise.allSettled(running);
+	await thumbStep?.drain();
 	await uploader?.drain();
 } finally {
 	beating = false;
@@ -1209,6 +1279,7 @@ log(
 		(lowestAvailableMb !== null ? `, lowest MemAvailable ${lowestAvailableMb} MB` : '') +
 		(pool?.oomKilled ? `; ${pool.oomKilled} workers killed by the kernel for memory` : '') +
 		(busyRetries ? `\nthe local database was busy ${busyRetries} times (another process reading it); every statement was retried` : '') +
+		(thumbStep ? `\n${thumbSummary()}` : '') +
 		(uploader
 			? `\nuploads: ${run.uploaded} pages, ${run.upload_files} files, ${mb(run.upload_bytes)}, ${run.upload_deleted} deleted; ` +
 				`${uploader.stats.deletesScheduled} deletions scheduled / ${run.upload_deletes_pending} pending` +
@@ -1218,5 +1289,19 @@ log(
 				(uploader.broken ? `\nuploads stopped: ${uploader.broken}` : '')
 			: '')
 );
+/** One line on the thumb step's work. */
+function thumbSummary() {
+	const t = thumbStep!.stats;
+	if (planOnly) return `thumbnails: ${t.pages} pages to make; ${t.current} of ${t.prints} prints looked at are up to date (${THUMBS})`;
+	const u = thumbUploader?.stats;
+	return (
+		`thumbnails: ${t.pages} pages made (${t.files} files, ${mb(t.bytes)}), ${t.current} of ${t.prints} prints up to date, ` +
+		`${t.removed} old files deleted from disk${t.cleared ? `, ${t.cleared} prints cleared` : ''}${t.failed ? `, ${t.failed} pages FAILED` : ''}` +
+		(u
+			? `; uploaded ${u.uploaded} prints (${u.files} files, ${mb(u.bytes)}), ${u.deletesScheduled} deletions scheduled, ${u.deleted} due ones deleted` +
+				(u.failed ? `, ${u.failed} failed` : '')
+			: '')
+	);
+}
 const uploadsLeft = uploader && (uploader.broken || run.uploads_pending > 0);
 process.exit(exitCode || (run.failed ? 2 : 0) || (uploadsLeft ? 3 : 0));

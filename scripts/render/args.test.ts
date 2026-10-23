@@ -41,4 +41,17 @@ describe('render args', () => {
 		delete old.refreshTop;
 		expect(resumeArgs({ args: old as RenderArgs }, 'r0', {}).args).toMatchObject({ next: 3, top: null, refreshTop: false });
 	});
+
+	test('thumbnails: on by default, --no-thumbs and --thumb-jobs; runs recorded before them resume with them on', () => {
+		expect(resolved('--from-clone /m')).toMatchObject({ thumbs: true, thumbJobs: 1 });
+		const off = resolved('--from-clone /m --no-thumbs --thumb-jobs 2');
+		expect(off).toMatchObject({ thumbs: false, thumbJobs: 2 });
+		expect(commandLine(off)).toBe('--from-clone /m --no-thumbs --workers 8');
+		expect(resumeArgs({ args: off }, 'r1', {}).args).toMatchObject({ thumbs: false, thumbJobs: 2 });
+		const old = { ...resolved('--from-clone /m') } as Partial<RenderArgs>;
+		delete old.thumbs;
+		delete old.thumbJobs;
+		expect(resumeArgs({ args: old as RenderArgs }, 'r0', {}).args).toMatchObject({ thumbs: true, thumbJobs: 1 });
+		expect(() => resolved('--from-clone /m --thumb-jobs 0')).toThrow(UsageError);
+	});
 });

@@ -123,17 +123,18 @@ export interface ThumbUploadStats {
 	failed: number;
 }
 
-export interface ThumbUploadOptions {
+export interface ThumbUploaderOptions {
 	store: RenderStore;
 	db: ThumbUploadDb;
 	target: string;
 	/** The thumbs folder (THUMBS_DIR). */
 	dir: string;
-	ids: string[];
 	graceMs: number;
 	concurrency?: number;
 	now?: () => number;
 	log?: (line: string) => void;
+	/** Checked between prints and files: true stops the uploader (what's left goes up next time). */
+	stopped?: () => boolean;
 }
 
 const readIndex = async (file: string): Promise<ThumbsIndex | null> => {
@@ -145,10 +146,16 @@ const readIndex = async (file: string): Promise<ThumbsIndex | null> => {
 	}
 };
 
-export async function uploadThumbs(opts: ThumbUploadOptions): Promise<ThumbUploadStats> {
+/**
+ * Uploads prints' thumbnails one print at a time (`uploadPrint`), and deletes due ones
+ * (`processDue`, run it before the first print and after the last). Used by
+ * `render:thumbs --upload` and by `bun run render --upload` after a print's render files.
+ */
+export async function createThumbUploader(opts: ThumbUploaderOptions) {
 	const { store, db, target, dir } = opts;
 	const now = opts.now ?? Date.now;
 	const log = opts.log ?? console.log;
+	const stopped = opts.stopped ?? (() => false);
 	const stats: ThumbUploadStats = {
 		prints: 0,
 		unchanged: 0,
@@ -162,9 +169,12 @@ export async function uploadThumbs(opts: ThumbUploadOptions): Promise<ThumbUploa
 		failed: 0
 	};
 	const uploaded = await db.uploaded(target);
+	/** Set when the store refuses us (401, 403): the remaining prints are left for the next run. */
+	let broken: string | null = null;
 
 	/** Delete due thumbnail keys that the bucket's thumbs.json doesn't list; drop the rows of those it does. */
 	const processDue = async () => {
+		if (broken) return;
 		const due = await db.dueThumbDeletes(target, now());
 		const keep: string[] = [];
 		const gone: string[] = [];
@@ -173,6 +183,7 @@ export async function uploadThumbs(opts: ThumbUploadOptions): Promise<ThumbUploa
 				keep.push(r.key);
 				return;
 			}
+			if (stopped()) return;
 			try {
 				await withRetries(() => store.delete(r.key));
 				gone.push(r.key);
@@ -186,18 +197,16 @@ export async function uploadThumbs(opts: ThumbUploadOptions): Promise<ThumbUploa
 		stats.kept += keep.length;
 	};
 
-	/** Set when the store refuses us (401, 403): the remaining prints are left for the next run. */
-	let broken = false;
-	await processDue();
-	await mapPool(opts.ids, opts.concurrency ?? 8, async (id) => {
-		if (broken) return;
+	/** Bring one print's thumbnails in the bucket in line with its thumbs.json on disk. False when it failed. */
+	const uploadPrint = async (id: string): Promise<boolean> => {
+		if (broken || stopped()) return false;
 		stats.prints++;
 		const local = await readIndex(join(dir, id, THUMBS_INDEX));
 		const plan = planThumbUpload(local, uploaded.get(id) ?? null);
 		if (plan.unchanged) {
 			if (local === null) stats.missing++;
 			else stats.unchanged++;
-			return;
+			return true;
 		}
 		try {
 			// Keys wanted again must not be deleted by a deletion queued earlier.
@@ -206,6 +215,7 @@ export async function uploadThumbs(opts: ThumbUploadOptions): Promise<ThumbUploa
 				[...thumbKeys(plan.index)].map((k) => `${id}/${k}`)
 			);
 			for (const rel of plan.put) {
+				if (stopped()) return false;
 				const body = new Uint8Array(await readFile(join(dir, id, rel)));
 				await withRetries(() => store.put(`${id}/${rel}`, body, 'image/avif', renderCacheControl(rel)));
 				stats.files++;
@@ -227,13 +237,35 @@ export async function uploadThumbs(opts: ThumbUploadOptions): Promise<ThumbUploa
 			await db.saveUploaded(target, id, plan.index, t);
 			uploaded.set(id, plan.index);
 			stats.uploaded++;
+			return true;
 		} catch (e) {
 			stats.failed++;
-			log(`  ${id}: ${e instanceof Error ? e.message : String(e)}`);
-			if (e instanceof StoreError && e.fatal) broken = true;
+			log(`  thumbnails ${id}: ${e instanceof Error ? e.message : String(e)}`);
+			if (e instanceof StoreError && e.fatal) broken = e.message;
+			return false;
 		}
-		if (stats.prints % 100 === 0) log(`${stats.prints} of ${opts.ids.length} prints`);
+	};
+
+	return {
+		stats,
+		processDue,
+		uploadPrint,
+		get broken() {
+			return broken;
+		}
+	};
+}
+
+export type ThumbUploader = Awaited<ReturnType<typeof createThumbUploader>>;
+
+/** `render:thumbs --upload`: every print in `ids`, `concurrency` at a time, due deletions before and after. */
+export async function uploadThumbs(opts: ThumbUploaderOptions & { ids: string[] }): Promise<ThumbUploadStats> {
+	const up = await createThumbUploader(opts);
+	await up.processDue();
+	await mapPool(opts.ids, opts.concurrency ?? 8, async (id) => {
+		await up.uploadPrint(id);
+		if (up.stats.prints % 100 === 0) (opts.log ?? console.log)(`${up.stats.prints} of ${opts.ids.length} prints`);
 	});
-	if (!broken) await processDue();
-	return stats;
+	await up.processDue();
+	return up.stats;
 }

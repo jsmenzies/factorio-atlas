@@ -86,6 +86,8 @@ export interface PrintPlan {
 	order: string[];
 	kept: Record<string, ThumbPage>;
 	jobs: PageJob[];
+	/** thumbs.json must be written: pages to make, a page gone, or no thumbs.json yet. */
+	rewrite: boolean;
 }
 
 const readJson = async <T>(file: string): Promise<T | null> => {
@@ -105,7 +107,7 @@ export async function planPrint(rendersDir: string, outDir: string, id: string, 
 	const index = await readJson<RenderIndex>(join(rendersDir, id, 'index.json'));
 	if (index?.v !== 2) return null;
 	const prev = force ? null : await readJson<ThumbsIndex>(join(outDir, id, THUMBS_INDEX));
-	const plan: PrintPlan = { id, order: Object.keys(index.pages), kept: {}, jobs: [] };
+	const plan: PrintPlan = { id, order: Object.keys(index.pages), kept: {}, jobs: [], rewrite: false };
 	for (const [path, { stamp, overview }] of Object.entries(index.pages)) {
 		const old = prev?.v === 1 ? prev.pages[path] : undefined;
 		const want = old && old.stamp === stamp ? thumbTiers(old.w, old.h) : null;
@@ -118,8 +120,13 @@ export async function planPrint(rendersDir: string, outDir: string, id: string, 
 			plan.kept[path] = old;
 		else plan.jobs.push({ id, path, stamp, overview });
 	}
+	plan.rewrite = plan.jobs.length > 0 || prev?.v !== 1 || Object.keys(prev.pages).length !== Object.keys(plan.kept).length;
 	return plan;
 }
+
+/** Whether the print has a thumbs.json listing any page (e.g. left from before its render went). */
+export const hasThumbs = async (outDir: string, id: string) =>
+	Object.keys((await readJson<ThumbsIndex>(join(outDir, id, THUMBS_INDEX)))?.pages ?? {}).length > 0;
 
 export interface PageResult {
 	page: ThumbPage;

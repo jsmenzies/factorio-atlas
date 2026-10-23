@@ -1,0 +1,156 @@
+/**
+ * Thumbnails as part of `bun run render` (scripts/render-game.ts): once a print's pages are final
+ * (all drawn, failed or `unchanged`), its page thumbnails are brought up to date from the overviews on
+ * disk, with the same code as `bun run render:thumbs` (scripts/render/thumbs.ts), into THUMBS_DIR;
+ * with `--upload`, they then go up after the print's render files (thumbs-upload.ts).
+ *
+ * It runs in the runner's own process, never in an fpsr worker, and only on finished overviews, so
+ * it changes nothing a page's input key depends on. A few prints at a time (`concurrency`, 1 by
+ * default; THUMB_STEP_MB each counts against the memory budget): a decoded 2048 px overview is
+ * 16 MB, and sharp works single-threaded here.
+ *
+ * Prints whose thumbnails are up to date cost a few small reads; a page redrawn gets a new stamp and
+ * so new thumbnails (the old ones are swept from disk and, uploaded, scheduled for deletion); a page
+ * `unchanged` but without thumbnails gets them, so gaps fill in as runs pass over prints. A print
+ * whose render went (no index.json) loses its thumbnails too.
+ */
+import sharp from 'sharp';
+import { THUMB } from '#lib/viewer/thumbs.js';
+import type { ThumbUploader } from './thumbs-upload.js';
+import { finishPrint, hasThumbs, makePage, planPrint } from './thumbs.js';
+
+/** Memory one print's thumbnails may take in the runner (a decoded overview and sharp's buffers), counted against --mem-budget-mb. */
+export const THUMB_STEP_MB = 200;
+
+export interface ThumbStepOptions {
+	rendersDir: string;
+	thumbsDir: string;
+	/** Prints worked on at once. */
+	concurrency: number;
+	/** Count what would be made, make nothing. */
+	planOnly: boolean;
+	log: (line: string) => void;
+	/** With `--upload`: the bucket's uploader, and a wait until the print's render files are up (or given up on for now). */
+	upload?: { uploader: ThumbUploader; renderFilesSettled: (id: string) => Promise<void> };
+	stopped: () => boolean;
+}
+
+export interface ThumbStepStats {
+	/** Prints looked at, and those whose thumbnails were already up to date. */
+	prints: number;
+	current: number;
+	/** Pages made (or, planning, to make), and how many failed. */
+	pages: number;
+	failed: number;
+	files: number;
+	bytes: number;
+	/** Old thumbnails deleted from disk. */
+	removed: number;
+	/** Prints whose render went: their thumbnails cleared. */
+	cleared: number;
+}
+
+export function createThumbStep(opts: ThumbStepOptions) {
+	if (!opts.planOnly) {
+		// The fpsr workers have the CPU: one thread per encode here.
+		sharp.concurrency(1);
+		sharp.cache(false);
+	}
+	const stats: ThumbStepStats = { prints: 0, current: 0, pages: 0, failed: 0, files: 0, bytes: 0, removed: 0, cleared: 0 };
+	const queue: string[] = [];
+	const queued = new Set<string>();
+	/** Prints being worked on, and those offered again meanwhile (worked on again after). */
+	const working = new Set<string>();
+	const again = new Set<string>();
+	let active = 0;
+	const idleWaiters: (() => void)[] = [];
+
+	async function work(id: string) {
+		stats.prints++;
+		const plan = await planPrint(opts.rendersDir, opts.thumbsDir, id);
+		if (!plan) {
+			// No render (any more): thumbnails it had go.
+			if (!opts.planOnly && (await hasThumbs(opts.thumbsDir, id))) {
+				stats.removed += await finishPrint(opts.thumbsDir, id, [], {});
+				stats.cleared++;
+			} else stats.current++;
+		} else if (opts.planOnly) {
+			stats.pages += plan.jobs.length;
+			if (!plan.rewrite) stats.current++;
+			return;
+		} else if (plan.rewrite) {
+			const pages = { ...plan.kept };
+			for (const job of plan.jobs) {
+				if (opts.stopped()) return;
+				try {
+					const r = await makePage(opts.rendersDir, opts.thumbsDir, job, THUMB);
+					if (!r) continue;
+					pages[job.path] = r.page;
+					stats.pages++;
+					stats.files += r.page.sizes.length;
+					stats.bytes += Object.values(r.bytes).reduce((a, b) => a + b, 0);
+				} catch (e) {
+					stats.failed++;
+					opts.log(`  thumbnails ${id} ${job.path || 'root'}: ${e instanceof Error ? e.message : String(e)}`);
+				}
+			}
+			stats.removed += await finishPrint(opts.thumbsDir, id, plan.order, pages);
+		} else stats.current++;
+		if (opts.upload && !opts.stopped()) {
+			await opts.upload.renderFilesSettled(id);
+			await opts.upload.uploader.uploadPrint(id);
+		}
+	}
+
+	function pump() {
+		while (active < opts.concurrency && queue.length && !opts.stopped()) {
+			const id = queue.shift()!;
+			queued.delete(id);
+			if (working.has(id)) {
+				again.add(id);
+				continue;
+			}
+			working.add(id);
+			active++;
+			work(id)
+				.catch((e: unknown) => opts.log(`  thumbnails ${id}: ${e instanceof Error ? e.message : String(e)}`))
+				.finally(() => {
+					active--;
+					working.delete(id);
+					if (again.delete(id) && !queued.has(id)) {
+						queued.add(id);
+						queue.push(id);
+					}
+					pump();
+					if (!active && (!queue.length || opts.stopped())) for (const w of idleWaiters.splice(0)) w();
+				});
+		}
+	}
+
+	return {
+		stats,
+		/** Bring the print's thumbnails up to date, soon (once per print while it waits). */
+		offer(id: string) {
+			if (working.has(id)) {
+				again.add(id);
+				return;
+			}
+			if (queued.has(id)) return;
+			queued.add(id);
+			queue.push(id);
+			pump();
+		},
+		/** Prints waiting or being worked on. */
+		get pending() {
+			return queue.length + active;
+		},
+		/** Resolves once every print offered is done (or, after a stop, once those in hand are). */
+		drain(): Promise<void> {
+			pump();
+			if (!active && (!queue.length || opts.stopped())) return Promise.resolve();
+			return new Promise((resolve) => idleWaiters.push(resolve));
+		}
+	};
+}
+
+export type ThumbStep = ReturnType<typeof createThumbStep>;
