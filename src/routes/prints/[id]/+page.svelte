@@ -2,16 +2,16 @@
 	import { goto } from '$app/navigation';
 	import { page as route } from '$app/state';
 	import InlineViewer from '#lib/components/InlineViewer.svelte';
-	import MakesStrip from '#lib/components/MakesStrip.svelte';
 	import PageMeta from '#lib/components/PageMeta.svelte';
 	import Description from '#lib/components/print/Description.svelte';
 	import InfraCards from '#lib/components/print/InfraCards.svelte';
 	import PageDetail from '#lib/components/print/PageDetail.svelte';
 	import PagesSection, { type PageFilter } from '#lib/components/print/PagesSection.svelte';
-	import PrintHeader from '#lib/components/print/PrintHeader.svelte';
+	import PrintChips from '#lib/components/print/PrintChips.svelte';
+	import PrintHero from '#lib/components/print/PrintHero.svelte';
 	import PrintSidebar from '#lib/components/print/PrintSidebar.svelte';
 	import SelectedPage from '#lib/components/print/SelectedPage.svelte';
-	import { bookProducts, describeBook, describePrint, infraCards, metaDescription, pageTitle } from '#lib/describe.js';
+	import { bookProducts, describePrint, infraCards, metaDescription, pageTitle } from '#lib/describe.js';
 	import { imgurUrl } from '#lib/format.js';
 	import { plainText } from '#lib/richtext.js';
 	import type { Role } from '#lib/server/pipeline/analyze.js';
@@ -45,6 +45,8 @@
 	const selectedIndex = $derived(selected ? pages.indexOf(selected) : -1);
 	// Pages without a game render get no viewer.
 	const rendered = $derived(new Set(data.rendered));
+	// The header shows a rendered page when the author has no screenshot: its number in the book.
+	const coverIndex = $derived(!single && data.cover ? pages.findIndex((n) => n.path === data.cover?.path) + 1 || null : null);
 	// Each book page has its own URL, for links and search engines; the first page's is the print's.
 	const pageHref = (path: string) => (path === pages[0]?.path ? `/prints/${p.id}` : `/prints/${p.id}?page=${encodeURIComponent(path)}`);
 	const select = (path: string) => goto(pageHref(path), { shallow: true, replace: true });
@@ -99,39 +101,26 @@
 
 <PageMeta {...meta} {image} />
 
-<a href="/" class="text-sm text-stone-400 hover:text-amber-300">← Search</a>
+<PrintHero
+	print={p}
+	analysis={a}
+	{title}
+	{root}
+	cover={data.cover}
+	{coverIndex}
+	main={products.main}
+	groups={products.groups}
+	activeProduct={filter?.kind === 'item' ? filter.signal : null}
+	onpick={single ? undefined : pickItem}
+	copyLabel={bookCopyLabel}
+	oncopy={() => copy('book')}
+	icons={data.icons}
+/>
 
-<div class="mt-3 grid gap-8 lg:grid-cols-[1fr_20rem]">
+<div class="grid gap-8 lg:grid-cols-[1fr_20rem]">
 	<div class="min-w-0 space-y-6">
-		<PrintHeader
-			print={p}
-			{title}
-			{root}
-			roles={a.roles}
-			{tags}
-			single={!!single}
-			activeRole={filter?.kind === 'role' ? filter.role : null}
-			onrole={pickRole}
-			copyLabel={bookCopyLabel}
-			oncopy={() => copy('book')}
-			icons={data.icons}
-		/>
-
-		<!-- What this gives you: the book in one line, then main products with rates. -->
-		<section aria-label="What this print is" class="space-y-3">
-			{#if !single}<p class="text-stone-300">{describeBook(a)}</p>{/if}
-			{#if products.main.length || products.groups.length}
-				<MakesStrip
-					main={products.main}
-					groups={products.groups}
-					icons={data.icons}
-					active={filter?.kind === 'item' ? filter.signal : null}
-					onpick={single ? undefined : pickItem}
-				/>
-			{:else if single}
-				<p class="text-stone-200">{describePrint(a)}</p>
-			{/if}
-		</section>
+		<PrintChips roles={a.roles} {tags} single={!!single} activeRole={filter?.kind === 'role' ? filter.role : null} onrole={pickRole} />
+		{#if single && !products.main.length && !products.groups.length}<p class="text-stone-200">{describePrint(a)}</p>{/if}
 
 		{#if single}
 			<section class="space-y-3">
@@ -165,5 +154,5 @@
 		{/if}
 	</div>
 
-	<PrintSidebar print={p} analysis={a} main={products.main} title={plainText(title)} copyLabel={bookCopyLabel} oncopy={() => copy('book')} icons={data.icons} />
+	<PrintSidebar analysis={a} main={products.main} icons={data.icons} />
 </div>

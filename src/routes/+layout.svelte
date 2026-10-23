@@ -9,7 +9,8 @@
 	<title>Blueprint Atlas</title>
 </svelte:head>
 
-<div class="min-h-screen bg-stone-950 text-stone-200">
+<!-- overflow-x-clip: the print page header's backdrop spans the window (w-screen) from inside main. -->
+<div class="min-h-screen overflow-x-clip bg-stone-950 text-stone-200">
 	<header class="border-b border-stone-800 bg-stone-900/80">
 		<div class="mx-auto flex max-w-7xl items-center gap-6 px-4 py-3">
 			<a href="/" class="text-lg font-semibold tracking-tight text-amber-400">Blueprint Atlas</a>

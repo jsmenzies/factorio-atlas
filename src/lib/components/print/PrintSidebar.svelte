@@ -4,46 +4,26 @@
 	import { formatRate, signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import type { PrintAnalysis } from '#lib/server/pipeline/analyze.js';
-	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
 	import CountList from './CountList.svelte';
 	import FactsTable from './FactsTable.svelte';
-	import Screenshot from './Screenshot.svelte';
 
 	/**
-	 * The print page's sidebar: copy button, the author's screenshot, the facts table, main
-	 * products with rates, recipes, entities, modules and tiles, and the analyzer's limits.
+	 * The print page's sidebar: the facts table, main products with rates, recipes, entities,
+	 * modules and tiles, and the analyzer's limits. The copy button and the author's screenshot
+	 * are in the header (PrintHero).
 	 */
 	let {
-		print,
 		analysis: a,
 		main,
-		title,
-		copyLabel,
-		oncopy,
 		icons
 	}: {
-		print: PagePrint;
 		analysis: PrintAnalysis;
 		main: MadeItem[];
-		/** The print's title as plain text. */
-		title: string;
-		copyLabel: string;
-		oncopy: () => void;
 		icons: IconSet;
 	} = $props();
 </script>
 
 <aside class="space-y-6">
-	<div class="space-y-2">
-		<button onclick={oncopy} class="w-full rounded bg-amber-500 px-4 py-2 font-medium text-stone-950 hover:bg-amber-400">
-			{copyLabel}
-		</button>
-	</div>
-
-	{#if print.image_id}
-		<Screenshot id={print.image_id} type={print.image_type} {title} />
-	{/if}
-
 	<FactsTable analysis={a} />
 
 	{#if main.length}

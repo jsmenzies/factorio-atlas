@@ -55,6 +55,14 @@ export const getRenderSidecar = (id: string, base: string) => getJson<RenderSide
 /** A rendered page's entity data for hover tooltips (`<base>.page.json`). */
 export const getRenderPageData = (id: string, base: string) => getJson<RenderPageData>(`${id}/${base}.page.json`, PAGE_DATA_VERSION);
 
+/**
+ * From one read of the print's render index: each rendered page's book path and overview file.
+ * Empty when it has none or the index can't be read.
+ */
+export const renderOverviews = async (id: string): Promise<Record<string, string>> => {
+	const index = await getJson<RenderIndex>(`${id}/index.json`, 2);
+	return Object.fromEntries(Object.entries(index?.pages ?? {}).map(([path, page]) => [path, page.overview]));
+};
+
 /** Book paths of the print's pages that have a render; empty when it has none or its index can't be read. */
-export const renderedPages = async (id: string): Promise<string[]> =>
-	Object.keys((await getJson<RenderIndex>(`${id}/index.json`, 2))?.pages ?? {});
+export const renderedPages = async (id: string): Promise<string[]> => Object.keys(await renderOverviews(id));
