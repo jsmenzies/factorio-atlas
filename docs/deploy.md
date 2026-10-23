@@ -245,8 +245,11 @@ console: any CSP violation there means something it needs is blocked.
 
 ## Uploading renders
 
-`bun run render` draws pages into `data/renders/` on your machine (the script header in
-`scripts/render-game.ts` has every flag). With `--upload prod` it also puts each finished page into
+`bun run render` draws pages into `data/renders/` on your machine, or the folder `RENDERS_DIR` names
+(in `.env`; worth it, since a full set is millions of files that editors try to index). Every run,
+the uploader and the local site use that folder; its sidecars are what tell a run a page is
+unchanged, so a run stops if the folder has none of the pages already done (`--force` redraws
+instead). The script header in `scripts/render-game.ts` has every flag. With `--upload prod` it also puts each finished page into
 the stage's renders bucket, `factorio-prints-prod-renders`, while the run goes on, through R2's
 S3-compatible API (`https://<account id>.r2.cloudflarestorage.com`); `--upload local` fills the
 local bucket instead. Pages rendered by an earlier run that aren't up yet go first, so a run with
@@ -289,7 +292,7 @@ the files it uses, so a page that goes back to an earlier render keeps them. A p
 left loses its `index.json` at once. The run's summary counts the deletions scheduled and still
 pending, and a run with nothing else to do still deletes what is due. For a test against the local
 bucket, `RENDER_DELETE_GRACE_S=<seconds>` shortens the wait (below 360 s only with
-`--upload local`). Files in `data/renders/` itself are removed at once, since the local site reads
+`--upload local`). Files in the renders folder itself are removed at once, since the local site reads
 them from disk.
 
 `--upload-concurrency N` sets the requests in flight (default 32); requests, deletions included,
@@ -313,7 +316,7 @@ beside a render run), compares it with the stage, and writes only the difference
 and unsetting rows and tokens; running it again writes nothing. Rows may name prints the stage
 hasn't ingested yet: the backfill adds the token whenever a print's row exists, so the order of
 backfill and renders doesn't matter, and a re-ingest keeps it. `--stage local` also counts renders in
-`data/renders/`, which the local site reads first. Prod goes through the backfill's remote bindings
+the renders folder, which the local site reads first. Prod goes through the backfill's remote bindings
 (`wrangler login`, Node on PATH), and the deployed database must have migration 0015.
 
 ## Page views

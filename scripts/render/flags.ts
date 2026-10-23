@@ -5,20 +5,21 @@
  * read-only, so it works while a run or the dev server holds the database. Nothing here writes.
  *
  * A print counts when its remote index.json lists at least one page: the pages the uploader keeps
- * listed (`planPrint(...).listed` in upload.ts). For `local` the dev site also reads data/renders
+ * listed (`planPrint(...).listed` in upload.ts). For `local` the dev site also reads the renders folder (RENDERS_DIR)
  * on disk first (src/lib/server/renders.ts), so pages in a print's index.json there count too.
  */
 import { Database } from 'bun:sqlite';
 import { existsSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { rendersDir } from '#lib/server/renders-dir.js';
 import type { RenderIndex } from '#lib/viewer/game-render.js';
 import { byPrint } from './scope.js';
 import { planPrint, type UploadJob, type UploadRow } from './upload.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 export const LOCAL_D1_DIR = join(ROOT, '.wrangler', 'state', 'v3', 'd1', 'miniflare-D1DatabaseObject');
-export const RENDERS_DIR = join(ROOT, 'data', 'renders');
+export const RENDERS_DIR = rendersDir(ROOT);
 
 /** Pages each print has up in `target`, by print id (only prints with ≥ 1). Pure. */
 export function uploadedPages(jobs: UploadJob[], uploads: UploadRow[]): Map<string, number> {
@@ -61,7 +62,7 @@ export function readUploads(file: string, target: string): { jobs: UploadJob[]; 
 	}
 }
 
-/** Pages in each data/renders/<id>/index.json (format v2), for the local stage. */
+/** Pages in each <renders dir>/<id>/index.json (format v2), for the local stage. */
 export async function diskPages(dir = RENDERS_DIR): Promise<Map<string, number>> {
 	const out = new Map<string, number>();
 	if (!existsSync(dir)) return out;

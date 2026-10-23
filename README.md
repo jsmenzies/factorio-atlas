@@ -84,7 +84,7 @@ GitHub mirror of factorioprints (motlin/factorio-blueprint-firebase-cdn, one JSO
   Factorio (`FPSR_ASSETS_DIR`). Each page gets an AVIF overview, AVIF map tiles at 16, 32 and
   64 px per tile where they are sharper than the overview (named by pixel hash, so identical
   tiles are stored once per print), a sidecar, and its entity data for hover details (entities,
-  recipes, modules, belt and pipe connections). Output goes to `data/renders/` on local disk,
+  recipes, modules, belt and pipe connections). Output goes to `data/renders/` on local disk (or `RENDERS_DIR`),
   which `bun run dev` serves; with `--upload local|prod` each finished page also goes into a
   RENDERS bucket while the run goes on (the local one, or the deployed one through R2's S3 API),
   its tiles, overview, entity data and sidecar before the print's `index.json`, so the site never
@@ -157,7 +157,7 @@ this repository.
 | `bun run ingest <id> [<id>…]`                                  | ingest specific prints into local D1 and R2 (mirror first, Firebase only for a single record not yet in the mirror)                                                                                                                                  |
 | `bun run ingest --reanalyze <id>`                              | re-run the analysis from the stored record                                                                                                                                                                                                           |
 | `bun run ingest --from-disk [dir]`                             | re-ingest records saved in `data/raw/` by earlier `ingest` runs, offline                                                                                                                                                                             |
-| `bun run render --from-clone <dir>`                            | render every 2.0+ print in a local clone of the mirror into `data/renders/` (needs `FPSR_ASSETS_DIR`); `--ids`, `--limit`, `--plan-only` and other flags are listed in `scripts/render-game.ts`                                                      |
+| `bun run render --from-clone <dir>`                            | render every 2.0+ print in a local clone of the mirror into `data/renders/` or `RENDERS_DIR` (needs `FPSR_ASSETS_DIR`); `--ids`, `--limit`, `--plan-only` and other flags are listed in `scripts/render-game.ts`                                     |
 | `bun run render --from-disk [dir]`                             | the same, from records saved in `data/raw/` by `bun run ingest`                                                                                                                                                                                      |
 | `bun run render … --next N`                                    | a batch: the next N prints that still have work; run it again for the next N                                                                                                                                                                         |
 | `bun run render … --top N`                                     | also the N most-favourited prints (by `numberOfFavorites` in the source), first, with their pre-2.0 pages drawn too; the list is kept in the local D1 (`render_favorites`) and every print ever in it stays in scope (`--refresh-top` recomputes it) |

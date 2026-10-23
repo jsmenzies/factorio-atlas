@@ -97,14 +97,16 @@
  * each upload run, as it starts and before it exits, deletes those that are due and that no page
  * in the bucket uses again (a page that goes up cancels deletions of the files it uses).
  * RENDER_DELETE_GRACE_S=<seconds> shortens the wait, for testing: below 360 s only with --upload local.
- * The run's own files in data/renders are swept at once (the local site reads them from disk).
+ * The run's own files in the renders folder are swept at once (the local site reads them from disk).
  *
- * Output (data/renders/<id>/, layout in src/lib/viewer/game-render.ts): `<page>.<stamp>.avif` overview,
+ * Output (<renders dir>/<id>/: RENDERS_DIR, else data/renders; layout in src/lib/viewer/game-render.ts): `<page>.<stamp>.avif` overview,
  * `<page>.json` sidecar, `<page>.page.json` entity data for the viewer's hover tooltips (from the
  * same decoded page, so it shares the render's coordinates; written for already rendered pages
  * without redrawing when PAGE_DATA_VERSION changes), `t/<hash>.avif` tiles stored once per print,
  * `index.json`. Renders from real sprites derive from Wube's art: data/renders is gitignored and
- * must stay that way.
+ * must stay that way. RENDERS_DIR (in .env) keeps them outside the repo; every run must use the same
+ * folder, since its sidecars are what make a page `unchanged`, so a run stops when the folder has
+ * none of the pages render_jobs lists as done (--force redraws into it instead).
  */
 import { availableParallelism, hostname, totalmem } from 'node:os';
 import { existsSync } from 'node:fs';
@@ -150,7 +152,17 @@ import { entityCount, PageCache, prepared, preparedSkipped, skipReason, type Pre
 import { renderProgress } from './render/progress.js';
 import { batchCandidates, byPrint, isModern, takesPrint, withTopFirst } from './render/scope.js';
 import { blueprintPages, cloneSource, decode, diskSource, versionString, type RecordSource } from './render/source.js';
-import { AVIF, inputKey, LEVELS, loadAssetInfo, OUT_DIR, RENDER_SETTINGS_VERSION, ROOT, type AssetInfo } from './render/settings.js';
+import {
+	AVIF,
+	checkRendersDir,
+	inputKey,
+	LEVELS,
+	loadAssetInfo,
+	OUT_DIR,
+	RENDER_SETTINGS_VERSION,
+	ROOT,
+	type AssetInfo
+} from './render/settings.js';
 import type { RenderStore } from './render/store.js';
 import { deleteGraceMs, openStore } from './render/target.js';
 import { createUploader, DELETE_GRACE_MS, hasUploadWork, planPrint, type Uploader, type UploadRow } from './render/upload.js';
@@ -233,6 +245,22 @@ const workers = Math.min(args.workers, workerCap);
 /** A resumed --force: only pages still pending from the forced run are drawn again. */
 const forceAll = force === true;
 const forcePending = force === 'pending';
+
+// The sidecars in OUT_DIR are what make a page `unchanged`: a run on a folder without the done
+// renders (RENDERS_DIR unset or wrong) would draw them all again, so stop unless --force says to.
+if (!forceAll) {
+	const [sample, total] = await proxy.env.DB.batch<{ print_id?: string; n?: number }>([
+		proxy.env.DB.prepare(`SELECT DISTINCT print_id FROM render_jobs WHERE status = 'done' LIMIT 50`),
+		proxy.env.DB.prepare(`SELECT COUNT(*) AS n FROM render_jobs WHERE status = 'done'`)
+	]);
+	const problem = checkRendersDir(
+		OUT_DIR,
+		sample.results.map((r) => r.print_id!),
+		Number(total.results[0]?.n ?? 0)
+	);
+	if (problem) await bail(`✗ ${problem}`);
+}
+console.log(`renders: ${OUT_DIR}`);
 
 const sourceDir = resolve(args.clone ?? args.disk!);
 const source: RecordSource = args.clone ? cloneSource(sourceDir) : diskSource(sourceDir);

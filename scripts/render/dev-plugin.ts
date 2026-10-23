@@ -10,7 +10,7 @@
  *   POST /admin/render/__control/start    {"next": N, "upload": "none"|"local"|"prod", "force"?: bool, "workers"?: N,
  *                                 "top"?: N, "refreshTop"?: bool} or {"resume": true}: starts
  *                                 `bun scripts/render-game.ts …` detached, so the run outlives a dev server
- *                                 restart; output goes to data/renders/logs/
+ *                                 restart; output goes to <renders dir>/logs/
  *   GET  /admin/render/__control/log      the last lines of the latest log (`?lines=N`)
  *   POST /admin/render/__control/top      {"n": N}: recompute the top-N favourites from the clone
  *                                 (`bun scripts/render-scope.ts top N`, waits for it)
@@ -31,9 +31,11 @@ import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { loadEnv, type Plugin } from 'vite';
+import { rendersDir } from '#lib/server/renders-dir.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
-const LOG_DIR = join(ROOT, 'data', 'renders', 'logs');
+/** The run logs, in the renders folder (RENDERS_DIR from .env or the environment; set in configResolved). */
+let LOG_DIR = join(rendersDir(ROOT), 'logs');
 const D1_DIR = join(ROOT, '.wrangler', 'state', 'v3', 'd1', 'miniflare-D1DatabaseObject');
 const LIVE_STATES = ['starting', 'running', 'paused', 'stopping'];
 /** The runner's HEARTBEAT_STALE_MS. */
@@ -378,6 +380,10 @@ export function renderControl(): Plugin {
 		apply: 'serve',
 		configResolved(c) {
 			env = loadEnv(c.mode, c.root, '');
+			// `bun run dev` doesn't pass .env to Vite, so hand RENDERS_DIR on: the dev site's render route
+			// (lib/server/dev-files.ts) and the runs started here read process.env.
+			if (env.RENDERS_DIR && !process.env.RENDERS_DIR) process.env.RENDERS_DIR = env.RENDERS_DIR;
+			LOG_DIR = join(rendersDir(ROOT), 'logs');
 		},
 		configureServer(server) {
 			server.middlewares.use(async (req, res, next) => {
@@ -395,6 +401,7 @@ export function renderControl(): Plugin {
 							live: live === 'busy' ? null : live,
 							busy: live === 'busy',
 							log: latestLog(),
+							logDir: LOG_DIR,
 							scopeBusy
 						});
 					}

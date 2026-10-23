@@ -147,7 +147,7 @@ export interface UploaderOptions {
 	target: string;
 	store: RenderStore;
 	db: UploaderDb;
-	/** data/renders. */
+	/** The renders folder (OUT_DIR: RENDERS_DIR, else data/renders). */
 	outDir: string;
 	/** Requests in flight at most. */
 	concurrency: number;

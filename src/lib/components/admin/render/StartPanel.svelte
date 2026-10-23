@@ -25,6 +25,8 @@
 		prodReady: boolean;
 		live: { id: string; state: string } | null;
 		log: string | null;
+		/** The run logs' folder, in the renders folder (RENDERS_DIR). */
+		logDir: string;
 		/** The local database was locked by a run's writes, so `live` is unknown (null). */
 		busy?: boolean;
 	}
@@ -147,7 +149,7 @@
 		<p class="text-xs text-stone-500">
 			Mirror clone <code class="text-stone-300">{status.cloneDir}</code>
 			{#if status.assetsDir}· sprite assets <code class="text-stone-300">{status.assetsDir}</code>{/if}
-			{#if status.log}· latest log <code class="text-stone-300">data/renders/logs/{status.log}</code>{/if}
+			{#if status.log}· latest log <code class="text-stone-300">{status.logDir}/{status.log}</code>{/if}
 		</p>
 		{#each problems as p (p)}<p class="text-sm text-amber-300">{p}</p>{/each}
 	{/if}
@@ -238,7 +240,7 @@
 
 	{#if waitingFor}
 		<p class="text-sm text-sky-300" role="status">
-			Started (pid {waitingFor.pid}); waiting for the run to report in… Log: <code>data/renders/logs/{waitingFor.log}</code>
+			Started (pid {waitingFor.pid}); waiting for the run to report in… Log: <code>{status?.logDir ?? 'logs'}/{waitingFor.log}</code>
 		</p>
 	{/if}
 	{#if blocked && !waitingFor && (live || status?.live)}
@@ -252,7 +254,7 @@
 
 	{#if logTail}
 		<details open class="rounded border border-stone-800 bg-stone-950/60">
-			<summary class="cursor-pointer px-3 py-1.5 text-xs text-stone-400">Log tail · data/renders/logs/{logTail.log}</summary>
+			<summary class="cursor-pointer px-3 py-1.5 text-xs text-stone-400">Log tail · {status?.logDir ?? 'logs'}/{logTail.log}</summary>
 			<pre class="max-h-80 overflow-auto px-3 pb-3 font-mono text-xs whitespace-pre-wrap text-stone-300">{logTail.tail}</pre>
 		</details>
 	{/if}

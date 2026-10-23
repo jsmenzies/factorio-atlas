@@ -1,6 +1,6 @@
 /**
  * Game-look render files (scripts/render-game.ts; layout in #lib/viewer/game-render.ts): in dev
- * data/renders on disk first (where `bun run render` writes), then the RENDERS bucket; deployed
+ * the renders folder on disk first (RENDERS_DIR, else data/renders: where `bun run render` writes), then the RENDERS bucket; deployed
  * stages read only the bucket. Sidecars, page data and indexes of another format version count as missing.
  *
  * Browsers fetch the images from `renderBase()`: the bucket's custom domain (`RENDERS_URL`) when

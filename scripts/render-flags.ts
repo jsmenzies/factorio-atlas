@@ -3,7 +3,7 @@
  * the search page's "Only prints with a render" filter (`?render=1`).
  *
  * Reads what this machine's render runs uploaded to that stage's RENDERS bucket (render_uploads
- * and render_jobs in the local D1, read-only; for `local` also data/renders/<id>/index.json, which
+ * and render_jobs in the local D1, read-only; for `local` also <renders dir>/<id>/index.json, which
  * the dev site reads first), then brings the stage's `print_renders` table and the `render_yes`
  * facet token of each print's search row in line with it: rows and tokens are set and unset, and
  * only what differs is written, in batches. Idempotent: run it again after any upload run.
@@ -20,7 +20,7 @@ import { parseArgs } from 'node:util';
 import { planSize, syncRenderFlags } from '#lib/server/pipeline/render-flags.js';
 import { openTarget, STAGES, TargetError, type Stage } from './backfill/stage';
 import { Terminal } from './backfill/terminal';
-import { diskPages, localD1File, mergePages, readUploads, uploadedPages } from './render/flags';
+import { diskPages, localD1File, mergePages, readUploads, RENDERS_DIR, uploadedPages } from './render/flags';
 
 const USAGE = 'usage: bun run render:flags --stage local|prod [--db N] [--dry-run] [--yes]';
 
@@ -55,7 +55,7 @@ const generation = flags.db === undefined ? undefined : Number(flags.db);
 if (generation !== undefined && !(Number.isInteger(generation) && generation > 0)) fail('--db must be a positive integer');
 const n = (x: number) => x.toLocaleString('en-US');
 
-// What should be flagged, from the local D1 (and data/renders for local).
+// What should be flagged, from the local D1 (and the renders folder, RENDERS_DIR, for local).
 const file = localD1File() ?? fail('no local D1 database (.wrangler/state): run `bun run db:migrate`, and render with --upload first');
 const { jobs, uploads } = (() => {
 	try {
@@ -69,7 +69,7 @@ const disk = stage === 'local' ? await diskPages() : new Map<string, number>();
 const wanted = mergePages(uploaded, disk);
 console.log(
 	`${n(wanted.size)} prints have a render for ${stage}: ${n(uploaded.size)} uploaded to its bucket` +
-		(stage === 'local' ? `, ${n(disk.size)} in data/renders` : '')
+		(stage === 'local' ? `, ${n(disk.size)} in ${RENDERS_DIR}` : '')
 );
 
 // openTarget checks the stage has print_renders (migration 0015).

@@ -4,12 +4,29 @@
  * every page's input key and the next run redoes them.
  */
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { rendersDir } from '#lib/server/renders-dir.js';
 import { TILE_PX } from '#lib/viewer/game-render.js';
 
 export const ROOT = join(import.meta.dirname, '..', '..');
-export const OUT_DIR = join(ROOT, 'data', 'renders');
+/** RENDERS_DIR (in .env), else data/renders: see src/lib/server/renders-dir.ts. */
+export const OUT_DIR = rendersDir(ROOT);
+
+/**
+ * Null when `dir` holds the renders the queue says are done, else why not. The sidecars in `dir`
+ * are how a run knows a page is unchanged, so a run pointed at the wrong or an empty folder would
+ * draw every page again. `donePrints` is a sample of prints with done pages (render_jobs); if none
+ * of them has an index.json in `dir`, the folder is the wrong one.
+ */
+export function checkRendersDir(dir: string, donePrints: string[], doneTotal: number): string | null {
+	if (!donePrints.length || donePrints.some((id) => existsSync(join(dir, id, 'index.json')))) return null;
+	return (
+		`${dir} holds none of the renders the queue lists as done (${doneTotal.toLocaleString('en-US')} pages), so this run would draw ` +
+		`them all again. Set RENDERS_DIR (in .env) to the folder that has them, or pass --force to redraw everything into this one.`
+	);
+}
 
 /** Bump when the drawing or file layout changes in a way the settings below don't capture. */
 export const RENDER_SETTINGS_VERSION = 1;

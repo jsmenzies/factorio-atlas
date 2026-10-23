@@ -1,5 +1,5 @@
 /**
- * The runner's own file work under data/renders/<id>/: index.json (from render_jobs), reading a
+ * The runner's own file work under <renders dir>/<id>/ (RENDERS_DIR, else data/renders): index.json (from render_jobs), reading a
  * page's sidecar back, the page data of pages rendered before it existed, renaming overviews made
  * before they carried the stamp, removing pages a print no longer has, and deleting tiles and
  * overviews no sidecar uses.
