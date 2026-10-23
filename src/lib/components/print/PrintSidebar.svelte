@@ -11,7 +11,7 @@
 
 	/**
 	 * The print page's sidebar: copy button, the author's screenshot, the facts table, main
-	 * products with rates, recipes, entities and modules, and the analyzer's limits.
+	 * products with rates, recipes, entities, modules and tiles, and the analyzer's limits.
 	 */
 	let {
 		print,
@@ -71,8 +71,10 @@
 	{/if}
 
 	{#if Object.keys(a.recipes).length}<CountList title="Recipes (machines)" kind="recipe" counts={a.recipes} {icons} />{/if}
-	<CountList title="Entities" kind="entity" counts={a.entities} {icons} />
+	<!-- Documents from before ANALYZER_VERSION 8 have no entitiesByQuality. -->
+	<CountList title="Entities" kind="entity" counts={a.entitiesByQuality ?? a.entities} {icons} />
 	{#if Object.keys(a.modules).length}<CountList title="Modules" kind="item" counts={a.modules} {icons} />{/if}
+	{#if Object.keys(a.tiles).length}<CountList title="Tiles" kind="tile" counts={a.tiles} {icons} />{/if}
 
 	<section class="rounded-lg border border-dashed border-stone-700 p-3 text-xs text-stone-500">
 		<h2 class="mb-1 font-semibold text-stone-400">Analyzer v{a.analyzerVersion} limits</h2>

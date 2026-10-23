@@ -115,6 +115,8 @@ export const facetTokens = (r: Pick<FirebaseRecord, 'tags' | 'author' | 'authorI
 		...(r.tags ?? []).map((t) => `tag_${slug(t)}`),
 		...a.planets.map((p) => `planet_${slug(p)}`),
 		...a.mods.map((m) => `mod_${slug(m)}`),
+		// Every quality above normal on an entity, module or recipe; no filter offers them yet.
+		...Object.keys(a.qualities).map((q) => `quality_${slug(q)}`),
 		// Every entity, recipe and module, not just what the UI offers today, so a new filter on
 		// any of them needs no re-index. `uses_entity_` keeps them apart from uses_circuits/uses_trains.
 		...Object.keys(a.entities).map((e) => `uses_${slug(`entity:${e}`)}`),

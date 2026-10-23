@@ -19,6 +19,9 @@ export const load: PageServerLoad = async ({ params }) => {
 			recipe: Object.keys(a.recipes),
 			entity: Object.keys(a.entities),
 			item: Object.keys(a.modules).map((m) => m.split('@')[0]),
+			tile: Object.keys(a.tiles),
+			// Badges on the sidebar's entities and modules above normal quality.
+			quality: Object.keys(a.qualities),
 			// Rates, page icons, and what each page makes and takes.
 			signals: [...Object.keys(a.rates), ...a.nodes.flatMap((n) => [...n.icons, ...n.outputs, ...n.products, ...n.inputs])]
 		},

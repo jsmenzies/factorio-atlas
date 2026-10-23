@@ -5,7 +5,7 @@ import { DLC_MODS, gameData as defaultGameData, type GameData, type SurfaceCondi
  * Bump when the analyzer's output changes so stored prints can be re-analyzed
  * from the raw store without re-downloading.
  */
-export const ANALYZER_VERSION = 7;
+export const ANALYZER_VERSION = 8;
 
 // Game facts (names, sizes, recipes, surface conditions) come from `game-data.ts`, pinned to
 // one game version. Older prints are renamed to 2.0 names first; newer ones may have names
@@ -141,6 +141,9 @@ const bump = (c: Counts, k: string, n = 1) => {
 };
 const asArray = (v: unknown): Json[] => (Array.isArray(v) ? (v as Json[]) : []);
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+/** A count key for a name at a quality: `name@quality`, or just `name` at normal quality. */
+const withQuality = (name: string, quality: string) => (quality === 'normal' ? name : `${name}@${quality}`);
+
 const sortCounts = (c: Counts): Counts => Object.fromEntries(Object.entries(c).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])));
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
@@ -160,6 +163,8 @@ export interface NodeAnalysis {
 	height: number | null;
 	/** Entity, recipe, module and tile names, renamed to 2.0 names for pre-2.0 prints. */
 	entities: Counts;
+	/** `entities` split by quality: `name@quality` above normal, plain `name` for normal (as `modules`). */
+	entitiesByQuality: Counts;
 	recipes: Counts;
 	modules: Counts;
 	tiles: Counts;
@@ -215,6 +220,8 @@ export interface PrintAnalysis {
 	entityCount: number;
 	tileCount: number;
 	entities: Counts;
+	/** `entities` split by quality: `name@quality` above normal, plain `name` for normal (as `modules`). */
+	entitiesByQuality: Counts;
 	recipes: Counts;
 	modules: Counts;
 	tiles: Counts;
@@ -424,10 +431,22 @@ const nameplateRates = (machines: Machine[], beacons: Beacon[], major: number, g
 	);
 };
 
+/** Renames pre-2.0 names to their 2.0 names; 2.0+ names pass through. */
+const renamer = (v: Version | null, game: GameData) => (kind: 'entity' | 'item' | 'recipe' | 'tile') => (n: string) =>
+	(v?.[0] ?? 2) < 2 ? game.migrate(kind, n) : n;
+
+/** A blueprint's, book's or planner's icons as `type:name`, item names renamed for pre-2.0 prints. */
+const iconSignals = (icons: unknown, renameItem: (n: string) => string) =>
+	asArray(icons).map((ic) => {
+		const sig = (ic.signal ?? {}) as Json;
+		const type = str(sig.type) ?? 'item';
+		return `${type}:${type === 'item' ? renameItem(str(sig.name) ?? '') : str(sig.name)}`;
+	});
+
 const analyzeBlueprint = (path: string, bp: Json, inherited: Version | null, game: GameData): NodeAnalysis => {
 	const v = decodeGameVersion(bp.version) ?? inherited;
 	const major = v?.[0] ?? 2;
-	const rename = (kind: 'entity' | 'item' | 'recipe' | 'tile') => (n: string) => (major < 2 ? game.migrate(kind, n) : n);
+	const rename = renamer(v, game);
 	const renameEntity = rename('entity');
 	const renameItem = rename('item');
 	const renameRecipe = rename('recipe');
@@ -440,6 +459,7 @@ const analyzeBlueprint = (path: string, bp: Json, inherited: Version | null, gam
 	const tiles = asArray(bp.tiles);
 
 	const entities: Counts = {};
+	const entitiesByQuality: Counts = {};
 	const recipes: Counts = {};
 	const modules: Counts = {};
 	const tileCounts: Counts = {};
@@ -482,8 +502,10 @@ const analyzeBlueprint = (path: string, bp: Json, inherited: Version | null, gam
 		const recipe = recipeRaw ? renameRecipe(recipeRaw) : undefined;
 		if (recipe) bump(recipes, recipe);
 		const mods = moduleList(e.items, renameItem);
-		for (const m of mods) bump(modules, m.quality !== 'normal' ? `${m.name}@${m.quality}` : m.name, m.count);
+		for (const m of mods) bump(modules, withQuality(m.name, m.quality), m.count);
+		for (const m of mods) if (m.quality !== 'normal') bump(qualities, m.quality, m.count);
 		const q = str(e.quality) ?? 'normal';
+		bump(entitiesByQuality, withQuality(name, q));
 		if (q !== 'normal') bump(qualities, q);
 		const rq = str(e.recipe_quality);
 		if (rq && rq !== 'normal') bump(qualities, rq);
@@ -560,11 +582,7 @@ const analyzeBlueprint = (path: string, bp: Json, inherited: Version | null, gam
 
 	const label = str(bp.label) ?? null;
 	const description = str(bp.description) ?? null;
-	const icons = asArray(bp.icons).map((ic) => {
-		const sig = (ic.signal ?? {}) as Json;
-		const type = str(sig.type) ?? 'item';
-		return `${type}:${type === 'item' ? renameItem(str(sig.name) ?? '') : str(sig.name)}`;
-	});
+	const icons = iconSignals(bp.icons, renameItem);
 	const hasExtent = Number.isFinite(minX);
 	const signItems = [...new Set(constantSignals.flat().map((s) => (s.startsWith('item:') ? `item:${renameItem(s.slice(5))}` : s)))].filter(
 		(s) => s.startsWith('item:') || s.startsWith('fluid:')
@@ -621,6 +639,7 @@ const analyzeBlueprint = (path: string, bp: Json, inherited: Version | null, gam
 		width: hasExtent ? Math.round(maxX - minX) : null,
 		height: hasExtent ? Math.round(maxY - minY) : null,
 		entities: sortCounts(entities),
+		entitiesByQuality: sortCounts(entitiesByQuality),
 		recipes: sortCounts(recipes),
 		modules: sortCounts(modules),
 		tiles: sortCounts(tileCounts),
@@ -649,20 +668,20 @@ const analyzeBlueprint = (path: string, bp: Json, inherited: Version | null, gam
 	};
 };
 
-const emptyNode = (path: string, kind: NodeKind, body: Json, inherited: Version | null, game: GameData): NodeAnalysis => ({
-	...analyzeBlueprint(path, {}, inherited, game),
-	kind,
-	label: str(body.label) ?? null,
-	description: str(body.description) ?? null,
-	gameVersion: versionString(decodeGameVersion(body.version) ?? inherited),
-	icons: asArray(body.icons).map((ic) => {
-		const sig = (ic.signal ?? {}) as Json;
-		return `${str(sig.type) ?? 'item'}:${str(sig.name)}`;
-	}),
-	richText: richTextRefs(str(body.label), str(body.description)),
-	width: null,
-	height: null
-});
+const emptyNode = (path: string, kind: NodeKind, body: Json, inherited: Version | null, game: GameData): NodeAnalysis => {
+	const v = decodeGameVersion(body.version) ?? inherited;
+	return {
+		...analyzeBlueprint(path, {}, inherited, game),
+		kind,
+		label: str(body.label) ?? null,
+		description: str(body.description) ?? null,
+		gameVersion: versionString(v),
+		icons: iconSignals(body.icons, renamer(v, game)('item')),
+		richText: richTextRefs(str(body.label), str(body.description)),
+		width: null,
+		height: null
+	};
+};
 
 const KINDS: NodeKind[] = ['blueprint', 'blueprint_book', 'upgrade_planner', 'deconstruction_planner'];
 const MAX_DEPTH = 32;
@@ -720,6 +739,7 @@ export const analyzePrint = (decoded: unknown, game: GameData = defaultGameData)
 	const prints = nodes.filter((n) => n.kind === 'blueprint');
 
 	const entities: Counts = {};
+	const entitiesByQuality: Counts = {};
 	const recipes: Counts = {};
 	const modules: Counts = {};
 	const tiles: Counts = {};
@@ -742,6 +762,7 @@ export const analyzePrint = (decoded: unknown, game: GameData = defaultGameData)
 			for (const [k, v] of Object.entries(counts)) bump((byCategory[c] ??= {}), k, v);
 		if (n.beltThroughput) beltThroughput = Math.max(beltThroughput ?? 0, n.beltThroughput);
 		for (const [k, v] of Object.entries(n.entities)) bump(entities, k, v);
+		for (const [k, v] of Object.entries(n.entitiesByQuality)) bump(entitiesByQuality, k, v);
 		for (const [k, v] of Object.entries(n.recipes)) bump(recipes, k, v);
 		for (const [k, v] of Object.entries(n.modules)) bump(modules, k, v);
 		for (const [k, v] of Object.entries(n.tiles)) bump(tiles, k, v);
@@ -836,7 +857,6 @@ export const analyzePrint = (decoded: unknown, game: GameData = defaultGameData)
 	const limits = [
 		`game data is ${game.gameVersion} + Space Age; pre-2.0 prints are renamed to 2.0 names and use 2.0 recipes`,
 		'rates are nameplate: full input supply, no research productivity; mining drills are not counted',
-		'entity sizes and surface conditions come from a regex scan of factorio-data, not a game dump',
 		'unknown names are matched to mods by name prefix only'
 	];
 	if (furnacesWithoutRecipe > 0) limits.push(`${furnacesWithoutRecipe} furnaces store no recipe, so their smelting is not counted`);
@@ -855,6 +875,7 @@ export const analyzePrint = (decoded: unknown, game: GameData = defaultGameData)
 		entityCount: prints.reduce((s, n) => s + n.entityCount, 0),
 		tileCount: prints.reduce((s, n) => s + n.tileCount, 0),
 		...partial,
+		entitiesByQuality: sortCounts(entitiesByQuality),
 		recipes: sortCounts(recipes),
 		tiles: sortCounts(tiles),
 		qualities,
