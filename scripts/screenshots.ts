@@ -1,10 +1,15 @@
 /**
  * `bun run screenshots`: copy every print's screenshot, the original file exactly as Imgur serves
- * it, into SCREENSHOTS_DIR (e.g. in .env; default data/screenshots). Download only: nothing is
- * resized, uploaded or written to any database.
+ * it, into SCREENSHOTS_DIR (e.g. in .env; default data/screenshots); then make the sizes the site
+ * shows, upload them, and keep up with deletions on Imgur.
  *
  *   bun run screenshots [--from-clone DIR] [--from-disk [DIR]] [--ids a,b] [--limit N]
  *                       [--rate N] [--in-flight N] [--recheck-dead] [--plan-only] [--no-canary]
+ *   bun run screenshots --make [--ids a,b] [--limit N] [--jobs N]
+ *   bun run screenshots --upload local|prod [--ids a,b] [--limit N] [--jobs N] [--plan-only]
+ *   bun run screenshots --recheck [--ids a,b] [--limit N] [--rate N]
+ *
+ * The fetch (the default):
  *
  * - Images come from `image.id` in the mirror clone's records (`--from-clone`, default
  *   RENDER_CLONE_DIR or ~/data/factorio-mirror), plus `--from-disk` (default data/raw/factorioprints)
@@ -24,6 +29,16 @@
  *   of one screenshot below that are only counted in the summary).
  * - Reruns skip what's done. Ctrl-C stops starting new requests and lets those in flight finish;
  *   twice exits at once.
+ * - An original sent without an MD5 ETag is kept when it is as long as its Content-Length and
+ *   decodes completely.
+ *
+ * The other steps (scripts/screenshots/run.ts) work from state.jsonl, never the records:
+ * - `--make`: the sizes (scripts/screenshots/make.ts) into `<dir>/sizes/`; the originals are only read.
+ * - `--upload local|prod`: makes what's missing, then brings the bucket in line (upload.ts): files,
+ *   then each image's manifest, recorded in `<dir>/uploads/<target>.jsonl`. Afterwards run
+ *   `bun run screenshots:flags --stage <same>` so search cards show them.
+ * - `--recheck`: asks Imgur for each copied image's small thumbnail; images deleted there are
+ *   marked removed, and the next upload deletes their files after DELETE_GRACE_MS.
  */
 import { appendFileSync, existsSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -31,6 +46,8 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ATTEMPTS, CANARY, canaryDue, parseArgs, screenshotsDir, USAGE, UsageError, type ShotArgs } from './screenshots/args.js';
 import { classify, type Outcome, type Reply } from './screenshots/classify.js';
+import { decodes } from './screenshots/make.js';
+import { runMake, runRecheck, runUpload } from './screenshots/run.js';
 import { fetchImgur, imgurOriginal } from './screenshots/fetch.js';
 import { EXT, kindOfMime, requestExt } from './screenshots/image.js';
 import { backoffMs, pacer, pool, realClock } from './screenshots/pace.js';
@@ -72,6 +89,19 @@ const duration = (ms: number) => {
 	const s = Math.round(ms / 1000);
 	return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 };
+
+// The steps after the fetch work from the run state alone.
+if (args.mode !== 'fetch') {
+	const { entries, bad } = parseState(await readFile(stateFile, 'utf8').catch(() => ''));
+	if (bad) console.warn(`screenshots: skipped ${bad} unreadable line(s) in ${stateFile}`);
+	const code =
+		args.mode === 'make'
+			? await runMake(dir, entries, args)
+			: args.mode === 'upload'
+				? await runUpload(dir, entries, args)
+				: await runRecheck(dir, stateFile, entries, args);
+	process.exit(code);
+}
 
 // What the prints use.
 let records: PrintImage[];
@@ -204,7 +234,10 @@ async function one(w: Wanted) {
 		stopReason ??= `${w.id}: ${o.reason}`;
 		return;
 	}
-	if (o.kind === 'ok') {
+	if (o.kind === 'ok' && o.check === 'length' && !(await decodes(got.reply!.body!))) {
+		record({ ...base, status: 'failed', reason: 'no MD5 ETag, and the body does not decode completely' });
+		failed.set('no MD5 ETag, does not decode', (failed.get('no MD5 ETag, does not decode') ?? 0) + 1);
+	} else if (o.kind === 'ok') {
 		const dup = guard.check(o.md5, w.id);
 		if (dup.tripped) {
 			stopReason ??= `${w.id}: the same bytes (MD5 ${o.md5}) as ${dup.others.join(', ')}; a placeholder in place of the images?`;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { classify, etagMd5, REMOVED_MD5, type Reply } from './classify.js';
+import { classify, classifyCheck, etagMd5, REMOVED_MD5, type Reply } from './classify.js';
 import { md5 } from './image.js';
 
 /** A 1 × 1 PNG header is enough for sniff and imageSize. */
@@ -9,13 +9,23 @@ const ok = (over: Partial<Reply> = {}): Reply => ({
 	location: null,
 	contentType: 'image/png',
 	etag: `"${md5(PNG)}"`,
+	contentLength: PNG.length,
 	body: PNG,
 	...over
 });
 
 describe('classify', () => {
 	test('a good original', () => {
-		expect(classify(ok())).toEqual({ kind: 'ok', type: 'png', ext: 'png', md5: md5(PNG), bytes: PNG.length, width: 3, height: 2 });
+		expect(classify(ok())).toEqual({
+			kind: 'ok',
+			type: 'png',
+			ext: 'png',
+			md5: md5(PNG),
+			bytes: PNG.length,
+			width: 3,
+			height: 2,
+			check: 'etag'
+		});
 	});
 
 	test('dead: removed.png redirect, 404, 410, or removed.png itself', () => {
@@ -47,7 +57,13 @@ describe('classify', () => {
 		expect(classify(ok({ contentType: 'image/jpeg' }))).toEqual({ kind: 'failed', reason: 'content-type says jpeg, bytes are png' });
 		expect(classify(ok({ contentType: 'video/mp4' })).kind).toBe('failed');
 		expect(classify(ok({ body: new TextEncoder().encode('hello'), etag: null })).kind).toBe('failed');
-		expect(classify(ok({ etag: null })).kind).toBe('failed');
+		expect(classify(ok({ etag: null, contentLength: null })).kind).toBe('failed');
+	});
+
+	test('no MD5 ETag: kept on a matching Content-Length, for the runner to decode; a short body is retried', () => {
+		expect(classify(ok({ etag: null }))).toMatchObject({ kind: 'ok', check: 'length' });
+		expect(classify(ok({ etag: '"abc-2"' }))).toMatchObject({ kind: 'ok', check: 'length' });
+		expect(classify(ok({ etag: null, contentLength: PNG.length + 10 })).kind).toBe('retry');
 	});
 });
 
@@ -56,4 +72,26 @@ test('etagMd5', () => {
 	expect(etagMd5('W/"58b12b0030452ea6180f464efe5ca515"')).toBe('58b12b0030452ea6180f464efe5ca515');
 	expect(etagMd5('"58b12b0030452ea6180f464efe5ca515-3"')).toBeNull();
 	expect(etagMd5(null)).toBeNull();
+});
+
+describe('classifyCheck (the recheck of a copied image)', () => {
+	const thumb = (over: Partial<Reply>): Reply => ({
+		status: 200,
+		location: null,
+		contentType: 'image/jpeg',
+		etag: null,
+		contentLength: null,
+		body: PNG,
+		...over
+	});
+	test('alive, gone, stop, retry, unknown', () => {
+		expect(classifyCheck(thumb({}))).toEqual({ kind: 'alive' });
+		expect(classifyCheck(thumb({ status: 302, body: null, location: 'https://i.imgur.com/removed.png' })).kind).toBe('gone');
+		expect(classifyCheck(thumb({ status: 404, body: null })).kind).toBe('gone');
+		expect(classifyCheck(thumb({}), () => REMOVED_MD5).kind).toBe('gone');
+		expect(classifyCheck(thumb({ status: 429, body: null })).kind).toBe('stop');
+		expect(classifyCheck(thumb({ contentType: 'text/html' })).kind).toBe('stop');
+		expect(classifyCheck(thumb({ status: 502, body: null })).kind).toBe('retry');
+		expect(classifyCheck(thumb({ status: 302, body: null, location: 'https://imgur.com/x' })).kind).toBe('unknown');
+	});
 });

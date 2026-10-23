@@ -6,17 +6,17 @@
  *
  * One deployed stage, `prod` (STAGES in infra/databases.ts; local development runs on miniflare
  * with `bun run dev`), with its own Worker (the SvelteKit app, built by adapter-cloudflare exactly
- * as `bun run preview` runs it), D1 database and two R2 buckets, plus a small scheduled Worker that
+ * as `bun run preview` runs it), D1 database and three R2 buckets, plus a small scheduled Worker that
  * totals page views into D1 daily (with ANALYTICS_API_TOKEN). Prod also owns the one sprites
  * bucket. A staging stage can be added to STAGES; it gets the same resources and links to prod's
  * sprites bucket.
- * Binding names (DB, RAW, RENDERS, SPRITES, VIEWS), the rate limits (PAGE_LIMIT, SEARCH_LIMIT), vars,
+ * Binding names (DB, RAW, RENDERS, SPRITES, SCREENSHOTS, VIEWS), the rate limits (PAGE_LIMIT, SEARCH_LIMIT), vars,
  * compatibility date and flags come from wrangler.jsonc,
  * which stays the config for local tooling (`vite dev`, `wrangler d1 --local`, `wrangler types`,
  * scripts/ingest.ts), so local and deployed Workers can't drift apart. Alchemy adds ASSETS.
  *
  * Physical names include the stage: Worker `factorio-prints-<stage>`, D1
- * `factorio-prints-<stage>-db-<generation>`, R2 `factorio-prints-<stage>-raw` and `-renders`, and the
+ * `factorio-prints-<stage>-db-<generation>`, R2 `factorio-prints-<stage>-raw`, `-renders` and `-screenshots`, and the
  * shared R2 `factorio-prints-sprites`.
  * The prefix is fixed and also names the Alchemy stack, so renaming the site or the repo never
  * replaces resources.
@@ -26,7 +26,7 @@ import * as Alchemy from 'alchemy';
 import * as Cloudflare from 'alchemy/Cloudflare';
 import { Config, Effect, Option } from 'effect';
 import { unstable_readConfig } from 'wrangler';
-import { DATABASES, PREFIX, SPRITES_BUCKET, STAGES, viewsDataset, type Stage } from './infra/databases';
+import { DATABASES, PREFIX, screenshotsBucket, SPRITES_BUCKET, STAGES, viewsDataset, type Stage } from './infra/databases';
 
 /** The parts of wrangler.jsonc used here (wrangler's own config type isn't exported). */
 interface LocalConfig {
@@ -41,7 +41,12 @@ interface LocalConfig {
 const local: LocalConfig = unstable_readConfig({ config: 'wrangler.jsonc' }, { hideWarnings: true });
 
 // Fail fast if wrangler.jsonc gains a binding this file doesn't provision.
-const expected = { d1: ['DB'], r2: ['RAW', 'RENDERS', 'SPRITES'], ratelimits: ['PAGE_LIMIT', 'SEARCH_LIMIT'], analytics: ['VIEWS'] };
+const expected = {
+	d1: ['DB'],
+	r2: ['RAW', 'RENDERS', 'SPRITES', 'SCREENSHOTS'],
+	ratelimits: ['PAGE_LIMIT', 'SEARCH_LIMIT'],
+	analytics: ['VIEWS']
+};
 const actual = {
 	d1: local.d1_databases.map((d) => d.binding),
 	r2: local.r2_buckets.map((b) => b.binding),
@@ -130,6 +135,18 @@ export default Alchemy.Stack(
 			cors: [{ allowedMethods: ['GET', 'HEAD'], allowedOrigins: ['*'], maxAgeSeconds: 86400 }]
 		}).pipe(Alchemy.RemovalPolicy.retain());
 
+		// Copies of the prints' Imgur screenshots (`bun run screenshots --upload`; src/lib/screenshots.ts),
+		// served the same way: with SCREENSHOTS_DOMAIN_<STAGE> (e.g. screenshots.example.com) the bucket is
+		// public on that hostname only, through Cloudflare's cache. Image names never change their bytes
+		// (`immutable`); each image's manifest is kept 300 s. Unset, the Worker serves them at
+		// /screenshots/<key>.
+		const screenshotsDomain = Option.getOrUndefined(yield* Config.option(Config.String(`SCREENSHOTS_DOMAIN_${stage.toUpperCase()}`)));
+		const screenshots = yield* Cloudflare.R2.Bucket('Screenshots', {
+			name: screenshotsBucket(stage as Stage),
+			domains: screenshotsDomain === undefined ? [] : [{ name: screenshotsDomain, minTLS: '1.2' }],
+			cors: [{ allowedMethods: ['GET', 'HEAD'], allowedOrigins: ['*'], maxAgeSeconds: 86400 }]
+		}).pipe(Alchemy.RemovalPolicy.retain());
+
 		// Print page views (one data point each), totalled into D1 daily by the ViewsCron Worker below
 		// (or `bun run views:sync`). Cloudflare creates the dataset on the first write; nothing to
 		// retain or delete.
@@ -159,12 +176,14 @@ export default Alchemy.Stack(
 				: undefined;
 
 		// Cloudflare caches only some file types by default (not .json, for one). One cache rule makes everything on
-		// the sprites and renders hostnames eligible, keeping each object's own cache-control (a year
+		// the sprites, renders and screenshots hostnames eligible, keeping each object's own cache-control (a year
 		// and immutable for images, minutes for index.json), and Smart Tiered Cache sends misses to one
 		// upper-tier data centre before R2. Prod owns these: the rule list is the zone's whole
 		// cache-rules phase, and the zone's tiered-cache setting. A deploy would delete any cache rule
 		// made elsewhere on the zone, so it stops first when the phase holds a rule other than ours.
-		const cachedHosts = [stage === 'prod' ? spritesDomain : undefined, rendersDomain].filter((h): h is string => h !== undefined);
+		const cachedHosts = [stage === 'prod' ? spritesDomain : undefined, rendersDomain, screenshotsDomain].filter(
+			(h): h is string => h !== undefined
+		);
 		if (stage === 'prod' && cachedHosts.length > 0) {
 			const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
 			const zoneIds = yield* Effect.forEach(cachedHosts, (hostname) =>
@@ -260,6 +279,7 @@ export default Alchemy.Stack(
 				DB: db,
 				RAW: raw,
 				RENDERS: renders,
+				SCREENSHOTS: screenshots,
 				VIEWS: views,
 				...(sprites ? { SPRITES: sprites } : {}),
 				...Object.fromEntries(
@@ -268,6 +288,7 @@ export default Alchemy.Stack(
 				...vars,
 				SPRITES_URL: spritesDomain === undefined ? '' : `https://${spritesDomain}`,
 				RENDERS_URL: rendersDomain === undefined ? '' : `https://${rendersDomain}`,
+				SCREENSHOTS_URL: screenshotsDomain === undefined ? '' : `https://${screenshotsDomain}`,
 				// Empty (in wrangler.jsonc) means /admin is a 404 on this stage.
 				ACCESS_TEAM_DOMAIN: admin ? (teamDomain ?? '') : '',
 				ACCESS_AUD: admin ? admin.aud : ''
@@ -298,9 +319,10 @@ export default Alchemy.Stack(
 			url: worker.url,
 			database: db.databaseName,
 			importTarget: importTarget === undefined ? undefined : `${name}-db-${importTarget}`,
-			buckets: [raw.bucketName, renders.bucketName, ...(sprites ? [sprites.bucketName] : [])],
+			buckets: [raw.bucketName, renders.bucketName, screenshots.bucketName, ...(sprites ? [sprites.bucketName] : [])],
 			sprites: spritesDomain === undefined ? undefined : `https://${spritesDomain}`,
 			renders: rendersDomain === undefined ? undefined : `https://${rendersDomain}`,
+			screenshots: screenshotsDomain === undefined ? undefined : `https://${screenshotsDomain}`,
 			admin: admin === undefined ? undefined : `https://${domain}/admin/pipeline`
 		};
 	})

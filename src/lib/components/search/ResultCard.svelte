@@ -2,23 +2,29 @@
 	import Icon from '#lib/components/Icon.svelte';
 	import RenderIcon from '#lib/components/RenderIcon.svelte';
 	import RichText from '#lib/components/RichText.svelte';
-	import { imgurUrl, signalName } from '#lib/format.js';
+	import { signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
+	import type { CardImage } from '#lib/screenshots.js';
 	import type { PrintCard } from '#lib/server/queries.js';
 	import { searchRel } from '#lib/search-seo.js';
 
 	/**
-	 * One search result: screenshot, title, author and counts as a link to the print, then its
-	 * version, Space Age and render badges as filter links of their own, planets, mods and outputs.
+	 * One search result: picture, title, author and counts as a link to the print, then its version,
+	 * Space Age and render badges as filter links of their own, planets, mods and outputs. The picture
+	 * (cardImage in #lib/screenshots.ts): our copy of the author's screenshot; Imgur's while ours isn't
+	 * there yet; else the render thumbnail of its cover page; else none.
 	 */
 	let {
 		print: p,
+		eager = false,
 		toggle,
 		active,
 		renderOnly,
 		icons
 	}: {
-		print: PrintCard;
+		print: PrintCard & { image: CardImage | null };
+		/** Load the picture at once: cards in the first row. The rest load as they near the screen. */
+		eager?: boolean;
 		/** Link to the current search with this filter value toggled. */
 		toggle: (key: string, value: string) => string;
 		/** Whether the current search has this filter value. */
@@ -31,17 +37,19 @@
 
 <li class="overflow-hidden rounded-lg border border-stone-800 bg-stone-900 hover:border-stone-600">
 	<a href="/prints/{p.id}" class="block">
-		{#if p.image_id}
+		{#if p.image}
 			<div class="relative">
-				<!-- Imgur's 320 px thumbnail, or its 640 px one where the card is wider or the screen sharper. -->
+				<!-- 320, 640 or 960 px wide, whichever suits the card's width and the screen. -->
 				<img
-					referrerpolicy="no-referrer"
-					src={imgurUrl(p.image_id, p.image_type)}
-					srcset="{imgurUrl(p.image_id, p.image_type)} 320w, {imgurUrl(p.image_id, p.image_type, 'large')} 640w"
+					referrerpolicy={p.image.kind === 'imgur' ? 'no-referrer' : undefined}
+					src={p.image.src}
+					srcset={p.image.srcset}
 					sizes="(min-width: 1280px) 22rem, (min-width: 640px) 50vw, 100vw"
+					width={p.image.width}
+					height={p.image.height}
 					alt=""
-					loading="lazy"
-					class="aspect-video w-full bg-stone-800 object-cover"
+					loading={eager ? 'eager' : 'lazy'}
+					class="aspect-video w-full bg-stone-800 {p.image.kind === 'render' ? 'object-contain' : 'object-cover'}"
 				/>
 				{#if p.has_render}
 					<span
@@ -85,7 +93,7 @@
 					class="rounded bg-violet-900/60 px-1.5 py-0.5 text-violet-300 hover:bg-violet-800/60 {active('spaceAge', 'yes') ? 'ring-1 ring-amber-500' : ''}"
 					>Space Age</a
 				>{/if}
-			{#if p.has_render && !p.image_id}<a
+			{#if p.has_render && !p.image}<a
 					href={toggle('render', '1')}
 					rel={searchRel(toggle('render', '1'))}
 					title="Only prints with a render"

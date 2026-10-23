@@ -36,6 +36,8 @@
 		"views:sync": "bun scripts/views-sync.ts",
 		"authors": "bun scripts/authors.ts",
 		"screenshots": "bun scripts/screenshots.ts",
+		"screenshots:flags": "bun scripts/screenshots-flags.ts",
+		"screenshots:remove": "bun scripts/screenshots-remove.ts",
 		"game-data": "bun scripts/build-game-data.ts",
 		"icons": "bun scripts/icons.ts",
 		"lint": "oxlint",

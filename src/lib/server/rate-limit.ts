@@ -36,11 +36,11 @@ export const visitorKey = (ip: string) => {
 };
 
 /**
- * Routes that serve immutable files (render tiles and overviews, icons) when their bucket has no custom
- * domain. A viewer zoom asks for dozens of tiles at once, so they don't count; with the domains set
- * (prod) they never reach the Worker anyway.
+ * Routes that serve immutable files (render tiles and overviews, icons, screenshots) when their bucket
+ * has no custom domain. A viewer zoom asks for dozens of tiles at once, and a page of search results
+ * for 60 card images, so they don't count; with the domains set (prod) they never reach the Worker anyway.
  */
-const UNLIMITED_ROUTES = new Set(['/prints/[id]/render/[...file]', '/sprites/[...key]']);
+const UNLIMITED_ROUTES = new Set(['/prints/[id]/render/[...file]', '/sprites/[...key]', '/screenshots/[...key]']);
 
 /**
  * A search: the home route with any query string (the bare home page is a cheap read of facet counts), or

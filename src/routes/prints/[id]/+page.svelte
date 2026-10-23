@@ -18,7 +18,7 @@
 	import SelectedPage from '#lib/components/print/SelectedPage.svelte';
 	import { bookProducts, describeNode, describePrint, metaDescription, pageTitle } from '#lib/describe.js';
 	import { groupPages } from '#lib/book-groups.js';
-	import { imgurUrl, signalName } from '#lib/format.js';
+	import { signalName } from '#lib/format.js';
 	import { plainText } from '#lib/richtext.js';
 	import type { NodeAnalysis, Role } from '#lib/server/pipeline/analyze.js';
 	import { usefulTags } from '#lib/tags.js';
@@ -173,8 +173,9 @@
 				}
 			: { title: `${plainText(title)} · Blueprint Atlas`, description: metaDescription(a, p.author_name, { rendered: rendered.size > 0 }), canonical: `/prints/${p.id}` }
 	);
-	// Link previews show the author's screenshot, for the print and each of its book pages.
-	const image = $derived(p.image_id ? { url: imgurUrl(p.image_id, p.image_type, 'preview'), alt: `Screenshot of ${plainText(title)}` } : undefined);
+	// Link previews show the author's screenshot, for the print and each of its book pages: our copy's
+	// preview JPEG, else Imgur's while ours isn't there yet, else (gone or removed) the site's card.
+	const image = $derived(data.shot.og ? { ...data.shot.og, alt: `Screenshot of ${plainText(title)}` } : undefined);
 
 	type CopyState = 'idle' | 'copying' | 'done' | 'failed';
 	let copied = $state<{ book: CopyState; page: CopyState }>({ book: 'idle', page: 'idle' });
@@ -202,6 +203,7 @@
 	analysis={a}
 	{title}
 	{root}
+	shot={data.shot}
 	cover={data.cover}
 	{coverIndex}
 	copyLabel={bookCopyLabel}
@@ -237,6 +239,7 @@
 					<OverviewTab
 						print={p}
 						analysis={a}
+						shot={data.shot}
 						{single}
 						summary={single && !produced ? describePrint(a) : null}
 						main={products.main}
@@ -358,7 +361,7 @@
 
 			<div role="tabpanel" id="panel-about" aria-labelledby="tab-about" hidden={tab !== 'about'}>
 				{#if shows('about')}
-					<AboutTab print={p} analysis={a} {root} icons={data.icons} />
+					<AboutTab print={p} analysis={a} {root} shot={data.shot} icons={data.icons} />
 				{/if}
 			</div>
 		</div>

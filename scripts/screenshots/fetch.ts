@@ -7,6 +7,9 @@ import type { Reply } from './classify.js';
 
 export const imgurOriginal = (id: string, ext: string) => `https://i.imgur.com/${encodeURIComponent(id)}.${ext}`;
 
+/** Imgur's 320 px copy (always JPEG): a cheap way to ask whether an image still exists. */
+export const imgurThumb = (id: string) => `https://i.imgur.com/${encodeURIComponent(id)}m.jpg`;
+
 export async function fetchImgur(url: string, signal: AbortSignal): Promise<Reply> {
 	const res = await fetch(url, {
 		redirect: 'manual',
@@ -21,6 +24,7 @@ export async function fetchImgur(url: string, signal: AbortSignal): Promise<Repl
 		location: res.headers.get('location'),
 		contentType: res.headers.get('content-type'),
 		etag: res.headers.get('etag'),
+		contentLength: res.headers.has('content-length') ? Number(res.headers.get('content-length')) : null,
 		body
 	};
 }

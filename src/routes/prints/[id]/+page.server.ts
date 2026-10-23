@@ -4,6 +4,7 @@ import { renderDescription } from '#lib/server/markdown.js';
 import { gameData } from '#lib/server/pipeline/game-data.js';
 import { loadPrintDoc, printTexts } from '#lib/server/print-pages.js';
 import { pageThumbs, renderBase, renderOverviews } from '#lib/server/renders.js';
+import { loadShotView } from '#lib/server/screenshots.js';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -11,9 +12,10 @@ import type { PageServerLoad } from './$types';
  * the page itself (`/prints/[id]/viewer`), so `?page=` changes don't re-run this load.
  */
 export const load: PageServerLoad = async ({ params }) => {
-	// The print page reads only R2 (its document, render index and thumbnails), never D1.
+	// The print page reads only R2 (its document, render index, thumbnails and screenshot manifest), never D1.
 	const thumbs = pageThumbs(params.id);
 	const [found, overviews] = await loadPrintDoc(params.id, renderOverviews(params.id));
+	const shot = await loadShotView(found.print);
 	const a = found.analysis;
 	// Each rendered page's overview image: the Overview tab's preview, and the header's background
 	// when the author has no screenshot.
@@ -74,6 +76,7 @@ export const load: PageServerLoad = async ({ params }) => {
 		descriptionLong: markdown.length > 900,
 		previews,
 		cover,
-		thumbs: await thumbs
+		thumbs: await thumbs,
+		shot
 	};
 };

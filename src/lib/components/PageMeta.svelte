@@ -10,7 +10,8 @@
 	 * Only pages render it, never a layout, so no tag appears twice. `canonical` is a path (with its
 	 * query, if it has one); the origin is the request's, so the code never names the domain.
 	 * `noindex` keeps the page out of search results while crawlers still follow its links. `image`
-	 * (an absolute URL) replaces the default card, e.g. a print's screenshot.
+	 * replaces the default card, e.g. a print's screenshot: `src` absolute or a path on this site,
+	 * `width`/`height` when known (0: not known).
 	 */
 	let {
 		title,
@@ -18,11 +19,18 @@
 		canonical,
 		noindex = false,
 		image
-	}: { title: string; description: string; canonical?: string; noindex?: boolean; image?: { url: string; alt: string } } = $props();
+	}: {
+		title: string;
+		description: string;
+		canonical?: string;
+		noindex?: boolean;
+		image?: { src: string; width?: number; height?: number; alt: string };
+	} = $props();
 
 	const url = $derived(canonical === undefined ? page.url.href : `${page.url.origin}${canonical}`);
 	// Previews show the site's name on their own.
 	const shortTitle = $derived(title.replace(new RegExp(` · ${SITE}$`), ''));
+	const imageUrl = $derived(image ? (image.src.startsWith('/') ? `${page.url.origin}${image.src}` : image.src) : null);
 </script>
 
 <svelte:head>
@@ -35,8 +43,12 @@
 	<meta property="og:title" content={shortTitle} />
 	<meta property="og:description" content={description} />
 	<meta property="og:url" content={url} />
-	{#if image}
-		<meta property="og:image" content={image.url} />
+	{#if image && imageUrl}
+		<meta property="og:image" content={imageUrl} />
+		{#if image.width && image.height}
+			<meta property="og:image:width" content={String(image.width)} />
+			<meta property="og:image:height" content={String(image.height)} />
+		{/if}
 		<meta property="og:image:alt" content={image.alt} />
 	{:else}
 		<meta property="og:image" content="{page.url.origin}{CARD.path}" />

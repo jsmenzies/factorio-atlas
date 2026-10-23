@@ -1,13 +1,14 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
-	import Lightbox from '#lib/components/Lightbox.svelte';
 	import RichText from '#lib/components/RichText.svelte';
+	import ShotLightbox from '#lib/components/ShotLightbox.svelte';
 	import { describeBook, describeSetup, infraCards, pageTitle, type MadeItem } from '#lib/describe.js';
-	import { formatRate, imgurUrl, signalName } from '#lib/format.js';
+	import { formatRate, signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import type { NodeAnalysis, PrintAnalysis, Role } from '#lib/server/pipeline/analyze.js';
 	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
 	import { plainText } from '#lib/richtext.js';
+	import type { ShotView } from '#lib/screenshots.js';
 	import type { AuthorTag } from '#lib/tags.js';
 	import type { PageThumb } from '#lib/viewer/thumbs.js';
 	import { countRows } from './CountSection.svelte';
@@ -24,6 +25,7 @@
 	let {
 		print,
 		analysis: a,
+		shot: view,
 		single,
 		summary,
 		main,
@@ -39,6 +41,8 @@
 	}: {
 		print: PagePrint;
 		analysis: PrintAnalysis;
+		/** The author's screenshot (shotView in #lib/screenshots.ts): ours, Imgur's while unknown, or none. */
+		shot: ShotView;
 		single: NodeAnalysis | null;
 		/** A line saying what a blueprint that makes nothing is for. */
 		summary: string | null;
@@ -73,8 +77,8 @@
 	const cards = $derived(infraCards(a));
 	const kinds = $derived(Object.keys(a.entities).length);
 	const higher = $derived(Object.entries(a.qualities));
-	const shot = $derived(print.image_id ? imgurUrl(print.image_id, print.image_type, 'large') : null);
-	let lightbox = $state<Lightbox>();
+	const shot = $derived(view.inline);
+	let lightbox = $state<ShotLightbox>();
 	const ROW = 'grid gap-x-4 gap-y-1 py-3 sm:grid-cols-[6.5rem_1fr] sm:items-center';
 	let shotFailed = $state(false);
 	/** The preview's thumbnails failed (a cached page naming replaced files): the overview alone, then nothing. */
@@ -214,7 +218,16 @@
 		{:else if shot && !shotFailed}
 			<figure class="space-y-2">
 				<button type="button" onclick={() => lightbox?.open()} class="block w-full overflow-hidden rounded-lg border border-stone-800 bg-stone-950" title="Show it full size">
-					<img referrerpolicy="no-referrer" src={shot} alt="Screenshot of {plainText(String(print.title))}" onerror={() => (shotFailed = true)} class="aspect-[4/3] w-full object-cover" />
+					<img
+						referrerpolicy={view.imgur ? 'no-referrer' : undefined}
+						src={shot.src}
+						width={shot.width}
+						height={shot.height}
+						alt="Screenshot of {plainText(String(print.title))}"
+						loading="lazy"
+						onerror={() => (shotFailed = true)}
+						class="aspect-[4/3] w-full object-cover"
+					/>
 				</button>
 				<figcaption class="text-sm text-stone-400">Author's screenshot · no in-game render for this print yet</figcaption>
 			</figure>
@@ -226,13 +239,6 @@
 	{/if}
 </div>
 
-{#if (!preview || previewFailed === 'all') && print.image_id}
-	<Lightbox bind:this={lightbox} label="Screenshot of {plainText(String(print.title))}">
-		<img
-			referrerpolicy="no-referrer"
-			src={imgurUrl(print.image_id, print.image_type, 'original')}
-			alt="Screenshot of {plainText(String(print.title))}"
-			class="mx-auto block max-h-[calc(95vh-3rem)] max-w-[95vw] object-contain"
-		/>
-	</Lightbox>
+{#if (!preview || previewFailed === 'all') && view.large && view.full}
+	<ShotLightbox bind:this={lightbox} large={view.large} full={view.full} title={plainText(String(print.title))} imgur={view.imgur} />
 {/if}

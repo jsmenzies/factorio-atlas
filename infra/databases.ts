@@ -12,6 +12,9 @@ export type Stage = (typeof STAGES)[number];
 /** The one sprites bucket (game icons; sprite atlases later). Prod owns it; any other stage links to it. */
 export const SPRITES_BUCKET = `${PREFIX}-sprites`;
 
+/** A stage's bucket of copied Imgur screenshots (`bun run screenshots --upload`). */
+export const screenshotsBucket = (stage: Stage) => `${PREFIX}-${stage}-screenshots`;
+
 /**
  * A stage's Analytics Engine dataset of print page views (VIEWS binding; src/routes/prints/[id]/view).
  * Cloudflare creates it on the first write. `bun run views:sync` reads it by this name, as an SQL

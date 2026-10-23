@@ -17,12 +17,28 @@ export interface Reply {
 	location: string | null;
 	contentType: string | null;
 	etag: string | null;
+	/** The Content-Length header, when sent. */
+	contentLength: number | null;
 	/** Only read for a 200. */
 	body: Uint8Array | null;
 }
 
 export type Outcome =
-	| { kind: 'ok'; type: ImageKind; ext: string; md5: string; bytes: number; width: number | null; height: number | null }
+	| {
+			kind: 'ok';
+			type: ImageKind;
+			ext: string;
+			md5: string;
+			bytes: number;
+			width: number | null;
+			height: number | null;
+			/**
+			 * How the body was checked: 'etag', its MD5 is the ETag (Imgur's originals); 'length', no MD5
+			 * ETag was sent but the body is as long as Content-Length says, and the runner must still
+			 * check that it decodes completely before keeping it.
+			 */
+			check: 'etag' | 'length';
+	  }
 	/** Gone from Imgur: recorded, and not asked again unless `--recheck-dead`. */
 	| { kind: 'dead'; reason: string }
 	/** Worth another attempt (5xx, timeouts, a body that doesn't match its ETag). */
@@ -58,10 +74,25 @@ export function classify(r: Reply, md5: (b: Uint8Array) => string = md5Of): Outc
 		if (!is) return { kind: 'failed', reason: `bytes are no known image format (content-type ${said})` };
 		if (is !== said) return { kind: 'failed', reason: `content-type says ${said}, bytes are ${is}` };
 		const tag = etagMd5(r.etag);
-		if (!tag) return { kind: 'failed', reason: `no MD5 ETag to check the body against (${r.etag ?? 'none'})` };
-		if (tag !== sum) return { kind: 'retry', reason: 'body MD5 differs from the ETag (cut short?)' };
+		let check: 'etag' | 'length' = 'etag';
+		if (tag) {
+			if (tag !== sum) return { kind: 'retry', reason: 'body MD5 differs from the ETag (cut short?)' };
+		} else if (r.contentLength === null)
+			return { kind: 'failed', reason: `no MD5 ETag or Content-Length to check the body against (ETag ${r.etag ?? 'none'})` };
+		else if (r.contentLength !== r.body.length)
+			return { kind: 'retry', reason: `body is ${r.body.length} bytes, Content-Length says ${r.contentLength} (cut short?)` };
+		else check = 'length';
 		const size = imageSize(r.body, is);
-		return { kind: 'ok', type: is, ext: EXT[is], md5: sum, bytes: r.body.length, width: size?.width ?? null, height: size?.height ?? null };
+		return {
+			kind: 'ok',
+			type: is,
+			ext: EXT[is],
+			md5: sum,
+			bytes: r.body.length,
+			width: size?.width ?? null,
+			height: size?.height ?? null,
+			check
+		};
 	}
 	if (REDIRECTS.has(r.status)) {
 		if (r.location && /\/removed\.png(?:[?#].*)?$/.test(r.location)) return { kind: 'dead', reason: 'redirect to removed.png' };
@@ -72,4 +103,25 @@ export function classify(r: Reply, md5: (b: Uint8Array) => string = md5Of): Outc
 	if (r.status === 403) return { kind: 'stop', reason: 'HTTP 403: Imgur is refusing this client (user agent, Referer or address)' };
 	if (r.status === 408 || r.status >= 500) return { kind: 'retry', reason: `HTTP ${r.status}` };
 	return { kind: 'failed', reason: `HTTP ${r.status}` };
+}
+
+/** What a recheck of a copied image (its small `m` thumbnail) found. */
+export type CheckOutcome =
+	| { kind: 'alive' }
+	/** Gone from Imgur: deleted by its author (or Imgur) since we copied it. */
+	| { kind: 'gone'; reason: string }
+	| { kind: 'retry'; reason: string }
+	| { kind: 'unknown'; reason: string }
+	| { kind: 'stop'; reason: string };
+
+export function classifyCheck(r: Reply, md5: (b: Uint8Array) => string = md5Of): CheckOutcome {
+	if (r.status === 200) {
+		if (r.body && r.body.length && md5(r.body) === REMOVED_MD5) return { kind: 'gone', reason: 'removed.png served' };
+		if (r.contentType?.toLowerCase().startsWith('text/')) return { kind: 'stop', reason: `served ${r.contentType} instead of an image` };
+		return kindOfMime(r.contentType) ? { kind: 'alive' } : { kind: 'unknown', reason: `content-type ${r.contentType ?? 'missing'}` };
+	}
+	const o = classify({ ...r, body: null }, md5);
+	if (o.kind === 'dead') return { kind: 'gone', reason: o.reason };
+	if (o.kind === 'stop' || o.kind === 'retry') return o;
+	return { kind: 'unknown', reason: o.kind === 'failed' ? o.reason : `HTTP ${r.status}` };
 }

@@ -3,6 +3,7 @@
  */
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { UPLOAD_TARGETS, type UploadTarget } from './ledger.js';
 import { IMGUR_ID, PRINT_ID } from './records.js';
 
 /** Sent with every request; no Referer is ever sent (Imgur refuses some). */
@@ -36,7 +37,21 @@ export const screenshotsDir = (root = process.cwd(), value = process.env.SCREENS
 	return dir ? expand(root, dir) : join(root, 'data', 'screenshots');
 };
 
+/**
+ * fetch (default): copy originals from Imgur. make: the sizes, from the originals on disk. upload:
+ * make what's missing, then bring a bucket in line. recheck: ask Imgur whether copied images still
+ * exist, and mark the deleted ones removed.
+ */
+export type Mode = 'fetch' | 'make' | 'upload' | 'recheck';
+
+/** Images made or uploaded at once (`--jobs`). */
+export const JOBS = 6;
+
 export interface ShotArgs {
+	mode: Mode;
+	/** For `upload`. */
+	target: UploadTarget | null;
+	jobs: number;
 	clone: string;
 	/** Also read raw records from this folder, for prints the clone lacks. */
 	disk: string | null;
@@ -56,11 +71,17 @@ export class UsageError extends Error {}
 
 export const USAGE =
 	'usage: screenshots [--from-clone DIR] [--from-disk [DIR]] [--ids a,b] [--limit N] [--rate N] [--in-flight N]\n' +
-	'                   [--recheck-dead] [--plan-only] [--no-canary]';
+	'                   [--recheck-dead] [--plan-only] [--no-canary]\n' +
+	'       screenshots --make [--ids a,b] [--limit N] [--jobs N]\n' +
+	'       screenshots --upload local|prod [--ids a,b] [--limit N] [--jobs N] [--plan-only]\n' +
+	'       screenshots --recheck [--ids a,b] [--limit N] [--rate N] [--no-canary]';
 
 export function parseArgs(argv: readonly string[], defaults: { clone: string; disk: string; root?: string }): ShotArgs {
 	const root = defaults.root ?? process.cwd();
 	const a: ShotArgs = {
+		mode: 'fetch',
+		target: null,
+		jobs: JOBS,
 		clone: expand(root, defaults.clone),
 		disk: null,
 		ids: null,
@@ -102,6 +123,19 @@ export function parseArgs(argv: readonly string[], defaults: { clone: string; di
 			if (!Number.isInteger(n) || n < 1 || n > MAX_IN_FLIGHT)
 				throw new UsageError(`--in-flight takes a whole number from 1 to ${MAX_IN_FLIGHT}`);
 			a.inFlight = n;
+		} else if (flag === '--make' || flag === '--recheck' || flag === '--upload') {
+			const mode = flag.slice(2) as Mode;
+			if (a.mode !== 'fetch' && a.mode !== mode) throw new UsageError(`--${a.mode} and ${flag} don't go together`);
+			a.mode = mode;
+			if (flag === '--upload') {
+				const t = value();
+				if (!(UPLOAD_TARGETS as readonly string[]).includes(t)) throw new UsageError(`--upload takes ${UPLOAD_TARGETS.join(' or ')}`);
+				a.target = t as UploadTarget;
+			}
+		} else if (flag === '--jobs') {
+			const n = Number(value());
+			if (!Number.isInteger(n) || n < 1 || n > 64) throw new UsageError('--jobs takes a whole number from 1 to 64');
+			a.jobs = n;
 		} else if (flag === '--recheck-dead') a.recheckDead = true;
 		else if (flag === '--plan-only') a.planOnly = true;
 		else if (flag === '--no-canary') a.canary = false;

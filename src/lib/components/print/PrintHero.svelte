@@ -1,24 +1,27 @@
 <script lang="ts">
 	import BlueprintIcons from '#lib/components/BlueprintIcons.svelte';
-	import Lightbox from '#lib/components/Lightbox.svelte';
 	import RichText from '#lib/components/RichText.svelte';
-	import { imgurUrl } from '#lib/format.js';
+	import ShotLightbox from '#lib/components/ShotLightbox.svelte';
 	import type { IconSet } from '#lib/icons.js';
 	import type { NodeAnalysis, PrintAnalysis } from '#lib/server/pipeline/analyze.js';
 	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
 	import { plainText } from '#lib/richtext.js';
+	import type { ShotView } from '#lib/screenshots.js';
 	import { searchRel } from '#lib/search-seo.js';
 
 	/**
 	 * The top of the print page, full width: back link, the print's icons, title and author, how
 	 * many pages or entities, and the copy button. Version, mods, stage, Space Age and planets are in
-	 * the sidebar (PrintSidebar), what it makes on the Overview and Produces tabs. Behind it, dimmed: the author's screenshot, else the biggest rendered page, else a grid.
+	 * the sidebar (PrintSidebar), what it makes on the Overview and Produces tabs. Behind it, dimmed:
+	 * our copy of the author's screenshot (its 16:9 crop, at most 960 px), or Imgur's while ours isn't
+	 * there yet (shotView), else the biggest rendered page, else a grid.
 	 */
 	let {
 		print,
 		analysis: a,
 		title,
 		root,
+		shot,
 		cover,
 		coverIndex,
 		copyLabel,
@@ -29,6 +32,8 @@
 		analysis: PrintAnalysis;
 		title: string;
 		root: NodeAnalysis | undefined;
+		/** Our copy of the author's screenshot (#lib/screenshots.ts shotView). */
+		shot: ShotView;
 		/** The biggest rendered page's overview, for prints without a screenshot. */
 		cover: { path: string; url: string } | null;
 		/** That page's number in the book (1-based), or null for a single blueprint. */
@@ -39,27 +44,42 @@
 	} = $props();
 
 	const plainTitle = $derived(plainText(title));
-	let lightbox = $state<Lightbox>();
+	let lightbox = $state<ShotLightbox>();
 
 	const contents = $derived(
 		a.bookCount
 			? `${a.blueprintCount} page${a.blueprintCount === 1 ? '' : 's'}${a.bookCount > 1 ? ` in ${a.bookCount} books` : ''}`
 			: `${a.entityCount.toLocaleString()} entities`
 	);
-	// Backdrop images that failed to load (an Imgur error, a missing render file), by URL: the
-	// header then drops to the next backdrop instead of showing a broken image.
+	// Backdrop images that failed to load (a missing file, an Imgur error), by URL: the header then
+	// drops to the next backdrop instead of showing a broken image.
 	let failed = $state<string[]>([]);
 	const fail = (url: string) => {
 		if (!failed.includes(url)) failed = [...failed, url];
 	};
-	const shot = $derived(print.image_id ? imgurUrl(print.image_id, print.image_type, 'preview') : null);
-	const backdrop = $derived(shot && !failed.includes(shot) ? 'screenshot' : cover && !failed.includes(cover.url) ? 'render' : 'grid');
+	// Why the author's screenshot isn't shown, when the print has one.
+	const noShot = $derived(print.image_id ? (shot.state === 'removed' ? 'Screenshot removed' : 'Screenshot unavailable') : null);
+	const backdrop = $derived(
+		shot.backdrop && !failed.includes(shot.backdrop.src) ? 'screenshot' : cover && !failed.includes(cover.url) ? 'render' : 'grid'
+	);
 </script>
 
 <section aria-label="About this print" class="relative -mt-6 pt-8 pb-5">
 	<div aria-hidden="true" class="pointer-events-none absolute inset-y-0 left-1/2 w-screen -translate-x-1/2 overflow-hidden bg-stone-950">
-		{#if backdrop === 'screenshot' && shot}
-			<img referrerpolicy="no-referrer" src={shot} alt="" onerror={() => fail(shot)} class="size-full object-cover opacity-80" />
+		{#if backdrop === 'screenshot' && shot.backdrop}
+			{@const b = shot.backdrop}
+			<!-- The page's largest image above the fold: fetched first, decoded off the main thread. -->
+			<img
+				referrerpolicy={shot.imgur ? 'no-referrer' : undefined}
+				src={b.src}
+				width={b.width}
+				height={b.height}
+				alt=""
+				fetchpriority="high"
+				decoding="async"
+				onerror={() => fail(b.src)}
+				class="size-full object-cover opacity-80"
+			/>
 		{:else if backdrop === 'render' && cover}
 			<img src={cover.url} alt="" onerror={() => fail(cover.url)} class="size-full object-cover opacity-45" />
 		{:else}
@@ -96,12 +116,12 @@
 			<div class="flex shrink-0 flex-col items-stretch gap-2 lg:w-72">
 				<button onclick={oncopy} class="h-14 rounded bg-amber-500 px-6 text-lg font-semibold text-stone-950 hover:bg-amber-400">{copyLabel}</button>
 				<p class="text-center text-xs text-stone-400">
-					{#if backdrop === 'screenshot'}
+					{#if backdrop === 'screenshot' && shot.large}
 						<button type="button" onclick={() => lightbox?.open()} class="text-stone-300 underline decoration-stone-500 hover:text-amber-300">Author's screenshot ↗</button>
 					{:else if backdrop === 'render'}
-						{print.image_id ? 'Screenshot unavailable' : 'No author screenshot'}{coverIndex ? ` · showing page ${coverIndex}` : ' · showing the render'}
+						{noShot ?? 'No author screenshot'}{coverIndex ? ` · showing page ${coverIndex}` : ' · showing the render'}
 					{:else}
-						{print.image_id ? 'Screenshot unavailable' : 'No screenshot or render'}
+						{noShot ?? 'No screenshot or render'}
 					{/if}
 				</p>
 			</div>
@@ -109,13 +129,6 @@
 	</div>
 </section>
 
-{#if print.image_id}
-	<Lightbox bind:this={lightbox} label="Screenshot of {plainTitle}">
-		<img
-			referrerpolicy="no-referrer"
-			src={imgurUrl(print.image_id, print.image_type, 'original')}
-			alt="Screenshot of {plainTitle}"
-			class="mx-auto block max-h-[calc(95vh-3rem)] max-w-[95vw] object-contain"
-		/>
-	</Lightbox>
+{#if shot.large && shot.full}
+	<ShotLightbox bind:this={lightbox} large={shot.large} full={shot.full} title={plainTitle} imgur={shot.imgur} />
 {/if}

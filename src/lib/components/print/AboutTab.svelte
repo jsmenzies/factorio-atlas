@@ -1,23 +1,31 @@
 <script lang="ts">
-	import Lightbox from '#lib/components/Lightbox.svelte';
 	import RichText from '#lib/components/RichText.svelte';
-	import { formatDate, imgurUrl, sourceUrl } from '#lib/format.js';
+	import ShotLightbox from '#lib/components/ShotLightbox.svelte';
+	import { formatDate, sourceUrl } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import type { NodeAnalysis, PrintAnalysis } from '#lib/server/pipeline/analyze.js';
 	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
 	import { plainText } from '#lib/richtext.js';
+	import type { ShotView } from '#lib/screenshots.js';
 	import { searchRel } from '#lib/search-seo.js';
 
 	/**
 	 * Where a print comes from (the original, author, dates), the description saved inside the
 	 * blueprint itself, everything the analyzer found in full, and its limits; the author's
-	 * screenshot beside them, full size on a click.
+	 * screenshot beside them, full size on a click (`shot`: shotView in #lib/screenshots.ts, so ours
+	 * when copied, Imgur's while unknown, none when gone or removed).
 	 */
-	let { print, analysis: a, root, icons }: { print: PagePrint; analysis: PrintAnalysis; root: NodeAnalysis | undefined; icons: IconSet } = $props();
+	let {
+		print,
+		analysis: a,
+		root,
+		shot: view,
+		icons
+	}: { print: PagePrint; analysis: PrintAnalysis; root: NodeAnalysis | undefined; shot: ShotView; icons: IconSet } = $props();
 
-	const shot = $derived(print.image_id ? imgurUrl(print.image_id, print.image_type, 'large') : null);
+	const shot = $derived(view.inline);
 	const alt = $derived(`Screenshot of ${plainText(String(print.title))}`);
-	let lightbox = $state<Lightbox>();
+	let lightbox = $state<ShotLightbox>();
 	let shotFailed = $state(false);
 	const list = (xs: string[] | null | undefined) => (xs ?? []).map((x) => x.replaceAll('-', ' ')).join(', ');
 	const source = $derived(
@@ -109,7 +117,16 @@
 	<figure class="space-y-2">
 		{#if shot && !shotFailed}
 			<button type="button" onclick={() => lightbox?.open()} class="block w-full overflow-hidden rounded-lg border border-stone-800 bg-stone-950" title="Show it full size">
-				<img referrerpolicy="no-referrer" src={shot} {alt} loading="lazy" onerror={() => (shotFailed = true)} class="max-h-[32rem] w-full object-contain" />
+				<img
+					referrerpolicy={view.imgur ? 'no-referrer' : undefined}
+					src={shot.src}
+					width={shot.width}
+					height={shot.height}
+					{alt}
+					loading="lazy"
+					onerror={() => (shotFailed = true)}
+					class="max-h-[32rem] w-full object-contain"
+				/>
 			</button>
 			<figcaption class="flex items-baseline justify-between gap-3 text-sm text-stone-400">
 				Author's screenshot
@@ -117,19 +134,12 @@
 			</figcaption>
 		{:else}
 			<div class="grid aspect-[4/3] place-items-center rounded-lg border border-dashed border-stone-700 text-sm text-stone-500">
-				{shot ? 'Screenshot unavailable' : 'No screenshot from the author'}
+				{print.image_id ? (view.state === 'removed' ? 'Screenshot removed' : 'Screenshot unavailable') : 'No screenshot from the author'}
 			</div>
 		{/if}
 	</figure>
 </div>
 
-{#if print.image_id}
-	<Lightbox bind:this={lightbox} label={alt}>
-		<img
-			referrerpolicy="no-referrer"
-			src={imgurUrl(print.image_id, print.image_type, 'original')}
-			{alt}
-			class="mx-auto block max-h-[calc(95vh-3rem)] max-w-[95vw] object-contain"
-		/>
-	</Lightbox>
+{#if view.large && view.full}
+	<ShotLightbox bind:this={lightbox} large={view.large} full={view.full} title={plainText(String(print.title))} imgur={view.imgur} />
 {/if}

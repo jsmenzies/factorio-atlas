@@ -82,3 +82,11 @@ test('duplicateGuard allows a series of re-uploads by default, and counts them',
 test('originalPath', () => {
 	expect(originalPath('8B9jpx6', 'jpg')).toBe('originals/8B/8B9jpx6.jpg');
 });
+
+test('planWork never fetches a removed image again', () => {
+	const removed = entry('rmv', 'removed', { by: 'imgur', reason: 'deleted on Imgur' });
+	const plan = planWork([want('rmv')], new Map([['rmv', removed]]), { recheckDead: true, hasFile: () => false });
+	expect(plan.todo).toEqual([]);
+	expect(plan.removed).toBe(1);
+	expect(parseState(formatEntry(removed)).entries.get('rmv')?.status).toBe('removed');
+});

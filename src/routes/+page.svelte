@@ -374,8 +374,9 @@
 			</p>
 		{/if}
 		<ul class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-			{#each data.results as p (p.id)}
-				<ResultCard print={p} {toggle} {active} renderOnly={data.params.render} icons={data.icons} />
+			{#each data.results as p, i (p.id)}
+				<!-- The grid is at most 3 wide: the first row's pictures load at once, the rest lazily. -->
+				<ResultCard print={p} eager={i < 3} {toggle} {active} renderOnly={data.params.render} icons={data.icons} />
 			{/each}
 		</ul>
 		{#if (pager.prev || pager.next) && !pager.beyond}

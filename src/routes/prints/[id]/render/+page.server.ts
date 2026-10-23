@@ -5,6 +5,7 @@ import { plainText } from '#lib/richtext.js';
 import { iconSet } from '#lib/server/icon-set.js';
 import { loadPrintDoc, loadViewerPage, printTexts } from '#lib/server/print-pages.js';
 import { pageThumbs, renderBase } from '#lib/server/renders.js';
+import { loadShotView } from '#lib/server/screenshots.js';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -53,5 +54,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 	);
 	const icons = iconSet({ signals: nodes.flatMap((n) => n.icons) }, printTexts(doc));
 	const print = { id: row.id, title: row.title, author_name: row.author_name, image_id: row.image_id, image_type: row.image_type };
-	return { print, pages, path, page, info, icons, render, base: renderBase(params.id), tooltip, thumbs: await thumbs };
+	// Like the print page, only R2: the screenshot's manifest for the lightbox and the link preview.
+	const shot = await loadShotView(row);
+	return { print, pages, path, page, info, icons, render, base: renderBase(params.id), tooltip, thumbs: await thumbs, shot };
 };

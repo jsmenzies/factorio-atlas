@@ -3,6 +3,9 @@ import { ANY_QUALITY_ICON, QUALITY_LEVELS, splitQuality } from '#lib/quality.js'
 import { retryBusy } from '#lib/server/admin/busy.js';
 import { PAGE_SIZE, parseSearch, searchPrints } from '#lib/server/queries.js';
 import { iconSet } from '#lib/server/icon-set.js';
+import { renderBase } from '#lib/server/renders.js';
+import { screenshotsBase } from '#lib/server/screenshots.js';
+import { cardImage } from '#lib/screenshots.js';
 import { searchPicker } from '#lib/server/picker-items.js';
 import type { PageServerLoad } from './$types';
 
@@ -35,5 +38,8 @@ export const load: PageServerLoad = async ({ url }) => {
 	const icons = { base: all.base, of: Object.fromEntries(Object.entries(all.of).filter(([key]) => !(key in shared))) };
 	// `?author=`: every result is theirs, so the first names them for the filter's chip.
 	const authorName = params.author ? (found.results[0]?.author_name ?? null) : null;
-	return { params, ...found, pageSize: PAGE_SIZE, icons, authorName };
+	// Each card's picture: our copy of the author's screenshot, else its render thumbnail, else none.
+	const bases = { shots: screenshotsBase(), renderBase };
+	const results = found.results.map((r) => ({ ...r, image: cardImage(r, bases) }));
+	return { params, ...found, results, pageSize: PAGE_SIZE, icons, authorName };
 };

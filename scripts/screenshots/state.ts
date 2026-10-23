@@ -1,13 +1,17 @@
 /**
  * The run state: `state.jsonl` in the screenshots folder, one JSON line per image each time a run
- * settles it (fetched, dead or failed), appended and never rewritten; the last line for an id wins.
+ * settles it (fetched, dead, failed or removed), appended and never rewritten; the last line for an id wins.
  * A run that is killed loses at most the line it was writing, and the file is written before its
  * line, so a `fetched` line always names a file that was complete. Plus which images a run still has
  * to fetch, and the duplicate guard. Pure, for tests.
  */
 import type { ImageKind } from './image.js';
 
-export type Status = 'fetched' | 'dead' | 'failed';
+/**
+ * removed: deleted on Imgur since we copied it (`--recheck`), or taken down on request
+ * (`screenshots:remove`). Never fetched or uploaded again; its line keeps the fetched fields.
+ */
+export type Status = 'fetched' | 'dead' | 'failed' | 'removed';
 
 export interface StateEntry {
 	/** Imgur id. */
@@ -24,8 +28,10 @@ export interface StateEntry {
 	md5?: string;
 	width?: number | null;
 	height?: number | null;
-	/** For `dead` and `failed`. */
+	/** For `dead`, `failed` and `removed`. */
 	reason?: string;
+	/** For `removed`: who removed it. */
+	by?: 'imgur' | 'request';
 	attempts: number;
 	/** ISO time. */
 	at: string;
@@ -46,7 +52,7 @@ export function parseState(text: string): { entries: Map<string, StateEntry>; ba
 		if (!line.trim()) continue;
 		try {
 			const e = JSON.parse(line) as StateEntry;
-			if (typeof e?.id !== 'string' || !['fetched', 'dead', 'failed'].includes(e.status)) throw new Error('not an entry');
+			if (typeof e?.id !== 'string' || !['fetched', 'dead', 'failed', 'removed'].includes(e.status)) throw new Error('not an entry');
 			entries.set(e.id, e);
 		} catch {
 			bad++;
@@ -74,6 +80,8 @@ export interface Plan {
 	retrying: number;
 	/** In the todo list because `--recheck-dead`. */
 	recheck: number;
+	/** Removed (deleted on Imgur, or on request): never fetched again. */
+	removed: number;
 }
 
 /** What still needs fetching, in `wanted`'s order. `hasFile` says whether a fetched entry's file is still there. */
@@ -82,7 +90,7 @@ export function planWork(
 	state: ReadonlyMap<string, StateEntry>,
 	opts: { recheckDead: boolean; hasFile: (e: StateEntry) => boolean }
 ): Plan {
-	const plan: Plan = { todo: [], done: 0, dead: 0, missing: 0, retrying: 0, recheck: 0 };
+	const plan: Plan = { todo: [], done: 0, dead: 0, missing: 0, retrying: 0, recheck: 0, removed: 0 };
 	for (const w of wanted) {
 		const e = state.get(w.id);
 		if (!e) plan.todo.push(w);
@@ -92,7 +100,8 @@ export function planWork(
 				plan.missing++;
 				plan.todo.push(w);
 			}
-		} else if (e.status === 'dead') {
+		} else if (e.status === 'removed') plan.removed++;
+		else if (e.status === 'dead') {
 			if (opts.recheckDead) {
 				plan.recheck++;
 				plan.todo.push(w);

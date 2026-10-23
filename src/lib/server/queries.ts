@@ -216,20 +216,32 @@ export interface PrintCard {
 	/**
 	 * The cover page's thumbnail (migration 0018, set by `render:flags` once the print's thumbnails
 	 * are up): book path, overview stamp and size, for thumbFile/thumbTiers in #lib/viewer/thumbs.ts.
-	 * Null without one. Cards don't show it yet.
+	 * Null without one. The card shows it when there is no copy of the author's screenshot.
 	 */
 	cover_page: string | null;
 	cover_stamp: string | null;
 	cover_w: number | null;
 	cover_h: number | null;
+	/**
+	 * Our copy of the author's screenshot (migration 0019, set by `screenshots:flags`): 'copied' (with
+	 * the version its sizes were made with, the original's extension and size), 'dead' or 'removed';
+	 * for cardImage in #lib/screenshots.ts. Null when there is no row: not copied yet (the card shows
+	 * Imgur's copy), or the print has no screenshot.
+	 */
+	shot_state: string | null;
+	shot_v: number | null;
+	shot_ext: string | null;
+	shot_w: number | null;
+	shot_h: number | null;
 }
 
-/** A card's columns; `r` is print_renders, joined by primary key (CARD_JOIN). */
+/** A card's columns; `r` is print_renders and `s` screenshots, each joined by primary key (CARD_JOIN). */
 const CARD = `p.id, p.title, p.author_id, p.author_name, p.favorites, p.image_id, p.image_type, p.updated_at, p.game_version,
 	p.blueprint_count, p.entity_count, p.requires_space_age, p.uses_circuits, p.uses_trains,
 	p.outputs, p.claimed_versions, p.planets, p.mods,
-	r.print_id IS NOT NULL AS has_render, r.cover_page, r.cover_stamp, r.cover_w, r.cover_h`;
-const CARD_JOIN = 'LEFT JOIN print_renders r ON r.print_id = p.id';
+	r.print_id IS NOT NULL AS has_render, r.cover_page, r.cover_stamp, r.cover_w, r.cover_h,
+	s.state AS shot_state, s.v AS shot_v, s.ext AS shot_ext, s.w AS shot_w, s.h AS shot_h`;
+const CARD_JOIN = 'LEFT JOIN print_renders r ON r.print_id = p.id LEFT JOIN screenshots s ON s.image_id = p.image_id';
 
 /** ORDER BY for the sorts that don't need a match; each has its own index on prints (migrations 0005, 0016). */
 const ORDERS = { favorites: 'p.favorites DESC', recent: 'p.updated_at DESC', popular: 'p.views_30d DESC, p.favorites DESC' };

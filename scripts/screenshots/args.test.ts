@@ -8,6 +8,9 @@ const defaults = { clone: '~/mirror', disk: '/repo/data/raw/factorioprints', roo
 
 test('parseArgs defaults and flags', () => {
 	expect(parseArgs([], defaults)).toEqual({
+		mode: 'fetch',
+		target: null,
+		jobs: 6,
 		clone: join(homedir(), 'mirror'),
 		disk: null,
 		ids: null,
@@ -38,6 +41,9 @@ test('parseArgs defaults and flags', () => {
 		defaults
 	);
 	expect(a).toEqual({
+		mode: 'fetch',
+		target: null,
+		jobs: 6,
 		clone: '/repo/c',
 		disk: '/repo/data/raw/factorioprints',
 		ids: ['-KnQ865j-qQ21WoUPbd3', '8B9jpx6'],
@@ -49,6 +55,15 @@ test('parseArgs defaults and flags', () => {
 		canary: false
 	});
 	expect(parseArgs(['--from-disk', 'raw'], defaults).disk).toBe('/repo/raw');
+});
+
+test('parseArgs: the steps after the fetch', () => {
+	expect(parseArgs(['--make', '--jobs', '8'], defaults)).toMatchObject({ mode: 'make', jobs: 8 });
+	expect(parseArgs(['--upload', 'prod', '--limit', '5'], defaults)).toMatchObject({ mode: 'upload', target: 'prod', limit: 5 });
+	expect(parseArgs(['--recheck', '--ids', '8B9jpx6'], defaults)).toMatchObject({ mode: 'recheck', ids: ['8B9jpx6'] });
+	expect(() => parseArgs(['--upload', 'staging'], defaults)).toThrow(UsageError);
+	expect(() => parseArgs(['--make', '--recheck'], defaults)).toThrow(UsageError);
+	expect(() => parseArgs(['--jobs', '0'], defaults)).toThrow(UsageError);
 });
 
 test('parseArgs refuses bad input', () => {

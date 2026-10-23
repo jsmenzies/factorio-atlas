@@ -13,21 +13,22 @@ resources as prod, under its own names, and links to prod's sprites bucket.
 
 The stage gets:
 
-| Resource | Name                                 | Binding                      | Notes                                                           |
-| -------- | ------------------------------------ | ---------------------------- | --------------------------------------------------------------- |
-| Worker   | `factorio-prints-<stage>`            |                              | the SvelteKit app; preview URLs off                             |
-| D1       | `factorio-prints-<stage>-db-<n>`     | `DB`                         | migrations from `./migrations` applied on deploy                |
-| R2       | `factorio-prints-<stage>-raw`        | `RAW`                        | retained on destroy                                             |
-| R2       | `factorio-prints-<stage>-renders`    | `RENDERS`                    | game renders; optional custom domain; retained on destroy       |
-| R2       | `factorio-prints-sprites`            | `SPRITES`                    | game icons, owned by prod; optional custom domain; retained     |
-| Assets   | `.svelte-kit/cloudflare`             | `ASSETS`                     | client files; honours the adapter's `.assetsignore`, `_headers` |
-| Access   | `factorio-prints-<stage> admin`      |                              | Zero Trust application on `<domain>/admin*`; see "Admin page"   |
-| Cache    | the zone's cache rules               |                              | prod, with a sprites or renders domain; see "Edge cache"        |
-| Limits   | two Workers rate limits              | `PAGE_LIMIT`, `SEARCH_LIMIT` | per visitor; see "Rate limits"                                  |
-| Views    | `factorio_prints_<stage>_views`      | `VIEWS`                      | Analytics Engine dataset; see "Page views"                      |
-| Worker   | `factorio-prints-<stage>-views-cron` |                              | daily views rollup into D1, with `ANALYTICS_API_TOKEN`          |
-| WAF      | the zone's rate-limiting rules       |                              | prod, with a site domain; see "Rate limits"                     |
-| Bots     | the zone's Bot Fight Mode            |                              | prod, with a site domain; see "Rate limits"                     |
+| Resource | Name                                  | Binding                      | Notes                                                                 |
+| -------- | ------------------------------------- | ---------------------------- | --------------------------------------------------------------------- |
+| Worker   | `factorio-prints-<stage>`             |                              | the SvelteKit app; preview URLs off                                   |
+| D1       | `factorio-prints-<stage>-db-<n>`      | `DB`                         | migrations from `./migrations` applied on deploy                      |
+| R2       | `factorio-prints-<stage>-raw`         | `RAW`                        | retained on destroy                                                   |
+| R2       | `factorio-prints-<stage>-renders`     | `RENDERS`                    | game renders; optional custom domain; retained on destroy             |
+| R2       | `factorio-prints-<stage>-screenshots` | `SCREENSHOTS`                | copies of the prints' screenshots; optional custom domain; retained   |
+| R2       | `factorio-prints-sprites`             | `SPRITES`                    | game icons, owned by prod; optional custom domain; retained           |
+| Assets   | `.svelte-kit/cloudflare`              | `ASSETS`                     | client files; honours the adapter's `.assetsignore`, `_headers`       |
+| Access   | `factorio-prints-<stage> admin`       |                              | Zero Trust application on `<domain>/admin*`; see "Admin page"         |
+| Cache    | the zone's cache rules                |                              | prod, with a sprites, renders or screenshots domain; see "Edge cache" |
+| Limits   | two Workers rate limits               | `PAGE_LIMIT`, `SEARCH_LIMIT` | per visitor; see "Rate limits"                                        |
+| Views    | `factorio_prints_<stage>_views`       | `VIEWS`                      | Analytics Engine dataset; see "Page views"                            |
+| Worker   | `factorio-prints-<stage>-views-cron`  |                              | daily views rollup into D1, with `ANALYTICS_API_TOKEN`                |
+| WAF      | the zone's rate-limiting rules        |                              | prod, with a site domain; see "Rate limits"                           |
+| Bots     | the zone's Bot Fight Mode             |                              | prod, with a site domain; see "Rate limits"                           |
 
 Prod's D1 database is retained on destroy (a staging stage's would be deleted). `<n>` is the D1
 generation from `infra/databases.ts` (1 by default).
@@ -58,6 +59,7 @@ miniflare database. Never `wrangler deploy` with it.
    SITE_DOMAIN_PROD=example.com
    SPRITES_DOMAIN=sprites.example.com
    RENDERS_DOMAIN_PROD=renders.example.com
+   SCREENSHOTS_DOMAIN_PROD=screenshots.example.com
    ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com
    ADMIN_EMAIL=you@example.com
    ALCHEMY_TELEMETRY_DISABLED=1
@@ -65,8 +67,9 @@ miniflare database. Never `wrangler deploy` with it.
 
    A domain's zone must already be in the account. When `SITE_DOMAIN_<STAGE>` is set, the
    hostname is attached as a Worker custom domain and the `workers.dev` URL is turned off. Unset
-   leaves domains alone (it never detaches one). `SPRITES_DOMAIN` and `RENDERS_DOMAIN_<STAGE>` are the
-   sprites and renders buckets' own hostnames: see "Icons" and "Edge cache".
+   leaves domains alone (it never detaches one). `SPRITES_DOMAIN`, `RENDERS_DOMAIN_<STAGE>` and
+   `SCREENSHOTS_DOMAIN_<STAGE>` are the sprites, renders and screenshots buckets' own hostnames: see
+   "Icons", "Edge cache" and "Screenshots".
 
 5. **For CI only**, an API token (My Profile → API Tokens → Custom), scoped to the account:
    - Account → Workers Scripts: Edit; D1: Edit; Workers R2 Storage: Edit;
@@ -192,7 +195,7 @@ would be cached as well.
 Cloudflare caches only some file types by default, so prod's deploy also manages, on the zone of
 those hostnames:
 
-- one **cache rule** that makes every response on the sprites and renders hostnames eligible for
+- one **cache rule** that makes every response on the sprites, renders and screenshots hostnames eligible for
   cache and keeps each object's own `cache-control` for the edge and browser TTLs. The rule list is
   the zone's whole cache-rules phase, so a deploy would delete a cache rule made anywhere else on
   that zone (dashboard, another tool). Instead, plan and deploy stop with an error that names
@@ -363,6 +366,51 @@ without asking (the flag is the consent). It also bumps the page cache when the 
 at a new stamp, removed a page, or scheduled files for deletion, since cached pages name those files
 and they go after the grace period. It never fails the run: when it can't finish, it prints the
 command to run by hand (`bun run render:flags --stage prod --bump`) and the run exits with code 4.
+
+## Screenshots
+
+Each print's screenshot was uploaded by its author to Imgur for factorioprints.com. The site keeps
+its own copy in the stage's screenshots bucket, `factorio-prints-<stage>-screenshots`, and shows
+that. Imgur's copy is shown only while an image isn't copied yet; never once it is known to be gone
+from Imgur or taken down. Files are keyed by Imgur id
+(`src/lib/screenshots.ts`): the original exactly as Imgur served it (scaled down when over
+3840 × 2160 pixels or 8,192 px on a side), 16:9 crops for search cards and the print header, a
+"large" size for the lightbox, a JPEG for link previews, and a small manifest per image that the
+print and render pages read. With `SCREENSHOTS_DOMAIN_<STAGE>` set the bucket is public on that
+hostname through the cache rule above; unset, the Worker serves the files at `/screenshots/<key>`.
+
+Everything runs on your machine, into the folder `SCREENSHOTS_DIR` names (in `.env`; about 17 GB
+for every print):
+
+```sh
+bun run screenshots --from-disk                  # fetch originals from Imgur (paced; resumable)
+bun run screenshots --make                       # make the sizes (optional: --upload makes what's missing)
+bun run screenshots --upload prod                # files, then each image's manifest; asks nothing of Imgur
+bun run screenshots:flags --stage prod           # the `screenshots` table search cards read; purges cached pages
+bun run screenshots --recheck                    # now and then: images deleted on Imgur are marked removed
+```
+
+The upload uses the same kind of R2 API token as "Uploading renders": **Object Read & Write** on
+the screenshots bucket (a token limited to the renders bucket must be edited to include it). Every
+put and delete is recorded in `<SCREENSHOTS_DIR>/uploads/<stage>.jsonl`, so an unchanged image costs
+no request and `screenshots:flags` knows what is up. Images deleted on Imgur since they were copied
+(`--recheck`) get a 'removed' manifest at the next upload, and their files are deleted a day later
+(cached pages may still name them); `screenshots:flags` then marks their rows 'removed'.
+
+### Removal requests
+
+The site footer links to a GitHub issue form ("Remove a screenshot"). To act on one:
+
+```sh
+bun run screenshots:remove --stage prod --ids=<print id or Imgur id> --reason "author's request" --dry-run
+bun run screenshots:remove --stage prod --ids=<print id or Imgur id> --reason "author's request"
+```
+
+It marks the image removed in the local run state, deletes its files from the bucket at once and
+writes a 'removed' manifest, records it in the stage's `screenshot_removals` table, sets its card
+row 'removed' (also for a print whose screenshot was never copied) and purges cached pages. Nothing shows it any more, nor Imgur's copy. Cloudflare's edge may
+still serve a deleted file at its old address: purge the addresses the script prints (Caching →
+Configuration → Custom Purge).
 
 ## Page views
 

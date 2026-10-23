@@ -1,0 +1,26 @@
+name: Remove a screenshot
+description: Ask for a print's screenshot to be taken off the site (for example, it is yours and you want it gone).
+title: 'Remove screenshot: '
+labels: ['removal']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The site keeps a copy of each print's screenshot, which its author uploaded to Imgur for factorioprints.com.
+        Tell us which print, and we'll take the screenshot down: our copy is deleted and the print shows no screenshot.
+        The blueprint itself stays, credited to its author, as it is on factorioprints.com.
+  - type: input
+    id: print
+    attributes:
+      label: Print
+      description: The print's address on this site or on factorioprints.com.
+      placeholder: https://factorioprints.com/view/-AbCdEfGhIjKlMnOpQrS
+    validations:
+      required: true
+  - type: textarea
+    id: reason
+    attributes:
+      label: Why (optional)
+      description: Anything that helps, such as "it's mine" or "it shows something personal". This issue is public; don't post anything private here.
+    validations:
+      required: false

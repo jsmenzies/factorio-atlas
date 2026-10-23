@@ -33,7 +33,10 @@
 		// Game-look renders made offline by `bun run render`, keyed `<id>/<page>.avif|.json|.page.json`, `<id>/t/<hash>.avif` and `<id>/index.json`.
 		{ "binding": "RENDERS", "bucket_name": "prints-renders" },
 		// Game art served as static files (`bun run icons`), keyed `icons/<set>/<type>/<name>.webp`.
-		{ "binding": "SPRITES", "bucket_name": "prints-sprites" }
+		{ "binding": "SPRITES", "bucket_name": "prints-sprites" },
+		// Copies of the prints' Imgur screenshots (`bun run screenshots --upload`), keyed by Imgur id: `<id>.<ext>`,
+		// `<id>.v<V>.<size>.<ext>` and the manifest `<id>.json` (src/lib/screenshots.ts).
+		{ "binding": "SCREENSHOTS", "bucket_name": "prints-screenshots" }
 	],
 	// Requests per visitor (IP, or IPv6 /64) per 60 s, counted per Cloudflare location
 	// (src/lib/server/rate-limit.ts). Every request counts towards PAGE_LIMIT; searches towards
@@ -59,6 +62,10 @@
 		// Origin of the RENDERS bucket's custom domain, e.g. https://renders.example.com. Empty means the
 		// Worker serves render images at /prints/<id>/render/<file>; alchemy.run.ts sets it from
 		// RENDERS_DOMAIN_<STAGE>.
-		"RENDERS_URL": ""
+		"RENDERS_URL": "",
+		// Origin of the SCREENSHOTS bucket's custom domain, e.g. https://screenshots.example.com. Empty means
+		// the Worker serves screenshots at /screenshots/<key>; alchemy.run.ts sets it from
+		// SCREENSHOTS_DOMAIN_<STAGE>.
+		"SCREENSHOTS_URL": ""
 	}
 }
