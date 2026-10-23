@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
 	import Icon from '#lib/components/Icon.svelte';
-	import type { IconSet } from '#lib/icons.js';
+	import { iconUrl, signalIcon, type IconSet } from '#lib/icons.js';
 	import {
 		SECTIONS,
 		TABS,
@@ -69,12 +69,41 @@
 	let focused = $state.raw<PickerItem | null>(null);
 	const caption = $derived(hovered ?? focused);
 
+	// Every icon in the menu (≈ 350, under 1 MB, cached for a year) is fetched once the page is idle, so it
+	// opens with them drawn: the tab icons and the tab it opens on first. The pointer or focus reaching the
+	// box first starts them early. The Image objects are kept so the decoded bitmaps stay too.
+	const warmed = new Map<string, HTMLImageElement>();
+	const warm = (srcs: (string | undefined)[]) => {
+		for (const src of srcs) {
+			if (!src || warmed.has(src)) continue;
+			const img = new Image();
+			img.decoding = 'async';
+			img.src = src;
+			warmed.set(src, img);
+		}
+	};
+	const itemIcon = (item: PickerItem) => {
+		const { kind, name } = signalIcon(item.signal);
+		return iconUrl(icons, kind, name);
+	};
+	const warmAll = () => warm(items.map(itemIcon));
+
 	onMount(() => {
 		try {
 			remembered = localStorage.getItem(TAB_KEY);
 		} catch {
 			// Storage blocked (private mode, sandbox): fall back to the first tab with prints.
 		}
+		const warmIdle = () => {
+			warm([...TABS.map((t) => iconUrl(icons, 'item', t.icon)), ...items.filter((i) => i.section === tab).map(itemIcon)]);
+			warmAll();
+		};
+		if ('requestIdleCallback' in window) {
+			const id = requestIdleCallback(warmIdle, { timeout: 3000 });
+			return () => cancelIdleCallback(id);
+		}
+		const id = setTimeout(warmIdle, 1000);
+		return () => clearTimeout(id);
 	});
 
 	const selectTab = (section: string) => {
@@ -214,7 +243,11 @@
 		aria-controls={browsing ? `${uid}-menu` : `${uid}-options`}
 		aria-activedescendant={!browsing && active >= 0 ? `${uid}-opt-${active}` : undefined}
 		class="w-full rounded border border-stone-700 bg-stone-900 py-2 pr-3 pl-9 placeholder:text-stone-500 focus:border-amber-500 focus:outline-none"
-		onfocus={() => (open = true)}
+		onpointerenter={warmAll}
+		onfocus={() => {
+			warmAll();
+			open = true;
+		}}
 		onclick={() => (open = true)}
 		oninput={() => {
 			open = true;
