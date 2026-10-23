@@ -242,7 +242,7 @@
 		aria-expanded={open && (browsing || flat.length > 0)}
 		aria-controls={browsing ? `${uid}-menu` : `${uid}-options`}
 		aria-activedescendant={!browsing && active >= 0 ? `${uid}-opt-${active}` : undefined}
-		class="w-full rounded border border-stone-700 bg-stone-900 py-2 pr-3 pl-9 placeholder:text-stone-500 focus:border-amber-500 focus:outline-none"
+		class="w-full rounded bg-transparent py-2 pr-3 pl-9 placeholder:text-stone-500 focus:outline-none"
 		onpointerenter={warmAll}
 		onfocus={() => {
 			warmAll();

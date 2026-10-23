@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
+	import RenderIcon from '#lib/components/RenderIcon.svelte';
 	import RichText from '#lib/components/RichText.svelte';
 	import { imgurUrl, signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
@@ -47,11 +48,7 @@
 						title="Has an in-game render"
 						class="absolute top-2 right-2 grid size-7 place-items-center rounded-full bg-stone-950/80 text-amber-300 ring-1 ring-amber-500/60"
 					>
-						<svg viewBox="0 0 24 24" class="size-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-							<path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" />
-							<path d="m3.3 7 8.7 5 8.7-5" />
-							<path d="M12 22V12" />
-						</svg>
+						<RenderIcon />
 						<span class="sr-only">Has an in-game render</span>
 					</span>
 				{/if}

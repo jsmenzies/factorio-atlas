@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import Icon from '#lib/components/Icon.svelte';
 	import PageMeta from '#lib/components/PageMeta.svelte';
+	import RenderIcon from '#lib/components/RenderIcon.svelte';
 	import SearchBox from '#lib/components/SearchBox.svelte';
 	import ResultCard from '#lib/components/search/ResultCard.svelte';
 	import RenderToggle from '#lib/components/search/RenderToggle.svelte';
@@ -83,8 +84,12 @@
 	});
 	const itemLabel = (signal: string) => data.picker.find((p) => p.signal === signal)?.label ?? signalName(signal);
 
-	/** Every active filter value as a removable tag; clicking one clears just that value. */
-	type Chip = { key: string; value: string; label: string; icon?: string };
+	/**
+	 * Every active filter value as a removable tag; clicking one clears just that value. Item filters
+	 * and the render filter show only their icon or the cube (the label is the tooltip and accessible
+	 * name); the rest keep their words.
+	 */
+	type Chip = { key: string; value: string; label: string; icon?: string; cube?: boolean };
 	const chips = $derived<Chip[]>([
 		...data.params.makes.map((v) => ({ key: 'makes', value: v, label: itemLabel(v), icon: v })),
 		...data.params.takes.map((v) => ({ key: 'takes', value: v, label: `Takes ${itemLabel(v)}`, icon: v })),
@@ -99,7 +104,7 @@
 			: []),
 		...(data.params.circuits ? [{ key: 'circuits', value: '1', label: 'Uses circuits' }] : []),
 		...(data.params.trains ? [{ key: 'trains', value: '1', label: 'Uses trains' }] : []),
-		...(data.params.render ? [{ key: 'render', value: '1', label: 'Has a render' }] : [])
+		...(data.params.render ? [{ key: 'render', value: '1', label: 'Has a render', cube: true }] : [])
 	]);
 
 	/**
@@ -163,7 +168,12 @@
 </h1>
 
 <!-- Enter submits (the input is type="search"); the active filters and sort ride along as hidden inputs. -->
-<form method="GET" role="search" class="mb-6 flex gap-2">
+<!-- One bar with one outline: the search box, and the render switch inside its right end. -->
+<form
+	method="GET"
+	role="search"
+	class="mb-6 flex items-center gap-2 rounded border border-stone-700 bg-stone-900 pr-1.5 focus-within:border-amber-500"
+>
 	{#key data.params.q}
 		<SearchBox value={data.params.q} items={data.picker} icons={data.icons} onpick={pickItem} />
 	{/key}
@@ -221,13 +231,22 @@
 					<a
 						{href}
 						rel={searchRel(href)}
-						class="flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 py-0.5 pr-3 text-amber-200 hover:bg-amber-500/20 {c.icon
+						class="flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 py-0.5 pr-2.5 text-amber-200 hover:bg-amber-500/20 {c.icon
 							? 'pl-1'
-							: 'pl-3'}"
+							: c.cube
+								? 'pl-2'
+								: 'pl-2.5'}"
 						aria-label="Remove filter: {c.label}"
+						title={c.label}
 					>
-						{#if c.icon}<Icon icons={data.icons} signal={c.icon} label="" size={20} />{/if}
-						{c.label} <span class="text-amber-400">×</span>
+						{#if c.icon}
+							<Icon icons={data.icons} signal={c.icon} label="" size={20} />
+						{:else if c.cube}
+							<span class="grid size-5 place-items-center"><RenderIcon class="size-4 text-amber-300" /></span>
+						{:else}
+							{c.label}
+						{/if}
+						<span aria-hidden="true" class="text-amber-400">×</span>
 					</a>
 				{/each}
 			</div>
