@@ -69,7 +69,9 @@ describe('fetchDisplayName', () => {
 	});
 
 	test('anything but a 200 throws, so the run stops rather than saving "no name"', async () => {
-		expect(fetchDisplayName('abc123', 'https://fb.example', answering(401, { error: 'Permission denied' }).fetcher)).rejects.toThrow('401');
+		await expect(fetchDisplayName('abc123', 'https://fb.example', answering(401, { error: 'Permission denied' }).fetcher)).rejects.toThrow(
+			'401'
+		);
 	});
 });
 

@@ -68,7 +68,7 @@ const rawTag = (tag: string): string => {
 	if (/^<br\s*\/?>$/i.test(tag) || /^<\/br\s*>$/i.test(tag)) return '<br>';
 	// The end of a block, e.g. a `<details>` changelog's `</summary>`, still ends the line.
 	if (/^<\/(summary|p|div|h[1-6])\s*>$/i.test(tag)) return '<br>';
-	if (/^<(!|\?)/.test(tag)) return ''; // comments, doctypes, CDATA, processing instructions
+	if (/^<[!?]/.test(tag)) return ''; // comments, doctypes, CDATA, processing instructions
 	const name = /^<\/?([a-z][a-z0-9-]*)/i.exec(tag)?.[1]?.toLowerCase();
 	return name && HTML_TAGS.has(name) ? '' : escapeHtml(tag);
 };

@@ -10,7 +10,7 @@ export type RichSegment =
 	/** `icon` is the icon kind to look up; `null` for types without icons. */
 	| { kind: 'icon'; type: string; name: string; icon: IconKind | null };
 
-const TAG = /\[(\/?[a-z-]+)(?:=([^\]]*))?\]/g;
+const TAG = /\[(\/?[a-z-]+)(?:=([^\]]*))?]/g;
 
 /** Types that name something worth an icon; anything else (`color`, `font`, `gps`) is dropped. */
 const ICON_TYPES = new Set([

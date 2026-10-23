@@ -2,13 +2,14 @@
  * Reads and controls `pipeline_runs` for /admin/pipeline (contract: #lib/server/pipeline/runs.ts).
  * The runner owns every column except `control`, which only this module sets.
  */
-import { fail, type Action, type Cookies } from '@sveltejs/kit';
+import { fail, type Action, type Cookies, type ServerLoadEvent } from '@sveltejs/kit';
 import { env } from 'cloudflare:workers';
 import { validTimeZone } from '#lib/components/admin/metrics.js';
 import { BUSY_RESULT, orBusy } from './busy.js';
 import {
 	CONTROL_STATES,
 	HEARTBEAT_MS,
+	HEARTBEAT_STALE_MS,
 	isLive,
 	isStale,
 	LIVE_STATES,
@@ -128,3 +129,19 @@ export const intParam = (url: URL, name: string, fallback: number) => {
 
 /** The viewer's time zone from the `tz` cookie the page sets, else UTC (what Workers run in). */
 export const viewerTimeZone = (cookies: Cookies) => validTimeZone(cookies.get('tz')) ?? 'UTC';
+
+/**
+ * What every admin run page loads besides its own data: it registers the `admin:pipeline` key that
+ * the pages' poll() and syncTimeZone() invalidate, and gives the live view the server's clock, the
+ * viewer's time zone and the run table's heartbeat timings.
+ */
+export const liveBase = (
+	{ depends, cookies }: Pick<ServerLoadEvent, 'depends' | 'cookies'>,
+	timing: { staleMs: number; heartbeatMs: number }
+) => {
+	depends('admin:pipeline');
+	return { serverNow: Date.now(), timeZone: viewerTimeZone(cookies), ...timing };
+};
+
+/** The backfill's heartbeat timings, for liveBase. */
+export const PIPELINE_TIMING = { staleMs: HEARTBEAT_STALE_MS, heartbeatMs: HEARTBEAT_MS };

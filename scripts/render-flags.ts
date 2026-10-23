@@ -16,44 +16,13 @@
  * Prod is reached through the backfill's remote bindings (scripts/backfill/stage.ts), so it needs
  * `wrangler login` and Node on PATH, and the stage must be deployed with migration 0015.
  */
-import { parseArgs } from 'node:util';
 import { planSize, syncRenderFlags } from '#lib/server/pipeline/render-flags.js';
-import { openTarget, STAGES, TargetError, type Stage } from './backfill/stage';
-import { Terminal } from './backfill/terminal';
 import { diskPages, localD1File, mergePages, readUploads, RENDERS_DIR, uploadedPages } from './render/flags';
+import { confirmProd, fail, n, openStage, parseStageArgs, runOn } from './stage-command';
 
 const USAGE = 'usage: bun run render:flags --stage local|prod [--db N] [--dry-run] [--yes]';
 
-const fail = (message: string): never => {
-	console.error(message);
-	process.exit(2);
-};
-
-const { values: flags } = (() => {
-	try {
-		return parseArgs({
-			options: {
-				stage: { type: 'string' },
-				db: { type: 'string' },
-				'dry-run': { type: 'boolean', default: false },
-				yes: { type: 'boolean', default: false },
-				help: { type: 'boolean', short: 'h', default: false }
-			},
-			strict: true
-		});
-	} catch (e) {
-		return fail(`${e instanceof Error ? e.message : String(e)}\n${USAGE}`);
-	}
-})();
-if (flags.help) {
-	console.log(USAGE);
-	process.exit(0);
-}
-const stage = flags.stage as Stage;
-if (!STAGES.includes(stage)) fail(`--stage ${STAGES.join('|')} is required\n${USAGE}`);
-const generation = flags.db === undefined ? undefined : Number(flags.db);
-if (generation !== undefined && !(Number.isInteger(generation) && generation > 0)) fail('--db must be a positive integer');
-const n = (x: number) => x.toLocaleString('en-US');
+const { flags, stage, generation } = parseStageArgs(USAGE, {});
 
 // What should be flagged, from the local D1 (and the renders folder, RENDERS_DIR, for local).
 const file = localD1File() ?? fail('no local D1 database (.wrangler/state): run `bun run db:migrate`, and render with --upload first');
@@ -73,11 +42,9 @@ console.log(
 );
 
 // openTarget checks the stage has print_renders (migration 0015).
-const target = await openTarget(stage, { generation }).catch((e: unknown) =>
-	fail(e instanceof TargetError || e instanceof Error ? `✗ ${e.message}` : String(e))
-);
+const target = await openStage(stage, generation);
 const db = target.env.DB;
-try {
+await runOn(target, async () => {
 	const preview = await syncRenderFlags(db, wanted, { dryRun: true });
 	const p = preview.plan;
 	console.log(
@@ -88,21 +55,11 @@ try {
 	if (planSize(p) === 0) console.log('already in sync; nothing written');
 	else if (flags['dry-run']) console.log('dry run; nothing written');
 	else {
-		if (stage === 'prod' && !flags.yes) {
-			const term = new Terminal();
-			if (!term.tty) throw new TargetError('refusing to write to prod without a terminal to confirm in: pass --yes');
-			if ((await term.ask('Write these to PROD? Type "prod" to continue: ')) !== 'prod')
-				throw new TargetError('not confirmed; nothing written');
-		}
+		await confirmProd(stage, flags.yes, 'Write these to PROD?');
 		const done = await syncRenderFlags(db, wanted, {
 			onBatch: (i, total) => process.stdout.write(`\r  ${n(i)}/${n(total)} statements`)
 		});
 		process.stdout.write('\n');
 		console.log(`✓ ${n(done.flagged)} prints flagged (${n(done.searchable)} searchable); ${n(done.rowsWritten)} D1 rows written`);
 	}
-} catch (e) {
-	await target.dispose();
-	fail(`✗ ${e instanceof Error ? e.message : String(e)}`);
-}
-await target.dispose();
-process.exit(0);
+});

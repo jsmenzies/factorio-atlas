@@ -4,7 +4,14 @@
  * every column except `render_runs.control`, which only this module sets.
  */
 import { LIVE_STATES } from '#lib/server/pipeline/runs.js';
-import { JOB_STATUSES, RENDER_STALE_MS, type JobStatus, type RenderJobRow, type RenderRunRow } from '#lib/server/render-queue.js';
+import {
+	JOB_STATUSES,
+	RENDER_HEARTBEAT_MS,
+	RENDER_STALE_MS,
+	type JobStatus,
+	type RenderJobRow,
+	type RenderRunRow
+} from '#lib/server/render-queue.js';
 import { intParam, runControlActions } from './pipeline.js';
 import { parseScopes, scopeStatements } from './render-scope.js';
 
@@ -310,3 +317,6 @@ export const renderRunPage = async (db: D1Database, id: string, url: URL) => {
 
 /** Form actions shared by /admin/render and /admin/render/[runId]. */
 export const renderControlActions = runControlActions('render_runs', { busy: true });
+
+/** The render runner's heartbeat timings, for liveBase. */
+export const RENDER_TIMING = { staleMs: RENDER_STALE_MS, heartbeatMs: RENDER_HEARTBEAT_MS };

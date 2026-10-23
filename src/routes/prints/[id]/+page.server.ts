@@ -1,10 +1,8 @@
-import { error } from '@sveltejs/kit';
-import { env } from 'cloudflare:workers';
 import { sectionOf } from '#lib/picker.js';
 import { iconSet } from '#lib/server/icon-set.js';
 import { renderDescription } from '#lib/server/markdown.js';
 import { gameData } from '#lib/server/pipeline/game-data.js';
-import { readPrintDoc } from '#lib/server/pipeline/print-doc.js';
+import { loadPrintDoc, printTexts } from '#lib/server/print-pages.js';
 import { renderedPages } from '#lib/server/renders.js';
 import type { PageServerLoad } from './$types';
 
@@ -14,8 +12,7 @@ import type { PageServerLoad } from './$types';
  */
 export const load: PageServerLoad = async ({ params }) => {
 	// The print page reads only R2 (its document and render index), never D1.
-	const [found, rendered] = await Promise.all([readPrintDoc(env.RAW, params.id), renderedPages(params.id)]);
-	if (!found) error(404, 'Print not found');
+	const [found, rendered] = await loadPrintDoc(params.id, renderedPages(params.id));
 	const a = found.analysis;
 	const icons = iconSet(
 		{
@@ -25,7 +22,7 @@ export const load: PageServerLoad = async ({ params }) => {
 			// Rates, page icons, and what each page makes and takes.
 			signals: [...Object.keys(a.rates), ...a.nodes.flatMap((n) => [...n.icons, ...n.outputs, ...n.products, ...n.inputs])]
 		},
-		[String(found.print.title), ...a.nodes.map((n) => n.label)]
+		printTexts(found)
 	);
 	// Crafting-menu section per item a page makes, for grouping what isn't a main product.
 	const sections = Object.fromEntries(

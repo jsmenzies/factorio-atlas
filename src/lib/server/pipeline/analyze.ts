@@ -261,7 +261,7 @@ export interface PrintAnalysis {
 	nodes: NodeAnalysis[];
 }
 
-const RICH_TEXT = /\[(item|entity|recipe|fluid|virtual-signal|technology|planet|quality|space-location|tile)=([^\]]+)\]/g;
+const RICH_TEXT = /\[(item|entity|recipe|fluid|virtual-signal|technology|planet|quality|space-location|tile)=([^\]]+)]/g;
 
 const richTextRefs = (...texts: (string | null | undefined)[]): string[] => {
 	const out = new Set<string>();
@@ -363,7 +363,7 @@ export const parseRate = (label: string | null | undefined): number | null => {
 	return m[2].toLowerCase().startsWith('s') ? n : n / 60;
 };
 
-const VERSION_MENTION = /(?<![\d.])(0\.1[5-8]|1\.[01]|2\.[01])(?:\.\d+)?(?![\d])/g;
+const VERSION_MENTION = /(?<![\d.])(0\.1[5-8]|1\.[01]|2\.[01])(?:\.\d+)?(?!\d)/g;
 
 /** Versions a human claims compatibility with; "1.0-2.0" yields 1.0 and 2.0. */
 export const claimedVersions = (...texts: (string | null | undefined)[]): string[] => {

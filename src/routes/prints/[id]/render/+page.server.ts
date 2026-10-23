@@ -1,9 +1,7 @@
 import { error } from '@sveltejs/kit';
-import { env } from 'cloudflare:workers';
 import { describeNode, describeSetup, pageTitle } from '#lib/describe.js';
 import { iconSet } from '#lib/server/icon-set.js';
-import { readPrintDoc } from '#lib/server/pipeline/print-doc.js';
-import { loadViewerPage } from '#lib/server/print-pages.js';
+import { loadPrintDoc, loadViewerPage, printTexts } from '#lib/server/print-pages.js';
 import { renderBase } from '#lib/server/renders.js';
 import type { PageServerLoad } from './$types';
 
@@ -13,9 +11,7 @@ import type { PageServerLoad } from './$types';
  * analysis document, so it shows whether or not the page has a render.
  */
 export const load: PageServerLoad = async ({ params, url }) => {
-	// Both from R2, so read together.
-	const [doc, found] = await Promise.all([readPrintDoc(env.RAW, params.id), loadViewerPage(params.id, url.searchParams.get('page'))]);
-	if (!doc) error(404, 'Print not found');
+	const [doc, found] = await loadPrintDoc(params.id, loadViewerPage(params.id, url.searchParams.get('page')));
 	const row = doc.print;
 	if (!found) error(404, 'No viewer files');
 	const { pages, path, page, render, tooltip } = found;
@@ -37,7 +33,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
 			}
 		])
 	);
-	const icons = iconSet({ signals: nodes.flatMap((n) => n.icons) }, [row.title, ...nodes.map((n) => n.label)]);
+	const icons = iconSet({ signals: nodes.flatMap((n) => n.icons) }, printTexts(doc));
 	const print = { id: row.id, title: row.title, author_name: row.author_name, image_id: row.image_id, image_type: row.image_type };
 	return { print, pages, path, page, info, icons, render, base: renderBase(params.id), tooltip };
 };

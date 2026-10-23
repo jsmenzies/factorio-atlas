@@ -2,12 +2,15 @@
  * Viewer pages and per-page strings for the print page's inline viewer, the full-screen render
  * page and the string endpoint. The page list and strings are files made at ingest (`viewer/<id>/`
  * in the RAW bucket, see pipeline/viewer-files.ts); a page's entity data comes with its game
- * render (renders.ts). No request inflates a blueprint.
+ * render (renders.ts). No request inflates a blueprint. Also the print's own document, as the print
+ * and render pages read it.
  */
+import { error } from '@sveltejs/kit';
 import { env } from 'cloudflare:workers';
 import { iconSet } from '#lib/server/icon-set.js';
 import { gameData } from '#lib/server/pipeline/game-data.js';
 import { rawKey } from '#lib/server/pipeline/pipeline.js';
+import { readPrintDoc, type PrintDoc } from '#lib/server/pipeline/print-doc.js';
 import { pageStringKey, parseViewerIndex, viewerIndexKey } from '#lib/server/pipeline/viewer-files.js';
 import { getRenderPageData, getRenderSidecar, renderedPages } from '#lib/server/renders.js';
 import { firstPagePath } from '#lib/viewer/extract.js';
@@ -93,3 +96,16 @@ export const loadViewerPage = async (id: string, requested: string | null) => {
 	if (!data || !render || data.stamp !== render.stamp) return { pages, path, page: null, render: null, tooltip: null };
 	return { pages, path, page: data.page, render, tooltip: tooltipData(data.page) };
 };
+
+/**
+ * The print's document (`analysis/<id>.json`) read together with `alongside`, another R2 read; the
+ * 404 page when there is no such print.
+ */
+export const loadPrintDoc = async <T>(id: string, alongside: Promise<T>): Promise<[PrintDoc, T]> => {
+	const [doc, other] = await Promise.all([readPrintDoc(env.RAW, id), alongside]);
+	if (!doc) error(404, 'Print not found');
+	return [doc, other];
+};
+
+/** The print's texts that may hold rich-text icons, for iconSet: its title and every page's label. */
+export const printTexts = ({ print, analysis }: PrintDoc) => [print.title, ...analysis.nodes.map((n) => n.label)];
