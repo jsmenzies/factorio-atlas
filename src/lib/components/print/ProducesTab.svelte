@@ -9,8 +9,8 @@
 
 	/**
 	 * Everything a print makes, by crafting-menu section (mall and shop products together, under one
-	 * subheading per crafting-menu tab), in the game's own order: one row per item with its rate, a gap
-	 * where the menu starts a new row, then what is made and used up inside. A
+	 * subheading per crafting-menu tab), in the game's own order: one row per item with its rate, then
+	 * what is made and used up inside. A
 	 * search box, section chips and quality chips (the quality machines craft at) narrow it; an item
 	 * made above normal quality has the game's badge. In a book, clicking an item finds its pages.
 	 */
@@ -42,8 +42,6 @@
 	} = $props();
 
 	const keyOf = (signal: string) => order[signal] ?? 'z|z|';
-	/** The crafting-menu row an item sits in, so a list can leave a gap where the next row starts. */
-	const rowOf = (signal: string) => keyOf(signal).split('|', 2).join('|');
 	const inMenuOrder = <T,>(items: T[], signal: (t: T) => string) =>
 		items.toSorted((x, y) => (keyOf(signal(x)) < keyOf(signal(y)) ? -1 : keyOf(signal(x)) > keyOf(signal(y)) ? 1 : 0));
 	/** A section's items in blocks: a mall's by crafting-menu tab, in the menu's order (headed when there are several), others one block. */
@@ -105,9 +103,9 @@
 </script>
 
 <!-- One row per item, as the Entities tab's lists: icon, name, rate on the right. -->
-{#snippet row(signal: string, title: string, rate: string | null, gap: boolean, pick: ((signal: string) => void) | null | undefined = onpick)}
+{#snippet row(signal: string, title: string, rate: string | null, pick: ((signal: string) => void) | null | undefined = onpick)}
 	{@const best = badgeOf(signal)}
-	<li class="break-inside-avoid {gap ? 'mt-2' : ''}">
+	<li class="break-inside-avoid">
 		<svelte:element
 			this={pick ? 'button' : 'div'}
 			role={pick ? 'button' : undefined}
@@ -130,9 +128,7 @@
 
 {#snippet list(items: MadeItem[], label: string, columns: string)}
 	<ul class="mt-1.5 gap-10 text-sm {columns}" aria-label={label}>
-		{#each items as m, i (m.signal)}
-			{@render row(m.signal, tip(m), m.rate ? `${m.claimed ? '' : '≈ '}${formatRate(m.rate)}` : '', i > 0 && rowOf(m.signal) !== rowOf(items[i - 1].signal))}
-		{/each}
+		{#each items as m (m.signal)}{@render row(m.signal, tip(m), m.rate ? `${m.claimed ? '' : '≈ '}${formatRate(m.rate)}` : '')}{/each}
 	</ul>
 {/snippet}
 
@@ -202,7 +198,7 @@
 				<span class="text-xs text-stone-400">intermediates that never leave the page</span>
 			</h3>
 			<ul class="mt-1.5 gap-10 text-sm @lg:columns-2 @5xl:columns-3">
-				{#each inside as s, i (s)}{@render row(s, `${signalName(s)}.${madeAt(s)}`, null, i > 0 && rowOf(s) !== rowOf(inside[i - 1]), null)}{/each}
+				{#each inside as s (s)}{@render row(s, `${signalName(s)}.${madeAt(s)}`, null, null)}{/each}
 			</ul>
 		</section>
 	{/if}
