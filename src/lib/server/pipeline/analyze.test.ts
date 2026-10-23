@@ -51,6 +51,32 @@ describe('quality counts', () => {
 		expect(facetTokens({ tags: [] }, analyzePrint(blueprint([{ name: 'crusher' }]))).some((t) => t.startsWith('quality_'))).toBe(false);
 	});
 
+	test('what machines craft, by the quality they craft at; fluids have none', () => {
+		const crafted = analyzePrint(
+			blueprint([
+				{ name: 'assembling-machine-3', recipe: 'iron-gear-wheel', recipe_quality: 'rare' },
+				{ name: 'assembling-machine-3', recipe: 'iron-gear-wheel', recipe_quality: 'rare' },
+				{ name: 'assembling-machine-3', recipe: 'iron-gear-wheel' },
+				{ name: 'chemical-plant', recipe: 'sulfuric-acid', recipe_quality: 'epic' }
+			])
+		);
+		expect(crafted.productsByQuality).toEqual({ 'item:iron-gear-wheel@rare': 2, 'item:iron-gear-wheel': 1 });
+		expect(crafted.qualities).toEqual({ rare: 2, epic: 1 });
+	});
+
+	test('each entity, module and crafted item at a quality is a search token of its own', () => {
+		const crafted = analyzePrint(
+			blueprint([{ name: 'assembling-machine-3', quality: 'rare', recipe: 'iron-gear-wheel', recipe_quality: 'epic' }])
+		);
+		const at = (x: typeof a) => facetTokens({ tags: [] }, x).filter((t) => t.includes('_at_'));
+		expect(at(crafted).sort()).toEqual(['makes_item_iron_gear_wheel_at_epic', 'uses_entity_assembling_machine_3_at_rare']);
+		expect(at(a).sort()).toEqual([
+			'module_speed_module_3_at_legendary',
+			'uses_entity_assembling_machine_3_at_rare',
+			'uses_entity_crusher_at_uncommon'
+		]);
+	});
+
 	test("a book's counts add up its pages", () => {
 		const book = analyzePrint({
 			blueprint_book: {

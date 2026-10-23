@@ -1,10 +1,20 @@
 import type { MultiFilter } from '#lib/filters.js';
-import { authorToken, RENDER_TOKEN, slug, versionTokens } from './pipeline/repository';
+import {
+	atOrAbove,
+	isQualityLevel,
+	QUALITY_FILTERS,
+	QUALITY_LEVELS,
+	splitQuality,
+	withQualityValue,
+	type QualityLevel
+} from '#lib/quality.js';
+import { atQuality, authorToken, MODULES, moduleToken, qualityToken, RENDER_TOKEN, slug, versionTokens } from './pipeline/repository';
 
 export { MULTI_FILTERS, type MultiFilter } from '#lib/filters.js';
 
 export interface SearchParams {
 	q: string;
+	/** Makes, uses and module values may end in `@<level>`: that item at that quality or above (lib/quality.ts). */
 	makes: string[];
 	takes: string[];
 	/** Buildings, as "entity:<name>" (`?uses=entity:foundry`). Any entity matches, not only the "Built with" list. */
@@ -12,6 +22,8 @@ export interface SearchParams {
 	/** Recipes some machine is set to, or modules, by name (`?recipe=electronic-circuit`, `?module=speed-module-3`). */
 	recipe: string[];
 	module: string[];
+	/** Quality levels the print has something at (`?quality=legendary`); each must be there. */
+	quality: string[];
 	version: string[];
 	/** Raw factorioprints author tags, e.g. "/general/tileable/". */
 	tag: string[];
@@ -72,6 +84,7 @@ export const parseSearch = (url: URL): SearchParams => {
 		module: all('module'),
 		version: all('version'),
 		tag: all('tag'),
+		quality: all('quality').filter(isQualityLevel),
 		// User ids are letters and digits; anything else can't be one, so it matches nothing.
 		author: author === null ? null : /^[A-Za-z0-9]{1,64}$/.test(author) ? author : 'none',
 		spaceAge: sa === 'yes' || sa === 'no' ? sa : null,
@@ -95,33 +108,88 @@ const textQuery = (q: string) =>
 /** The FTS columns free text searches; `facets` only ever matches whole filter tokens. */
 const TEXT_COLUMNS = '{title description labels entities recipes nicknames author}';
 
-/** Filter tokens for the FTS `facets` column (written by `facetTokens` in repository.ts). */
-export const filterTokens = (s: SearchParams): string[] => {
-	const tokens: string[] = [];
-	for (const v of s.makes) tokens.push(`makes_${slug(v)}`);
-	for (const v of s.takes) tokens.push(`takes_${slug(v)}`);
-	for (const v of s.uses) tokens.push(`uses_${slug(v)}`);
-	for (const v of s.recipe) tokens.push(`recipe_${slug(v) || 'none'}`);
-	for (const v of s.module) tokens.push(`module_${slug(v) || 'none'}`);
+/** A makes, uses or module value's token, or with a quality the tokens for it and every level above (any one matches). */
+const qualityTerm = (token: (base: string) => string, value: string): string[] => {
+	const { base, quality } = splitQuality(value);
+	return quality ? atOrAbove(quality).map((q) => atQuality(token(base), q)) : [token(base)];
+};
+
+/**
+ * Filter tokens for the FTS `facets` column (written by `facetTokens` in repository.ts), one list per
+ * filter: a print must have every filter, and any token of a filter's list ("epic or above" is the
+ * epic and the legendary token).
+ */
+export const filterTokens = (s: SearchParams): string[][] => {
+	const tokens: string[][] = [];
+	for (const v of s.makes) tokens.push(qualityTerm((b) => `makes_${slug(b)}`, v));
+	for (const v of s.takes) tokens.push([`takes_${slug(v)}`]);
+	for (const v of s.uses) tokens.push(qualityTerm((b) => `uses_${slug(b)}`, v));
+	for (const v of s.recipe) tokens.push([`recipe_${slug(v) || 'none'}`]);
+	for (const v of s.module) tokens.push(qualityTerm(moduleToken, v));
 	// "2.0" matches 2.0.x saves and "2.0" claims; a version that isn't numbers matches nothing.
-	for (const v of s.version) tokens.push(versionTokens(v).at(-1) ?? 'v_none');
-	for (const v of s.tag) tokens.push(`tag_${slug(v) || 'none'}`);
-	if (s.author) tokens.push(authorToken(s.author));
-	if (s.spaceAge) tokens.push(s.spaceAge === 'yes' ? 'sa_yes' : 'sa_no');
-	if (s.circuits) tokens.push('uses_circuits');
-	if (s.trains) tokens.push('uses_trains');
-	if (s.render) tokens.push(RENDER_TOKEN);
+	for (const v of s.version) tokens.push([versionTokens(v).at(-1) ?? 'v_none']);
+	for (const v of s.tag) tokens.push([`tag_${slug(v) || 'none'}`]);
+	for (const v of s.quality) tokens.push([qualityToken(v)]);
+	if (s.author) tokens.push([authorToken(s.author)]);
+	if (s.spaceAge) tokens.push([s.spaceAge === 'yes' ? 'sa_yes' : 'sa_no']);
+	if (s.circuits) tokens.push(['uses_circuits']);
+	if (s.trains) tokens.push(['uses_trains']);
+	if (s.render) tokens.push([RENDER_TOKEN]);
 	return tokens;
 };
 
 /**
  * One FTS5 expression for the text and every filter, e.g.
- * `{title …} : ("red"* "science"*) AND facets : "sa_no" AND facets : "v_2_0"`. Empty when the
- * search has neither, in which case results come straight from `prints` in index order.
+ * `{title …} : ("red"* "science"*) AND facets : "sa_no" AND facets : ("uses_entity_beacon_at_epic" OR "uses_entity_beacon_at_legendary")`.
+ * Empty when the search has neither, in which case results come straight from `prints` in index order.
  */
 export const matchExpression = (s: SearchParams): string => {
 	const text = textQuery(s.q);
-	return [...(text ? [`${TEXT_COLUMNS} : (${text})`] : []), ...filterTokens(s).map((t) => `facets : "${t}"`)].join(' AND ');
+	const terms = filterTokens(s).map((t) => (t.length === 1 ? `facets : "${t[0]}"` : `facets : (${t.map((x) => `"${x}"`).join(' OR ')})`));
+	return [...(text ? [`${TEXT_COLUMNS} : (${text})`] : []), ...terms].join(' AND ');
+};
+
+/** `match` narrowed by one more filter token. */
+const andToken = (match: string, token: string) => [match, `facets : "${token}"`].filter(Boolean).join(' AND ');
+
+/** The search with one makes/uses/module value at another quality (`null`: any quality). */
+const atLevel = (s: SearchParams, key: (typeof QUALITY_FILTERS)[number], value: string, quality: QualityLevel | null): SearchParams => ({
+	...s,
+	[key]: s[key].map((v) => (v === value ? withQualityValue(splitQuality(v).base, quality) : v))
+});
+
+/**
+ * One row, one COUNT per expression in columns `c0`, `c1`…: scalar subqueries rather than a UNION, since
+ * D1 allows only a few terms in a compound SELECT.
+ */
+const counts = (matches: string[]): Statement =>
+	matches.length
+		? {
+				sql: `SELECT ${matches.map((_, i) => `(SELECT COUNT(*) FROM print_search WHERE print_search MATCH ?${i + 1}) AS c${i}`).join(', ')}`,
+				binds: matches
+			}
+		: { sql: 'SELECT 0 AS none WHERE 0', binds: [] };
+
+/** One row of stored `facet_counts` (rebuildFacets), one per value in columns `c0`, `c1`…, as `counts`; missing is null. */
+const stored = (kind: string, values: string[]): Statement => ({
+	sql: `SELECT ${values.map((_, i) => `(SELECT n FROM facet_counts WHERE kind = '${kind}' AND value = ?${i + 1}) AS c${i}`).join(', ')}`,
+	binds: values
+});
+
+/**
+ * A quality chip's counts: the search with that makes/uses/module value at any quality, then at each
+ * level or above (`/quality-levels`, fetched when the chip's choice opens rather than with every search).
+ */
+export const qualityLevelsStatement = (s: SearchParams, key: (typeof QUALITY_FILTERS)[number], value: string) =>
+	counts([null, ...QUALITY_LEVELS].map((q) => matchExpression(atLevel(s, key, value, q))));
+
+/** A `counts` (or `stored`) statement's numbers, in order (none when it had no expressions); null counts as 0. */
+export const countsOf = (rows: Record<string, unknown>[]) => {
+	const row = rows[0] ?? {};
+	return Object.keys(row)
+		.filter((k) => /^c\d+$/.test(k))
+		.sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))
+		.map((k) => Number(row[k]));
 };
 
 export interface PrintCard {
@@ -174,12 +242,13 @@ export interface Statement {
 	binds: unknown[];
 }
 
-export type SearchStatements = Record<'results' | 'total' | 'makes' | 'uses' | 'versions', Statement>;
+export type SearchStatements = Record<'results' | 'total' | 'makes' | 'uses' | 'versions' | 'modules' | 'qualities', Statement>;
 
 /**
  * The queries behind the search page: one page of result cards, the number of matches, "Makes",
- * "Built with" and version counts. Unfiltered searches read precomputed `facet_counts`; filtered
- * ones count exactly over the FTS matches. Pure, so tests can EXPLAIN them (search.test.ts).
+ * "Built with", version, module and quality counts. Unfiltered searches read precomputed
+ * `facet_counts`; filtered ones count exactly over the FTS matches (modules and qualities with one FTS
+ * COUNT each, `counts`, in MODULES and QUALITY_LEVELS order). Pure, so tests can EXPLAIN them (search.test.ts).
  */
 export const searchStatements = (s: SearchParams): SearchStatements => {
 	const match = matchExpression(s);
@@ -187,6 +256,8 @@ export const searchStatements = (s: SearchParams): SearchStatements => {
 	if (!match) {
 		const order = ORDERS[s.sort === 'relevance' ? 'favorites' : s.sort];
 		return {
+			modules: stored('module', MODULES),
+			qualities: stored('quality', [...QUALITY_LEVELS]),
 			results: { sql: `SELECT ${CARD} FROM prints p ${CARD_JOIN} ORDER BY ${order} ${page}`, binds: [] },
 			total: { sql: 'SELECT COUNT(*) AS n FROM prints', binds: [] },
 			makes: { sql: `SELECT value, n FROM facet_counts WHERE kind = 'makes' ORDER BY n DESC, value`, binds: [] },
@@ -197,6 +268,8 @@ export const searchStatements = (s: SearchParams): SearchStatements => {
 	const order = s.sort === 'relevance' ? RELEVANCE : ORDERS[s.sort];
 	const matched = 'SELECT print_id FROM print_search WHERE print_search MATCH ?1';
 	return {
+		modules: counts(MODULES.map((m) => andToken(match, moduleToken(m)))),
+		qualities: counts(QUALITY_LEVELS.map((q) => andToken(match, qualityToken(q)))),
 		results: {
 			sql: `SELECT ${CARD} FROM print_search JOIN prints p ON p.id = print_search.print_id ${CARD_JOIN}
 				WHERE print_search MATCH ?1 ORDER BY ${order} ${page}`,
@@ -223,11 +296,14 @@ export const searchStatements = (s: SearchParams): SearchStatements => {
 
 export const searchPrints = async (db: D1Database, s: SearchParams) => {
 	const q = searchStatements(s);
-	const [rows, total, makes, uses, versions] = await db.batch<Record<string, unknown>>(
-		[q.results, q.total, q.makes, q.uses, q.versions].map((st) => db.prepare(st.sql).bind(...st.binds))
+	const [rows, total, makes, uses, versions, modules, qualities] = await db.batch<Record<string, unknown>>(
+		[q.results, q.total, q.makes, q.uses, q.versions, q.modules, q.qualities].map((st) => db.prepare(st.sql).bind(...st.binds))
 	);
 	const matches = Number(total.results?.[0]?.n ?? 0);
 	const parse = (v: unknown) => (typeof v === 'string' ? (JSON.parse(v) as string[]) : []);
+	const byIndex = (r: D1Result<Record<string, unknown>>) => countsOf(r.results ?? []);
+	const moduleCounts = byIndex(modules);
+	const qualityCounts = byIndex(qualities);
 	return {
 		results: (rows.results ?? []).map(
 			(r) =>
@@ -245,7 +321,13 @@ export const searchPrints = async (db: D1Database, s: SearchParams) => {
 		facets: {
 			makes: (makes.results ?? []) as { value: string; n: number }[],
 			uses: (uses.results ?? []) as { value: string; n: number }[],
-			versions: (versions.results ?? []) as { value: string; n: number }[]
+			versions: (versions.results ?? []) as { value: string; n: number }[],
+			/** Modules any match has, most used first. */
+			modules: MODULES.map((value, i) => ({ value, n: moduleCounts[i] ?? 0 }))
+				.filter((m) => m.n > 0)
+				.sort((a, b) => b.n - a.n),
+			/** Matches with something at each level, lowest level first. */
+			qualities: QUALITY_LEVELS.map((value, i) => ({ value, n: qualityCounts[i] ?? 0 }))
 		}
 	};
 };

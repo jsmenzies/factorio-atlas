@@ -6,21 +6,34 @@ import { Effect, Layer } from 'effect';
 import { fixtureRecord } from './fixtures';
 import { d1FromSqlite } from './pipeline/d1-sqlite';
 import { ingestText, type IngestOutcome } from './pipeline/pipeline';
+import { QUALITY_FILTERS } from '#lib/quality.js';
 import { RawStore } from './pipeline/raw-store';
 import { PrintRepository, PrintRepositoryD1, RENDER_TOKEN } from './pipeline/repository';
 import { syncRenderFlags } from './pipeline/render-flags';
 import { analysisKey, parsePrintDoc } from './pipeline/print-doc';
 import { applyNameFixes, authorRowStatements, loadAuthorState, planNameFixes, recordNames, unknownAuthors } from './pipeline/authors';
 import { syncViews } from './views';
-import { MAX_PAGES, matchExpression, MULTI_FILTERS, PAGE_SIZE, searchStatements, type MultiFilter, type SearchParams } from './queries';
+import {
+	countsOf,
+	MAX_PAGES,
+	matchExpression,
+	MULTI_FILTERS,
+	PAGE_SIZE,
+	qualityLevelsStatement,
+	searchStatements,
+	type MultiFilter,
+	type SearchParams
+} from './queries';
 
 const ROOT = join(import.meta.dirname, '../../..');
 const SCIENCE = '-KnQ865j-qQ21WoUPbd3'; // Tileable science book, 0.17, claims 0.15–2.0, tagged tileable
 const SPACE = '-OlVj1waoXiKkzrQnFss'; // Space Age platform making space science, 2.0.72
 const BELTS = '-KjZ17-ZfirKJBYRQT9X'; // 65-page balancer book, 0.15
+const CALCITE = '-OBuERtPdm2_2an2RSMS'; // platform: uncommon/rare buildings, uncommon efficiency modules, 2.0.12
+const RARE_GC = '-OFcQomwG23vnJ38Szi9'; // green circuits crafted at rare and uncommon, rare foundries, 2.0
 
-/** The real migrations, the real pipeline and repository, three real prints (from the mirror, see ./fixtures.ts). */
-const setup = async () => {
+/** The real migrations, the real pipeline and repository, real prints (from the mirror, see ./fixtures.ts). */
+const setup = async (ids = [SCIENCE, SPACE, BELTS]) => {
 	const sqlite = new Database(':memory:');
 	for (const f of readdirSync(join(ROOT, 'migrations'))
 		.filter((f) => f.endsWith('.sql'))
@@ -37,7 +50,7 @@ const setup = async () => {
 		})
 	);
 	const outcomes: IngestOutcome[] = [];
-	for (const id of [SCIENCE, SPACE, BELTS]) {
+	for (const id of ids) {
 		const text = await fixtureRecord(id);
 		outcomes.push(await Effect.runPromise(ingestText(id, text, 'test').pipe(Effect.provide(layer))));
 	}
@@ -67,17 +80,29 @@ const params = (p: TestParams): SearchParams => ({
 	...(Object.fromEntries(MULTI_FILTERS.map((k) => [k, p[k] === undefined ? [] : [p[k]].flat()])) as Record<MultiFilter, string[]>)
 });
 
-const run = (p: TestParams) => {
+const runOn = (sqlite: Database) => (p: TestParams) => {
 	const st = searchStatements(params(p));
 	const all = (s: { sql: string; binds: unknown[] }) => sqlite.query(s.sql).all(...(s.binds as string[])) as Record<string, unknown>[];
+	const byIndex = (s: { sql: string; binds: unknown[] }) => countsOf(all(s));
 	return {
 		ids: all(st.results).map((r) => r.id as string),
 		total: all(st.total)[0].n as number,
 		makes: Object.fromEntries(all(st.makes).map((r) => [r.value as string, r.n as number])),
 		uses: Object.fromEntries(all(st.uses).map((r) => [r.value as string, r.n as number])),
-		versions: all(st.versions).map((r) => r.value as string)
+		versions: all(st.versions).map((r) => r.value as string),
+		modules: byIndex(st.modules),
+		qualities: byIndex(st.qualities),
+		/** The first quality chip's counts (/quality-levels): any, then each level or above. */
+		chipLevels: chipStatement(p).map(byIndex)[0] ?? []
 	};
 };
+/** The /quality-levels statement for the search's first makes/uses/module value, if it has one. */
+const chipStatement = (p: TestParams) => {
+	const s = params(p);
+	const key = QUALITY_FILTERS.find((k) => s[k].length);
+	return key ? [qualityLevelsStatement(s, key, s[key][0])] : [];
+};
+const run = runOn(sqlite);
 
 describe('search over the slim schema', () => {
 	test('every fixture was analysed, at a handful of rows each', () => {
@@ -307,13 +332,16 @@ describe('query plans', () => {
 		{ sort: 'popular' },
 		{ q: 'science', makes: 'item:automation-science-pack', sort: 'popular' },
 		{ author: 'h5YXabc' },
-		{ q: 'science', author: 'h5YXabc', sort: 'recent' }
+		{ q: 'science', author: 'h5YXabc', sort: 'recent' },
+		{ quality: 'legendary' },
+		{ uses: 'entity:beacon@epic', sort: 'recent' },
+		{ q: 'circuit', makes: 'item:electronic-circuit@uncommon', module: 'speed-module-3@rare', quality: ['epic', 'rare'], sort: 'relevance' }
 	];
 
 	test('no search query scans a whole table', () => {
 		for (const c of cases) {
 			const st = searchStatements(params(c));
-			for (const s of [st.results, st.total, st.makes, st.uses, st.versions]) {
+			for (const s of [...Object.values(st), ...chipStatement(c)]) {
 				const plan = (sqlite.query(`EXPLAIN QUERY PLAN ${s.sql}`).all(...(s.binds as string[])) as { detail: string }[]).map(
 					(r) => r.detail
 				);
@@ -469,5 +497,48 @@ describe('page cache purges (meta.sync_version)', () => {
 			)
 			.run(BELTS);
 		expect(await changes(async () => applyNameFixes(db, bucket, planNameFixes(await loadAuthorState(db))))).toBe(true);
+	});
+});
+
+const withQuality = await setup([CALCITE, RARE_GC]);
+
+describe('quality', () => {
+	const run = runOn(withQuality.sqlite);
+
+	test('an item at a quality or above', () => {
+		expect(run({ uses: 'entity:foundry' }).ids).toEqual([RARE_GC]);
+		expect(run({ uses: 'entity:foundry@uncommon' }).ids).toEqual([RARE_GC]);
+		expect(run({ uses: 'entity:foundry@rare' }).ids).toEqual([RARE_GC]);
+		expect(run({ uses: 'entity:foundry@epic' }).ids).toEqual([]);
+		expect(run({ uses: 'entity:crusher@uncommon' }).ids).toEqual([CALCITE]);
+		expect(run({ uses: 'entity:cargo-bay@legendary' }).ids).toEqual([]);
+		expect(run({ module: 'efficiency-module-3@uncommon' }).ids).toEqual([CALCITE]);
+		expect(run({ module: 'efficiency-module-3@rare' }).ids).toEqual([]);
+	});
+
+	test('makes at a quality: what machines are set to craft at it', () => {
+		expect(run({ makes: 'item:electronic-circuit@uncommon' }).ids).toEqual([RARE_GC]);
+		expect(run({ makes: 'item:electronic-circuit@rare' }).ids).toEqual([RARE_GC]);
+		expect(run({ makes: 'item:electronic-circuit@epic' }).ids).toEqual([]);
+	});
+
+	test('quality in the print: every level asked for must be there', () => {
+		expect(run({ quality: 'uncommon' }).ids.sort()).toEqual([CALCITE, RARE_GC].sort());
+		expect(run({ quality: ['uncommon', 'rare'] }).ids.sort()).toEqual([CALCITE, RARE_GC].sort());
+		expect(run({ quality: 'legendary' }).ids).toEqual([]);
+		expect(run({}).qualities).toEqual([2, 2, 0, 0]);
+		expect(run({ uses: 'entity:foundry' }).qualities).toEqual([1, 1, 0, 0]);
+	});
+
+	test('the Modules list counts each module among the matches', () => {
+		const modules = run({}).modules;
+		expect(modules.reduce((n, m) => n + m, 0)).toBeGreaterThan(0);
+		expect(run({ uses: 'entity:foundry', module: 'efficiency-module-3' }).ids).toEqual([]);
+	});
+
+	test("a quality chip's counts: any, then each level or above, with the rest of the search", () => {
+		expect(run({ uses: 'entity:foundry@epic' }).chipLevels).toEqual([1, 1, 1, 0, 0]);
+		expect(run({ uses: 'entity:crusher', quality: 'rare' }).chipLevels).toEqual([1, 1, 0, 0, 0]);
+		expect(run({}).chipLevels).toEqual([]);
 	});
 });

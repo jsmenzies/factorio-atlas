@@ -1,7 +1,9 @@
 import { Context, Effect, Layer } from 'effect';
 import { nicknamesFor } from '#lib/aliases.js';
+import { QUALITY_LEVELS } from '#lib/quality.js';
 import type { PrintAnalysis } from './analyze';
 import { buildingsIn } from './buildings';
+import { gameData } from './game-data';
 import { StorageError } from './errors';
 import type { FirebaseRecord } from './record';
 import { toEpochMs } from './record';
@@ -98,6 +100,23 @@ export const authorIdOf = (r: Pick<FirebaseRecord, 'author' | 'authorId'>) => r.
 /** The `?author=` filter's token; first in the column, so facetText's cap never drops it. */
 export const authorToken = (authorId: string) => `by_${slug(authorId)}`;
 
+/** Every module, in the game's order: the search sidebar's Modules list (`facet_counts` kind 'module'). */
+export const MODULES = Object.keys(gameData.modules);
+
+/** The facet token of prints with a module, and of prints with anything at a quality level. */
+export const moduleToken = (module: string) => `module_${slug(module) || 'none'}`;
+export const qualityToken = (level: string) => `quality_${slug(level)}`;
+
+/** A filter token at one quality: `uses_entity_beacon` → `uses_entity_beacon_at_epic`. */
+export const atQuality = (token: string, quality: string) => `${token}_at_${slug(quality)}`;
+
+/** The `name@quality` keys of a count, as [name, quality]; plain (normal quality) keys are left out. */
+const atQualities = (counts: Record<string, number>) =>
+	Object.keys(counts).flatMap((k): [string, string][] => {
+		const at = k.lastIndexOf('@');
+		return at < 0 ? [] : [[k.slice(0, at), k.slice(at + 1)]];
+	});
+
 /**
  * Keyword tokens for the FTS `facets` column. Every search filter is one of these, so text plus
  * any mix of filters resolves in a single FTS lookup (see `matchExpression` in queries.ts).
@@ -115,8 +134,13 @@ export const facetTokens = (r: Pick<FirebaseRecord, 'tags' | 'author' | 'authorI
 		...(r.tags ?? []).map((t) => `tag_${slug(t)}`),
 		...a.planets.map((p) => `planet_${slug(p)}`),
 		...a.mods.map((m) => `mod_${slug(m)}`),
-		// Every quality above normal on an entity, module or recipe; no filter offers them yet.
-		...Object.keys(a.qualities).map((q) => `quality_${slug(q)}`),
+		// Every quality above normal on an entity, module or recipe (`?quality=`).
+		...Object.keys(a.qualities).map(qualityToken),
+		// Each entity, module and crafted item at each quality above normal it has, for `?uses=entity:beacon@epic`
+		// and the like. Documents from before ANALYZER_VERSION 9 have no productsByQuality.
+		...atQualities(a.entitiesByQuality).map(([name, q]) => atQuality(`uses_${slug(`entity:${name}`)}`, q)),
+		...atQualities(a.modules).map(([name, q]) => atQuality(moduleToken(name), q)),
+		...atQualities(a.productsByQuality ?? {}).map(([signal, q]) => atQuality(`makes_${slug(signal)}`, q)),
 		// Every entity, recipe and module, not just what the UI offers today, so a new filter on
 		// any of them needs no re-index. `uses_entity_` keeps them apart from uses_circuits/uses_trains.
 		...Object.keys(a.entities).map((e) => `uses_${slug(`entity:${e}`)}`),
@@ -338,6 +362,16 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 						SELECT 'version', v.value, COUNT(*) FROM prints p, json_each(p.claimed_versions) v GROUP BY v.value`
 					),
 					db.prepare(`INSERT INTO facet_counts (kind, value, n) SELECT 'uses', entity, COUNT(*) FROM print_uses GROUP BY entity`),
+					// The Modules and "Quality in the print" lists: FTS counts of their tokens, once here rather than on every search.
+					...[...MODULES.map((m) => ['module', m, moduleToken(m)]), ...QUALITY_LEVELS.map((q) => ['quality', q, qualityToken(q)])].map(
+						([kind, value, token]) =>
+							db
+								.prepare(
+									`INSERT INTO facet_counts (kind, value, n)
+									VALUES (?1, ?2, (SELECT COUNT(*) FROM print_search WHERE print_search MATCH ?3))`
+								)
+								.bind(kind, value, `facets : "${token}"`)
+					),
 					db
 						.prepare(
 							`INSERT INTO meta (key, value) VALUES ('sync_version', ?)

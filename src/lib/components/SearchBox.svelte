@@ -2,6 +2,7 @@
 	import { onMount, tick } from 'svelte';
 	import Icon from '#lib/components/Icon.svelte';
 	import { iconUrl, signalIcon, type IconSet } from '#lib/icons.js';
+	import { ANY_QUALITY_ICON, QUALITY_LEVELS, QUALITY_WORDS, type QualityLevel } from '#lib/quality.js';
 	import {
 		SECTIONS,
 		TABS,
@@ -22,7 +23,13 @@
 		items,
 		icons,
 		onpick
-	}: { value?: string; items: PickerItem[]; icons: IconSet; onpick: (item: PickerItem) => void } = $props();
+	}: {
+		value?: string;
+		items: PickerItem[];
+		icons: IconSet;
+		/** `quality`: the level picked in the menu's quality row, or null for any quality. */
+		onpick: (item: PickerItem, quality: QualityLevel | null) => void;
+	} = $props();
 
 	const uid = $props.id();
 
@@ -132,11 +139,26 @@
 		if (refocus) input.focus();
 	};
 
+	// The quality row: what the next pick asks for (that quality or above); back to any after a pick.
+	const QUALITY_CHOICES = [null, ...QUALITY_LEVELS] as const;
+	let quality = $state<QualityLevel | null>(null);
+	const onQualityKeydown = async (e: KeyboardEvent) => {
+		const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+		if (!step) return;
+		e.preventDefault();
+		const i = QUALITY_CHOICES.indexOf(quality);
+		quality = QUALITY_CHOICES[(i + step + QUALITY_CHOICES.length) % QUALITY_CHOICES.length];
+		await tick();
+		root.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')?.focus();
+	};
+
 	const pick = (item: PickerItem) => {
 		close();
 		// The text only found the item; the filter chip ("Makes" or "Uses") now shows the choice.
 		text = '';
-		onpick(item);
+		const chosen = quality;
+		quality = null;
+		onpick(item, chosen);
 	};
 
 	/** A plain character typed inside the menu goes to the search box (focus moves before the key lands). */
@@ -216,6 +238,32 @@
 		});
 </script>
 
+<!-- The quality the next pick asks for: any (the game's any-quality icon), or a level and above. -->
+{#snippet qualityRow()}
+	<div role="radiogroup" aria-label="Quality of what you pick" class="flex items-center gap-1 border-b border-stone-700 px-3 py-1 text-xs text-stone-400">
+		<span class="mr-1">Quality</span>
+		{#each QUALITY_CHOICES as q (q ?? 'any')}
+			{@const words = QUALITY_WORDS[q ?? 'any'].long}
+			<button
+				type="button"
+				role="radio"
+				aria-checked={quality === q}
+				aria-label={words}
+				title={words}
+				tabindex={quality === q ? 0 : -1}
+				class="grid size-7 place-items-center rounded border {quality === q
+					? 'border-amber-500/70 bg-amber-500/20'
+					: 'border-transparent hover:border-stone-600 hover:bg-stone-800'}"
+				onclick={() => (quality = q)}
+				onkeydown={onQualityKeydown}
+			>
+				<Icon {icons} signal={q ? `quality:${q}` : ANY_QUALITY_ICON} label="" size={18} />
+			</button>
+		{/each}
+		{#if quality}<span class="ml-1 truncate text-amber-300">{QUALITY_WORDS[quality].long}</span>{/if}
+	</div>
+{/snippet}
+
 <div bind:this={root} class="relative min-w-0 flex-1" {onfocusout}>
 	<svg
 		aria-hidden="true"
@@ -294,6 +342,7 @@
 				{/each}
 			</div>
 
+			{@render qualityRow()}
 			<div
 				role="tabpanel"
 				id="{uid}-panel"
@@ -348,44 +397,47 @@
 			</p>
 		</div>
 	{:else if open && flat.length}
+		<!-- Mouse clicks on the quality row leave focus in the input, as in the menu. -->
 		<div
-			id="{uid}-options"
-			role="listbox"
-			aria-label="Items"
-			class="absolute top-full right-0 left-0 z-20 mt-1 max-h-[28rem] overflow-y-auto rounded-lg border border-stone-700 bg-stone-900 p-1 shadow-xl"
+			class="absolute top-full right-0 left-0 z-20 mt-1 rounded-lg border border-stone-700 bg-stone-900 shadow-xl"
+			role="presentation"
+			onmousedown={(e) => e.preventDefault()}
 		>
-			{#each groups as g (g.section)}
-				<div role="group" aria-label={sectionHeading(g.section)}>
-					<div class="px-2 pt-2 pb-1 text-[11px] font-semibold tracking-wide text-stone-500 uppercase">{sectionHeading(g.section)}</div>
-					{#each g.items as item (item.signal)}
-						{@const i = flat.indexOf(item)}
-						<!-- mousedown, not click: it fires before the input's blur closes the list. -->
-						<div
-							id="{uid}-opt-{i}"
-							role="option"
-							aria-selected={i === active}
-							tabindex="-1"
-							class="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm {i === active
-								? 'bg-amber-500/15 text-amber-200'
-								: 'hover:bg-stone-800'}"
-							onmousedown={(e) => {
-								e.preventDefault();
-								pick(item);
-							}}
-							onmouseenter={() => (active = i)}
-						>
-							<Icon {icons} signal={item.signal} label={item.label} />
-							<span class="min-w-0 flex-1 truncate">
-								{item.label}
-								{#if item.nicknames.some((nick) => nick.includes(text.toLowerCase().trim()))}
-									<span class="ml-1 text-xs text-stone-500">“{item.nicknames.find((nick) => nick.includes(text.toLowerCase().trim()))}”</span>
-								{/if}
-							</span>
-							<span class="text-xs {item.n ? 'text-stone-400' : 'text-stone-600'}">{item.n ? printCount(item.n) : 'none yet'}</span>
-						</div>
-					{/each}
-				</div>
-			{/each}
+			{@render qualityRow()}
+			<div id="{uid}-options" role="listbox" aria-label="Items" class="max-h-[28rem] overflow-y-auto p-1">
+				{#each groups as g (g.section)}
+					<div role="group" aria-label={sectionHeading(g.section)}>
+						<div class="px-2 pt-2 pb-1 text-[11px] font-semibold tracking-wide text-stone-500 uppercase">{sectionHeading(g.section)}</div>
+						{#each g.items as item (item.signal)}
+							{@const i = flat.indexOf(item)}
+							<!-- mousedown, not click: it fires before the input's blur closes the list. -->
+							<div
+								id="{uid}-opt-{i}"
+								role="option"
+								aria-selected={i === active}
+								tabindex="-1"
+								class="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm {i === active
+									? 'bg-amber-500/15 text-amber-200'
+									: 'hover:bg-stone-800'}"
+								onmousedown={(e) => {
+									e.preventDefault();
+									pick(item);
+								}}
+								onmouseenter={() => (active = i)}
+							>
+								<Icon {icons} signal={item.signal} label={item.label} />
+								<span class="min-w-0 flex-1 truncate">
+									{item.label}
+									{#if item.nicknames.some((nick) => nick.includes(text.toLowerCase().trim()))}
+										<span class="ml-1 text-xs text-stone-500">“{item.nicknames.find((nick) => nick.includes(text.toLowerCase().trim()))}”</span>
+									{/if}
+								</span>
+								<span class="text-xs {item.n ? 'text-stone-400' : 'text-stone-600'}">{item.n ? printCount(item.n) : 'none yet'}</span>
+							</div>
+						{/each}
+					</div>
+				{/each}
+			</div>
 		</div>
 	{/if}
 </div>

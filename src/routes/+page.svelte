@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ComponentProps } from 'svelte';
+	import { dev } from '$app/env';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import Icon from '#lib/components/Icon.svelte';
@@ -7,43 +8,73 @@
 	import RenderIcon from '#lib/components/RenderIcon.svelte';
 	import SearchBox from '#lib/components/SearchBox.svelte';
 	import ResultCard from '#lib/components/search/ResultCard.svelte';
+	import QualityChip from '#lib/components/search/QualityChip.svelte';
 	import RenderToggle from '#lib/components/search/RenderToggle.svelte';
 	import SearchFacets from '#lib/components/search/SearchFacets.svelte';
 	import { pickParam, type PickerItem } from '#lib/picker.js';
 	import { signalName } from '#lib/format.js';
 	import { parseTag } from '#lib/tags.js';
 	import { MULTI_FILTERS } from '#lib/filters.js';
+	import { QUALITY_WORDS, splitQuality, takesQuality, withQualityValue, type QualityLevel } from '#lib/quality.js';
 	import { landingMeta, landingPath, searchPage, searchRel } from '#lib/search-seo.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 
 	const multi = new Set<string>(MULTI_FILTERS);
+	/** Whether two values of a filter are the same filter: makes, uses and module values are, at any quality. */
+	const same = (key: string, a: string, b: string) => (takesQuality(key) ? splitQuality(a).base === splitQuality(b).base : a === b);
 	/**
 	 * Link to the current search with one filter value toggled. Filters that take several values
 	 * (makes, uses, version, …) add it to the ones already set, so each click narrows the results;
 	 * the rest (Space Age, sort, …) hold one value and switch to it. Either way the results change,
-	 * so it goes back to their first page.
+	 * so it goes back to their first page. An item set at a quality toggles off from its plain value.
 	 */
 	const toggle = (key: string, value: string) => {
 		const u = new URL(page.url.href);
 		u.searchParams.delete('p');
 		const had = u.searchParams.getAll(key);
 		u.searchParams.delete(key);
-		if (multi.has(key)) for (const v of had.includes(value) ? had.filter((v) => v !== value) : [...had, value]) u.searchParams.append(key, v);
-		else if (!had.includes(value)) u.searchParams.set(key, value);
+		const has = had.some((v) => same(key, v, value));
+		if (multi.has(key)) for (const v of has ? had.filter((v) => !same(key, v, value)) : [...had, value]) u.searchParams.append(key, v);
+		else if (!has) u.searchParams.set(key, value);
 		return `${u.pathname}${u.search}`;
 	};
-	const active = (key: string, value: string) => page.url.searchParams.getAll(key).includes(value);
+	const active = (key: string, value: string) => page.url.searchParams.getAll(key).some((v) => same(key, v, value));
+	/** A quality chip's counts in this search (routes/quality-levels), fetched when its choice opens. */
+	const levelsUrl = (key: string, value: string) => {
+		const u = new URLSearchParams(page.url.search);
+		u.delete('p');
+		u.set('filter', key);
+		u.set('value', value);
+		return `/quality-levels?${u}`;
+	};
+	/** Link to the current search with one makes/uses/module value at another quality (null: any), in its place. */
+	const atQuality = (key: string, value: string, quality: QualityLevel | null) => {
+		const u = new URL(page.url.href);
+		u.searchParams.delete('p');
+		const had = u.searchParams.getAll(key);
+		u.searchParams.delete(key);
+		for (const v of had) u.searchParams.append(key, v === value ? withQualityValue(splitQuality(v).base, quality) : v);
+		return `${u.pathname}${u.search}`;
+	};
 
 	/**
 	 * Picking an item adds a filter to prints that make it (a building: that use it), next to the
-	 * filters already set; the typed text only found it, so drop it.
+	 * filters already set, at the quality picked in the menu (fluids have none); the typed text only
+	 * found it, so drop it. Picking an item already set changes its quality only when one was picked.
 	 */
-	const pickItem = (item: PickerItem) => {
+	const pickItem = (item: PickerItem, quality: QualityLevel | null) => {
 		const u = new URL(page.url.href);
 		const key = pickParam(item);
-		if (!u.searchParams.getAll(key).includes(item.signal)) u.searchParams.append(key, item.signal);
+		const value = withQualityValue(item.signal, item.signal.startsWith('fluid:') ? null : quality);
+		const had = u.searchParams.getAll(key);
+		const existing = had.find((v) => same(key, v, value));
+		if (existing === undefined) u.searchParams.append(key, value);
+		else if (quality) {
+			u.searchParams.delete(key);
+			for (const v of had) u.searchParams.append(key, v === existing ? value : v);
+		}
 		u.searchParams.delete('q');
 		u.searchParams.delete('p');
 		// Best match needs text to match; without it the default sort applies.
@@ -85,17 +116,40 @@
 	const itemLabel = (signal: string) => data.picker.find((p) => p.signal === signal)?.label ?? signalName(signal);
 
 	/**
+	 * Dev-only trial of opening a quality chip's levels on hover: `?qhover=1` turns it on for the tab
+	 * (sessionStorage, since links and the search form drop the parameter), `?qhover=0` off.
+	 */
+	let qhover = $state(false);
+	$effect(() => {
+		if (!dev) return;
+		const asked = page.url.searchParams.get('qhover');
+		try {
+			if (asked !== null) sessionStorage.setItem('atlas.qhover', asked);
+			qhover = sessionStorage.getItem('atlas.qhover') === '1';
+		} catch {
+			qhover = asked === '1';
+		}
+	});
+
+	/**
 	 * Every active filter value as a removable tag; clicking one clears just that value. Item filters
 	 * and the render filter show only their icon or the cube (the label is the tooltip and accessible
 	 * name); the rest keep their words.
 	 */
-	type Chip = { key: string; value: string; label: string; icon?: string; cube?: boolean };
+	type Chip = { key: string; value: string; label: string; icon?: string; cube?: boolean; quality?: { base: string; level: QualityLevel | null; words: string } };
+	/** A makes, uses or module chip: its quality goes in its label, and it gets a quality choice (QualityChip). */
+	const qualityChip = (key: string, value: string, words: (base: string) => string, icon: (base: string) => string): Chip => {
+		const { base, quality } = splitQuality(value);
+		const label = `${words(base)}${quality ? `, ${QUALITY_WORDS[quality].long.toLowerCase()}` : ''}`;
+		return { key, value, label, icon: icon(base), quality: { base, level: quality, words: words(base) } };
+	};
 	const chips = $derived<Chip[]>([
-		...data.params.makes.map((v) => ({ key: 'makes', value: v, label: itemLabel(v), icon: v })),
+		...data.params.makes.map((v) => qualityChip('makes', v, itemLabel, (b) => b)),
 		...data.params.takes.map((v) => ({ key: 'takes', value: v, label: `Takes ${itemLabel(v)}`, icon: v })),
-		...data.params.uses.map((v) => ({ key: 'uses', value: v, label: `Uses ${itemLabel(v)}`, icon: v })),
+		...data.params.uses.map((v) => qualityChip('uses', v, (b) => `Uses ${itemLabel(b)}`, (b) => b)),
 		...data.params.recipe.map((v) => ({ key: 'recipe', value: v, label: `Recipe ${signalName(v)}`, icon: `recipe:${v}` })),
-		...data.params.module.map((v) => ({ key: 'module', value: v, label: `Module ${signalName(v)}`, icon: `item:${v}` })),
+		...data.params.module.map((v) => qualityChip('module', v, (b) => `Module ${signalName(b)}`, (b) => `item:${b}`)),
+		...data.params.quality.map((v) => ({ key: 'quality', value: v, label: `Has ${v} quality`, icon: `quality:${v}` })),
 		...data.params.version.map((v) => ({ key: 'version', value: v, label: `Factorio ${v}` })),
 		...data.params.tag.map((v) => ({ key: 'tag', value: v, label: parseTag(v).label })),
 		...(data.params.author ? [{ key: 'author', value: data.params.author, label: `By ${data.authorName ?? 'this author'}` }] : []),
@@ -208,6 +262,8 @@
 			<SearchFacets
 				makes={data.facets.makes}
 				uses={data.facets.uses}
+				modules={data.facets.modules}
+				qualities={data.facets.qualities}
 				versions={data.facets.versions}
 				makesLabel={signalName}
 				usesLabel={itemLabel}
@@ -228,26 +284,40 @@
 			<div class="mb-3 flex flex-wrap gap-2 text-sm">
 				{#each chips as c (`${c.key}=${c.value}`)}
 					{@const href = toggle(c.key, c.value)}
-					<a
-						{href}
-						rel={searchRel(href)}
-						class="flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 py-0.5 pr-2.5 text-amber-200 hover:bg-amber-500/20 {c.icon
-							? 'pl-1'
-							: c.cube
-								? 'pl-2'
-								: 'pl-2.5'}"
-						aria-label="Remove filter: {c.label}"
-						title={c.label}
-					>
-						{#if c.icon}
-							<Icon icons={data.icons} signal={c.icon} label="" size={20} />
-						{:else if c.cube}
-							<span class="grid size-5 place-items-center"><RenderIcon class="size-4 text-amber-300" /></span>
-						{:else}
-							{c.label}
-						{/if}
-						<span aria-hidden="true" class="text-amber-400">×</span>
-					</a>
+					{#if c.quality && c.icon}
+						{@const q = c.quality}
+						<QualityChip
+							label={q.words}
+							icon={c.icon}
+							quality={q.level}
+							countsUrl={levelsUrl(c.key, c.value)}
+							hrefFor={(level) => atQuality(c.key, c.value, level)}
+							removeHref={href}
+							icons={data.icons}
+							hover={qhover}
+						/>
+					{:else}
+						<a
+							{href}
+							rel={searchRel(href)}
+							class="flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/10 py-0.5 pr-2.5 text-amber-200 hover:bg-amber-500/20 {c.icon
+								? 'pl-1'
+								: c.cube
+									? 'pl-2'
+									: 'pl-2.5'}"
+							aria-label="Remove filter: {c.label}"
+							title={c.label}
+						>
+							{#if c.icon}
+								<Icon icons={data.icons} signal={c.icon} label="" size={20} />
+							{:else if c.cube}
+								<span class="grid size-5 place-items-center"><RenderIcon class="size-4 text-amber-300" /></span>
+							{:else}
+								{c.label}
+							{/if}
+							<span aria-hidden="true" class="text-amber-400">×</span>
+						</a>
+					{/if}
 				{/each}
 			</div>
 		{/if}

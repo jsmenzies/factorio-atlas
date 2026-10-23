@@ -1,14 +1,20 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
+	import { signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import { searchRel } from '#lib/search-seo.js';
 
 	type Facet = { value: string; n: number };
 
-	/** The search page's sidebar: what prints make and are built with, game versions and features, each a filter link. */
+	/**
+	 * The search page's sidebar: what prints make and are built with, their modules, the qualities in
+	 * them, game versions and features, each a filter link.
+	 */
 	let {
 		makes,
 		uses,
+		modules,
+		qualities,
 		versions,
 		makesLabel,
 		usesLabel,
@@ -18,6 +24,9 @@
 	}: {
 		makes: Facet[];
 		uses: Facet[];
+		modules: Facet[];
+		/** Matches with something at each quality level, lowest first. */
+		qualities: Facet[];
 		versions: Facet[];
 		makesLabel: (signal: string) => string;
 		usesLabel: (signal: string) => string;
@@ -36,7 +45,8 @@
 	] as const;
 </script>
 
-{#snippet facet(title: string, key: string, items: Facet[], label: (v: string) => string, icon = false)}
+<!-- `icon`: the signal to draw for a value, when the list has icons. -->
+{#snippet facet(title: string, key: string, items: Facet[], label: (v: string) => string, icon?: (v: string) => string)}
 	<section>
 		<h2 class="mb-2 text-xs font-semibold tracking-wide text-stone-400 uppercase">{title}</h2>
 		{#if items.length === 0}
@@ -52,7 +62,7 @@
 						class="flex items-center gap-2 rounded px-2 py-0.5 hover:bg-stone-800 {active(key, f.value) ? 'bg-amber-500/15 text-amber-300' : ''}"
 					>
 						{#if icon}
-							<Icon {icons} signal={f.value} label={label(f.value)} size={18} />
+							<Icon {icons} signal={icon(f.value)} label={label(f.value)} size={18} />
 						{/if}
 						<span class="min-w-0 flex-1 truncate">{label(f.value)}</span><span class="text-stone-500">{f.n}</span>
 					</a>
@@ -63,8 +73,10 @@
 {/snippet}
 
 <aside class="space-y-6 text-sm">
-	{@render facet('Makes', 'makes', makes.slice(0, 25), makesLabel, true)}
-	{@render facet('Built with', 'uses', uses.slice(0, 25), usesLabel, true)}
+	{@render facet('Makes', 'makes', makes.slice(0, 25), makesLabel, (v) => v)}
+	{@render facet('Built with', 'uses', uses.slice(0, 25), usesLabel, (v) => v)}
+	{#if modules.length}{@render facet('Modules', 'module', modules, signalName, (v) => `item:${v}`)}{/if}
+	{@render facet('Quality in the print', 'quality', qualities, signalName, (v) => `quality:${v}`)}
 	{@render facet('Game version', 'version', versions, (v) => v)}
 
 	<section>

@@ -5,7 +5,7 @@ import { DLC_MODS, gameData as defaultGameData, type GameData, type SurfaceCondi
  * Bump when the analyzer's output changes so stored prints can be re-analyzed
  * from the raw store without re-downloading.
  */
-export const ANALYZER_VERSION = 8;
+export const ANALYZER_VERSION = 9;
 
 // Game facts (names, sizes, recipes, surface conditions) come from `game-data.ts`, pinned to
 // one game version. Older prints are renamed to 2.0 names first; newer ones may have names
@@ -165,6 +165,11 @@ export interface NodeAnalysis {
 	entities: Counts;
 	/** `entities` split by quality: `name@quality` above normal, plain `name` for normal (as `modules`). */
 	entitiesByQuality: Counts;
+	/**
+	 * What machines are set to craft, by the quality they craft it at (recipe quality): item signals,
+	 * `item:name@quality` above normal, plain for normal; one count per machine. Fluids have no quality and are left out.
+	 */
+	productsByQuality: Counts;
 	recipes: Counts;
 	modules: Counts;
 	tiles: Counts;
@@ -222,6 +227,11 @@ export interface PrintAnalysis {
 	entities: Counts;
 	/** `entities` split by quality: `name@quality` above normal, plain `name` for normal (as `modules`). */
 	entitiesByQuality: Counts;
+	/**
+	 * What machines are set to craft, by the quality they craft it at (recipe quality): item signals,
+	 * `item:name@quality` above normal, plain for normal; one count per machine. Fluids have no quality and are left out.
+	 */
+	productsByQuality: Counts;
 	recipes: Counts;
 	modules: Counts;
 	tiles: Counts;
@@ -460,6 +470,7 @@ const analyzeBlueprint = (path: string, bp: Json, inherited: Version | null, gam
 
 	const entities: Counts = {};
 	const entitiesByQuality: Counts = {};
+	const productsByQuality: Counts = {};
 	const recipes: Counts = {};
 	const modules: Counts = {};
 	const tileCounts: Counts = {};
@@ -507,8 +518,12 @@ const analyzeBlueprint = (path: string, bp: Json, inherited: Version | null, gam
 		const q = str(e.quality) ?? 'normal';
 		bump(entitiesByQuality, withQuality(name, q));
 		if (q !== 'normal') bump(qualities, q);
-		const rq = str(e.recipe_quality);
-		if (rq && rq !== 'normal') bump(qualities, rq);
+		const rq = str(e.recipe_quality) ?? 'normal';
+		if (rq !== 'normal') bump(qualities, rq);
+		for (const [n] of recipe ? (game.recipes[recipe]?.results ?? []) : []) {
+			const product = signal(n);
+			if (product.startsWith('item:')) bump(productsByQuality, withQuality(product, rq));
+		}
 		if (box && recipe) machines.push({ name, recipe, quality: q, modules: mods, box });
 		if (proto?.type === 'furnace') furnacesWithoutRecipe++;
 		if (box && proto?.type === 'beacon') {
@@ -640,6 +655,7 @@ const analyzeBlueprint = (path: string, bp: Json, inherited: Version | null, gam
 		height: hasExtent ? Math.round(maxY - minY) : null,
 		entities: sortCounts(entities),
 		entitiesByQuality: sortCounts(entitiesByQuality),
+		productsByQuality: sortCounts(productsByQuality),
 		recipes: sortCounts(recipes),
 		modules: sortCounts(modules),
 		tiles: sortCounts(tileCounts),
@@ -740,6 +756,7 @@ export const analyzePrint = (decoded: unknown, game: GameData = defaultGameData)
 
 	const entities: Counts = {};
 	const entitiesByQuality: Counts = {};
+	const productsByQuality: Counts = {};
 	const recipes: Counts = {};
 	const modules: Counts = {};
 	const tiles: Counts = {};
@@ -763,6 +780,7 @@ export const analyzePrint = (decoded: unknown, game: GameData = defaultGameData)
 		if (n.beltThroughput) beltThroughput = Math.max(beltThroughput ?? 0, n.beltThroughput);
 		for (const [k, v] of Object.entries(n.entities)) bump(entities, k, v);
 		for (const [k, v] of Object.entries(n.entitiesByQuality)) bump(entitiesByQuality, k, v);
+		for (const [k, v] of Object.entries(n.productsByQuality)) bump(productsByQuality, k, v);
 		for (const [k, v] of Object.entries(n.recipes)) bump(recipes, k, v);
 		for (const [k, v] of Object.entries(n.modules)) bump(modules, k, v);
 		for (const [k, v] of Object.entries(n.tiles)) bump(tiles, k, v);
@@ -876,6 +894,7 @@ export const analyzePrint = (decoded: unknown, game: GameData = defaultGameData)
 		tileCount: prints.reduce((s, n) => s + n.tileCount, 0),
 		...partial,
 		entitiesByQuality: sortCounts(entitiesByQuality),
+		productsByQuality: sortCounts(productsByQuality),
 		recipes: sortCounts(recipes),
 		tiles: sortCounts(tiles),
 		qualities,

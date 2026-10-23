@@ -49,9 +49,17 @@ export const sitemapXml = (origin: string, prints: SitemapPrint[], landings: Lan
 	].join('\n');
 
 /**
- * Everything may be crawled except the blueprint strings and the inline viewer's JSON: data for the
- * page's own buttons and scripts, large and useless in search results. Both also send
+ * Everything may be crawled except the blueprint strings, the inline viewer's JSON and a quality chip's
+ * counts: data for the page's own buttons and scripts, useless in search results. All also send
  * `X-Robots-Tag: noindex`. (The full-screen render page is fetched but `noindex`, so crawlers see that.)
  */
 export const robotsTxt = (origin: string) =>
-	['User-agent: *', 'Disallow: /prints/*/string', 'Disallow: /prints/*/viewer', '', `Sitemap: ${origin}/sitemap.xml`, ''].join('\n');
+	[
+		'User-agent: *',
+		'Disallow: /prints/*/string',
+		'Disallow: /prints/*/viewer',
+		'Disallow: /quality-levels',
+		'',
+		`Sitemap: ${origin}/sitemap.xml`,
+		''
+	].join('\n');

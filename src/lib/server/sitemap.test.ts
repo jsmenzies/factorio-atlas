@@ -58,7 +58,7 @@ describe('sitemap', () => {
 
 	test('robots.txt keeps crawlers off the string and viewer data, and names the sitemap', () => {
 		expect(robotsTxt('https://example.com')).toBe(
-			'User-agent: *\nDisallow: /prints/*/string\nDisallow: /prints/*/viewer\n\nSitemap: https://example.com/sitemap.xml\n'
+			'User-agent: *\nDisallow: /prints/*/string\nDisallow: /prints/*/viewer\nDisallow: /quality-levels\n\nSitemap: https://example.com/sitemap.xml\n'
 		);
 	});
 });

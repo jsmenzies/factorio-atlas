@@ -22,6 +22,10 @@ describe('isSearch', () => {
 		expect(isSearch('/', new URL('https://example.com/?'))).toBe(false);
 	});
 	test('other routes', () => expect(isSearch('/prints/[id]', new URL('https://example.com/prints/x?page=2'))).toBe(false));
+	test("a quality chip's counts", () =>
+		expect(
+			isSearch('/quality-levels', new URL('https://example.com/quality-levels?uses=entity:beacon&filter=uses&value=entity:beacon'))
+		).toBe(true));
 });
 
 describe('rateLimited', () => {
@@ -54,6 +58,12 @@ describe('rateLimited', () => {
 		const search = limiter(0);
 		expect((await rateLimited(req(url.href), '/', url, { PAGE_LIMIT: page, SEARCH_LIMIT: search }))?.status).toBe(429);
 		expect([page.keys.length, search.keys.length]).toEqual([1, 1]);
+	});
+	test("a quality chip's counts use the search limit", async () => {
+		const url = new URL('https://example.com/quality-levels?q=red&uses=entity:beacon&filter=uses&value=entity:beacon');
+		const search = limiter(0);
+		expect((await rateLimited(req(url.href), '/quality-levels', url, { PAGE_LIMIT: limiter(1), SEARCH_LIMIT: search }))?.status).toBe(429);
+		expect(search.keys.length).toBe(1);
 	});
 	test('pages do not use the search limit', async () => {
 		const url = new URL('https://example.com/prints/x');

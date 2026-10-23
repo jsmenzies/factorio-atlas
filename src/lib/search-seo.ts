@@ -1,11 +1,12 @@
 /**
  * Which search URLs search engines should index: the home page, and landing pages for one `makes`
- * or one `uses` value ("Electronic circuit blueprints"), with nothing else that changes the results.
+ * or one `uses` value ("Electronic circuit blueprints") at any quality, with nothing else that changes the results.
  * Every other search (text, several filters, a sort, other filters, a results page past the first)
  * is `noindex, follow`, and links to one carry `rel="nofollow"`, so crawlers spend their time on
  * prints (all in the sitemap) and landing pages.
  */
 import { MULTI_FILTERS } from './filters.js';
+import { splitQuality } from './quality.js';
 
 /** Query keys that change a search's results or their order; anything else (utm_…, fbclid) doesn't. */
 const SEARCH_KEYS = ['q', ...MULTI_FILTERS, 'author', 'spaceAge', 'circuits', 'trains', 'render', 'sort', 'p'];
@@ -23,6 +24,8 @@ export const searchPage = (params: Pick<URLSearchParams, 'getAll'>): SearchPage 
 	if (rest.length === 0) return { kind: 'home' };
 	if (rest.length > 1) return null;
 	const [{ key, value }] = rest;
+	// An item at a quality (`?uses=entity:beacon@epic`) is a narrower search, not the item's landing page.
+	if (splitQuality(value).quality) return null;
 	if (key === 'makes') return { kind: 'landing', key, value };
 	// A bare building name ("foundry") means the entity, as in parseSearch.
 	if (key === 'uses') return { kind: 'landing', key, value: value.includes(':') ? value : `entity:${value}` };

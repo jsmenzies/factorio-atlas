@@ -18,6 +18,10 @@ describe('searchPage', () => {
 	});
 
 	test('anything more is neither', () => {
+		// An item at a quality, or the quality filter.
+		expect(page('uses=entity:beacon@legendary')).toBeNull();
+		expect(page('makes=item:processing-unit@rare')).toBeNull();
+		expect(page('quality=legendary')).toBeNull();
 		for (const q of [
 			'q=red',
 			'makes=item:rail&makes=item:pipe',

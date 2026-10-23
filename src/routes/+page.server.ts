@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import { ANY_QUALITY_ICON, QUALITY_LEVELS, splitQuality } from '#lib/quality.js';
 import { retryBusy } from '#lib/server/admin/busy.js';
 import { PAGE_SIZE, parseSearch, searchPrints } from '#lib/server/queries.js';
 import { iconSet } from '#lib/server/icon-set.js';
@@ -11,18 +12,21 @@ export const load: PageServerLoad = async ({ url }) => {
 	// One batch; locally a render or backfill run can hold the database's lock for a moment (busy.ts).
 	const found = await retryBusy(() => searchPrints(env.DB, params));
 
-	// Results' outputs, facets, and filter chips (which can name anything), less those the picker's icons have.
+	// Results' outputs, facets, and filter chips (which can name anything; `@<level>` dropped), less those the picker's icons have.
+	const base = (values: string[]) => values.map((v) => splitQuality(v).base);
 	const all = iconSet(
 		{
-			item: params.module,
+			item: [...base(params.module), ...found.facets.modules.map((f) => f.value)],
 			recipe: params.recipe,
+			quality: ['normal', ...QUALITY_LEVELS],
 			signals: [
 				...found.results.flatMap((r) => r.outputs),
 				...found.facets.makes.map((f) => f.value),
 				...found.facets.uses.map((f) => f.value),
-				...params.makes,
+				...base(params.makes),
 				...params.takes,
-				...params.uses
+				...base(params.uses),
+				ANY_QUALITY_ICON
 			]
 		},
 		found.results.map((r) => r.title)

@@ -2,6 +2,7 @@
 	import Icon from '#lib/components/Icon.svelte';
 	import { signalName } from '#lib/format.js';
 	import type { IconKind, IconSet } from '#lib/icons.js';
+	import { QUALITY_LEVELS } from '#lib/quality.js';
 
 	/**
 	 * A sidebar list of names and counts. `name@quality` keys come first, lowest quality to highest,
@@ -12,7 +13,7 @@
 
 	const LIST_LIMIT = 8;
 	/** The game's quality order; a modded quality sorts after these. */
-	const QUALITIES = ['uncommon', 'rare', 'epic', 'legendary'];
+	const QUALITIES: readonly string[] = QUALITY_LEVELS;
 	const rank = (q: string) => (QUALITIES.includes(q) ? QUALITIES.indexOf(q) : QUALITIES.length);
 
 	type Row = { key: string; name: string; quality: string | null; n: number };

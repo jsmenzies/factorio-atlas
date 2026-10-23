@@ -2,7 +2,7 @@
  * Per-visitor request limits, run from hooks.server.ts after the /admin guard, so they cover pages
  * and their `__data.json` alike. Two Workers Rate Limiting bindings (wrangler.jsonc `ratelimits`,
  * provisioned by alchemy.run.ts): every request counts towards PAGE_LIMIT, and searches (the home
- * route with a query string) towards SEARCH_LIMIT as well. Counts are kept per Cloudflare location
+ * route with a query string, and a quality chip's counts) towards SEARCH_LIMIT as well. Counts are kept per Cloudflare location
  * and are approximate. The zone's WAF rule (alchemy.run.ts) stops floods before they reach the Worker.
  */
 
@@ -42,8 +42,11 @@ export const visitorKey = (ip: string) => {
  */
 const UNLIMITED_ROUTES = new Set(['/prints/[id]/render/[...file]', '/sprites/[...key]']);
 
-/** A search: the home route with any query string (the bare home page is a cheap read of facet counts). */
-export const isSearch = (routeId: string | null, url: URL) => routeId === '/' && url.search.length > 1;
+/**
+ * A search: the home route with any query string (the bare home page is a cheap read of facet counts), or
+ * a quality chip's counts (`/quality-levels`), which run the chip's search five times.
+ */
+export const isSearch = (routeId: string | null, url: URL) => (routeId === '/' && url.search.length > 1) || routeId === '/quality-levels';
 
 /** Null when the request may go on, else the 429 to send. No limiter (local dev), no client IP or a file route: never limited. */
 export const rateLimited = async (request: Request, routeId: string | null, url: URL, limiters: Limiters) => {

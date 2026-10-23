@@ -46,7 +46,7 @@ describe('parseSearch repeated filters', () => {
 		const s = of('?makes=item:iron-plate&makes=item:copper-plate&makes=item:iron-plate&makes=&version=2.0&version=1.1');
 		expect(s.makes).toEqual(['item:iron-plate', 'item:copper-plate']);
 		expect(s.version).toEqual(['2.0', '1.1']);
-		expect(filterTokens(s)).toEqual(['makes_item_iron_plate', 'makes_item_copper_plate', 'v_2_0', 'v_1_1']);
+		expect(filterTokens(s)).toEqual([['makes_item_iron_plate'], ['makes_item_copper_plate'], ['v_2_0'], ['v_1_1']]);
 	});
 });
 
@@ -63,7 +63,7 @@ describe('parseSearch render', () => {
 	test('?author= is one user id, its by_ token; anything that cannot be an id matches nothing', () => {
 		expect(of('').author).toBeNull();
 		expect(of('?author=h5YXq2').author).toBe('h5YXq2');
-		expect(filterTokens(of('?author=h5YXq2'))).toEqual(['by_h5yxq2']);
+		expect(filterTokens(of('?author=h5YXq2'))).toEqual([['by_h5yxq2']]);
 		expect(of('?author=a%20b').author).toBe('none');
 		expect(of('?author=x"y').author).toBe('none');
 	});
@@ -72,7 +72,32 @@ describe('parseSearch render', () => {
 		const s = of('?q=smelting&render=1&spaceAge=no&sort=recent&makes=item:iron-plate');
 		expect([s.q, s.render, s.spaceAge, s.sort, s.makes]).toEqual(['smelting', true, 'no', 'recent', ['item:iron-plate']]);
 		expect(of('?render=1').sort).toBe('favorites');
-		expect(filterTokens(of('?render=1&circuits=1'))).toEqual(['uses_circuits', RENDER_TOKEN]);
+		expect(filterTokens(of('?render=1&circuits=1'))).toEqual([['uses_circuits'], [RENDER_TOKEN]]);
+	});
+});
+
+describe('quality filters', () => {
+	const of = (search: string) => parseSearch(new URL(`http://x/${search}`));
+
+	test('makes, uses and module values keep their quality; "or above" is any of the level and those above it', () => {
+		const s = of('?uses=entity:beacon@epic&makes=item:processing-unit@rare&module=speed-module-3@legendary');
+		expect([s.uses, s.makes, s.module]).toEqual([['entity:beacon@epic'], ['item:processing-unit@rare'], ['speed-module-3@legendary']]);
+		expect(filterTokens(s)).toEqual([
+			['makes_item_processing_unit_at_rare', 'makes_item_processing_unit_at_epic', 'makes_item_processing_unit_at_legendary'],
+			['uses_entity_beacon_at_epic', 'uses_entity_beacon_at_legendary'],
+			['module_speed_module_3_at_legendary']
+		]);
+	});
+
+	test('a bare building name takes a quality too; an unknown level is part of the value, so it matches nothing', () => {
+		expect(filterTokens(of('?uses=foundry@uncommon'))[0].length).toBe(4);
+		expect(filterTokens(of('?uses=entity:beacon@shiny'))).toEqual([['uses_entity_beacon_shiny']]);
+	});
+
+	test('?quality= keeps known levels; each must be in the print', () => {
+		const s = of('?quality=legendary&quality=epic&quality=normal&quality=shiny&quality=legendary');
+		expect(s.quality).toEqual(['legendary', 'epic']);
+		expect(filterTokens(s)).toEqual([['quality_legendary'], ['quality_epic']]);
 	});
 });
 
