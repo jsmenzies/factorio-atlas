@@ -17,7 +17,8 @@
 	/**
 	 * The full-screen render's page picker: a search box over every page of a book, shown as
 	 * thumbnails in groups (stages or sub-books). Arrow keys move through the matches, Enter opens
-	 * one, Esc closes. Pages without a thumbnail (no render) show their icons. Cards are links, so
+	 * one, Esc closes. Pages without a thumbnail (no render), or whose thumbnail fails to load (a
+	 * cached page naming one a re-upload has since replaced), show their icons. Cards are links, so
 	 * a middle click opens a page in a new tab; a plain click calls `onpick`.
 	 */
 	let {
@@ -42,6 +43,8 @@
 	} = $props();
 
 	let query = $state('');
+	/** Pages whose thumbnail failed to load, which show their icons instead. */
+	let failed = $state<string[]>([]);
 	const words = $derived(query.trim().toLowerCase().split(/\s+/).filter(Boolean));
 	const matches = (p: PageGroup['pages'][number]) => {
 		const text = `${p.n} ${p.title.toLowerCase()} ${pages[p.path]?.find ?? ''}`;
@@ -156,7 +159,7 @@
 				{/if}
 				<div data-grid class="grid grid-cols-2 gap-x-3 gap-y-3 sm:grid-cols-3 md:grid-cols-4">
 					{#each g.pages as p (p.path)}
-						{@const thumb = thumbs[p.path]}
+						{@const thumb = failed.includes(p.path) ? undefined : thumbs[p.path]}
 						{@const here = p.path === current}
 						<a
 							id="page-{p.path}"
@@ -173,7 +176,7 @@
 							onpointerenter={() => (active = p.path)}
 						>
 							<span
-								class="grid aspect-video place-items-center overflow-hidden rounded-md bg-stone-950 ring-1 transition {here
+								class="relative grid aspect-video place-items-center overflow-hidden rounded-md bg-stone-950 ring-1 transition {here
 									? 'ring-2 ring-amber-400'
 									: p.path === active
 										? 'ring-2 ring-stone-400'
@@ -185,9 +188,10 @@
 										sizes="(min-width: 768px) 13rem, (min-width: 640px) 17rem, 50vw"
 										alt=""
 										loading="lazy"
+										onerror={() => (failed = [...failed, p.path])}
 										width={thumb.w}
 										height={thumb.h}
-										class="h-full w-full object-contain"
+										class="absolute inset-0 size-full object-contain"
 									/>
 								{:else if pages[p.path]?.icons.length}
 									<BlueprintIcons {icons} signals={pages[p.path]!.icons} size={48} />
