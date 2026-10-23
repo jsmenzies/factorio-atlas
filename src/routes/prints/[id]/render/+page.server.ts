@@ -13,11 +13,10 @@ import type { PageServerLoad } from './$types';
  * analysis document, so it shows whether or not the page has a render.
  */
 export const load: PageServerLoad = async ({ params, url }) => {
-	const doc = await readPrintDoc(env.RAW, params.id);
+	// Both from R2, so read together.
+	const [doc, found] = await Promise.all([readPrintDoc(env.RAW, params.id), loadViewerPage(params.id, url.searchParams.get('page'))]);
 	if (!doc) error(404, 'Print not found');
 	const row = doc.print;
-
-	const found = await loadViewerPage(params.id, url.searchParams.get('page'));
 	if (!found) error(404, 'No viewer files');
 	const { pages, path, page, render, tooltip } = found;
 	// What the analyzer says about each page, keyed by book path, for the page picker and header.
