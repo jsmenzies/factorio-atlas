@@ -1,4 +1,5 @@
 <script lang="ts">
+	import BlueprintIcons from '#lib/components/BlueprintIcons.svelte';
 	import PagePicker from '#lib/components/PagePicker.svelte';
 	import type { PageGroup } from '#lib/book-groups.js';
 	import type { IconSet } from '#lib/icons.js';
@@ -55,8 +56,10 @@
 		scope = 'page';
 		onpick(path);
 	};
-	const thumb = $derived(thumbs[selected]);
 	let failed = $state<string | null>(null);
+	// The page's thumbnail, else its icons (no render, or the thumbnail failed), as the page cards show it; else no slot.
+	const thumb = $derived(failed === selected ? undefined : thumbs[selected]);
+	const pageIcons = $derived(info[selected]?.icons ?? []);
 	const STEP = 'grid size-9 shrink-0 place-items-center rounded-lg border border-stone-700 bg-stone-800 text-stone-200';
 </script>
 
@@ -92,11 +95,13 @@
 				? 'border-amber-500/70 bg-amber-500/10'
 				: 'border-stone-700 bg-stone-900 hover:border-stone-500'}"
 		>
-			<span class="relative grid h-6 w-10 shrink-0 place-items-center overflow-hidden rounded bg-stone-950">
-				{#if thumb && failed !== selected}
+			{#if thumb}
+				<span class="relative grid h-6 w-10 shrink-0 place-items-center overflow-hidden rounded bg-stone-950">
 					<img srcset={thumb.srcset} sizes="40px" alt="" onerror={() => (failed = selected)} class="absolute inset-0 size-full object-contain" />
-				{/if}
-			</span>
+				</span>
+			{:else if pageIcons.length}
+				<BlueprintIcons {icons} signals={pageIcons} size={24} />
+			{/if}
 			<span class="shrink-0 font-mono text-stone-400 tabular-nums">{index + 1} / {total}</span>
 			<span class="min-w-0 flex-1 truncate text-stone-100">{title}</span>
 			<span class="shrink-0 text-[0.6rem] text-stone-400" aria-hidden="true">▼</span>

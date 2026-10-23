@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page as route } from '$app/state';
 	import BlueprintIcons from '#lib/components/BlueprintIcons.svelte';
 	import BlueprintViewer from '#lib/components/BlueprintViewer.svelte';
 	import PageMeta from '#lib/components/PageMeta.svelte';
@@ -16,7 +17,10 @@
 	const page = $derived(data.page);
 	const blueprints = $derived(data.pages.filter((n) => n.kind === 'blueprint'));
 
-	const select = (path: string) => goto(`?page=${encodeURIComponent(path)}`, { reset: false });
+	// Opened from the print's Overview (`&from=overview`), else its Render & pages tab: Back returns there.
+	const fromOverview = $derived(route.url.searchParams.get('from') === 'overview');
+	const pageQuery = (path: string) => `?page=${encodeURIComponent(path)}${fromOverview ? '&from=overview' : ''}`;
+	const select = (path: string) => goto(pageQuery(path), { reset: false });
 	const index = $derived(blueprints.findIndex((n) => n.path === data.path));
 	const step = (by: number) => {
 		const next = blueprints[index + by];
@@ -28,10 +32,13 @@
 	const here = $derived(data.path !== null ? data.info[data.path] : undefined);
 	const book = $derived(blueprints.length > 1);
 
-	// Back to the print, on the same book page (the first page is the print's own URL).
-	const back = $derived(
-		data.path === null || data.path === blueprints[0]?.path ? `/prints/${p.id}` : `/prints/${p.id}?page=${encodeURIComponent(data.path)}`
-	);
+	// Back to the print, on the same book page and the tab it came from. The first page is the
+	// print's own URL, which opens on the Overview; any other page's opens on Render & pages.
+	const back = $derived.by(() => {
+		if (data.path === null) return `/prints/${p.id}`;
+		if (data.path === blueprints[0]?.path) return fromOverview ? `/prints/${p.id}` : `/prints/${p.id}?tab=pages`;
+		return `/prints/${p.id}?page=${encodeURIComponent(data.path)}${fromOverview ? '&tab=overview' : ''}`;
+	});
 
 	let infoOpen = $state(false);
 	let pickerOpen = $state(false);
@@ -219,7 +226,7 @@
 								pages={data.info}
 								thumbs={data.thumbs}
 								icons={data.icons}
-								href={(path) => `?page=${encodeURIComponent(path)}`}
+								href={pageQuery}
 								onpick={(path) => {
 									pickerOpen = false;
 									select(path);

@@ -33,9 +33,10 @@
 	// Documents from before ANALYZER_VERSION 8 have no entitiesByQuality: all normal, as far as we know.
 	const counts = $derived(src.entitiesByQuality ?? src.entities);
 	const categoryOf = $derived(new Map(Object.entries(src.byCategory).flatMap(([cat, c]) => Object.keys(c ?? {}).map((name) => [name, cat]))));
+	// What each quality chip counts: what its filter shows, entities and modules.
 	const byQuality = $derived.by(() => {
 		const totals: Record<string, number> = {};
-		for (const [key, n] of Object.entries(counts)) {
+		for (const [key, n] of [...Object.entries(counts), ...Object.entries(src.modules)]) {
 			const q = key.split('@')[1] ?? 'normal';
 			totals[q] = (totals[q] ?? 0) + n;
 		}

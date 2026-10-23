@@ -40,7 +40,7 @@
 
 	/**
 	 * One group of the Entities tab (Belts, Power, Modules, Tiles…): a heading with its summary, then
-	 * a line per name and quality with its count, the game's quality badge on the icon above normal.
+	 * a line per name and quality with its count, the game's quality badge on the icon and the quality's name above normal.
 	 * A name's lines sit together, highest quality first. Long groups show `limit` names until opened.
 	 */
 	let {
@@ -75,7 +75,7 @@
 						{/if}
 					</span>
 					<span class="min-w-0 flex-1 truncate text-stone-200"
-						>{signalName(row.name)}{#if row.parts.length > 1}<span class="ml-1.5 text-xs text-stone-500">{p.quality}</span>{/if}</span
+						>{signalName(row.name)}{#if p.quality !== 'normal'}<span class="ml-1.5 text-xs text-stone-500">{p.quality}</span>{/if}</span
 					>
 					<span class="w-14 shrink-0 text-right text-stone-300 tabular-nums">{p.n.toLocaleString()}</span>
 				</li>

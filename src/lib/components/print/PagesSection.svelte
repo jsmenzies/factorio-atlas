@@ -89,7 +89,7 @@
 	the book (the trail) on the left, the role chips under the search box on the right. -->
 	<div class="flex flex-wrap items-center gap-x-4 gap-y-2">
 		<h2 class="text-xl font-semibold text-stone-50">
-			Pages <span class="font-mono text-base font-normal text-stone-500">{pages.length}{books.length > 1 ? ` in ${books.length} books` : ''}</span>
+			Pages <span class="text-base font-normal text-stone-500">{pages.length}{books.length > 1 ? ` in ${books.length} books` : ''}</span>
 		</h2>
 		{#if filter}
 			<button
@@ -115,7 +115,7 @@
 					{#each trail as b, i (i)}{#if i}<span class="mx-1.5 text-stone-600">›</span>{/if}<span class={i === trail.length - 1 ? 'font-semibold text-stone-100' : ''}
 							><RichText text={b} {icons} size={16} /></span
 						>{/each}
-					<span class="ml-1 font-mono text-sm text-stone-500">{inBook} pages</span>
+					<span class="ml-1 text-sm text-stone-500">{inBook} pages</span>
 				</p>
 			{/if}
 			{#if Object.keys(roles).length > 1}

@@ -113,7 +113,7 @@
 	const preview = $derived.by(() => {
 		const page = selected && rendered.has(selected.path) ? selected : pages.find((n) => n.path === data.cover?.path);
 		if (!page) return null;
-		const fullScreen = `/prints/${p.id}/render?page=${encodeURIComponent(page.path)}`;
+		const fullScreen = `/prints/${p.id}/render?page=${encodeURIComponent(page.path)}&from=overview`;
 		return { url: data.previews[page.path], thumb: data.thumbs[page.path], page, index: pages.indexOf(page), total: pages.length, fullScreen };
 	});
 	// From the Overview, the render tab opens on the page it showed.
