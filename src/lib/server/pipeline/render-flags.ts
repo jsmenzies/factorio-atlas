@@ -9,6 +9,7 @@
  * and writes only the difference, so a second run writes nothing, and an FTS row that drifted
  * (e.g. written by an older build) is put right.
  */
+import { bumpPageVersion } from '../page-cache';
 import { RENDER_TOKEN } from './repository';
 
 /** `' ' || facets || ' '` holds the token as a whole word. */
@@ -139,6 +140,8 @@ export async function syncRenderFlags(
 			rowsWritten += results.reduce((n, r) => n + (r.meta?.rows_written ?? 0), 0);
 			options.onBatch?.(Math.min(i + size, stmts.length), stmts.length);
 		}
+		// Cards show render badges, so cached pages go (lib/server/page-cache.ts).
+		if (rowsWritten > 0) await bumpPageVersion(db).run();
 	}
 	return { plan, flagged, searchable, rowsWritten };
 }

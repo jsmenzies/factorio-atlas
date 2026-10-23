@@ -7,6 +7,8 @@
  * volume, and nothing stops a visitor reloading beyond the page's per-tab dedupe and the rate limits.
  */
 
+import { bumpPageVersion } from './page-cache';
+
 /** factorioprints ids: 20 characters of Firebase's push-id alphabet. */
 export const PRINT_ID = /^[A-Za-z0-9_-]{20}$/;
 
@@ -140,6 +142,8 @@ export const syncViews = async (
 			rowsWritten += results.reduce((n, r) => n + (r.meta?.rows_written ?? 0), 0);
 			options.onBatch?.(Math.min(i + size, stmts.length), stmts.length);
 		}
+		// "Popular" pages show the old order until cached pages go (lib/server/page-cache.ts).
+		if (rowsWritten > 0) await bumpPageVersion(db).run();
 	}
 	return { plan, known, rowsWritten };
 };

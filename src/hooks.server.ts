@@ -1,7 +1,8 @@
-import { dev } from '$app/env';
+import { dev, version } from '$app/env';
 import type { Handle } from '@sveltejs/kit/hooks';
-import { env } from 'cloudflare:workers';
+import { env, waitUntil } from 'cloudflare:workers';
 import { adminDenial, adminNotFound, isAdminPath, withAdminHeaders } from '#lib/server/admin/guard.js';
+import { cachedPage, cacheTtl } from '#lib/server/page-cache.js';
 import { rateLimited } from '#lib/server/rate-limit.js';
 import { withSecurityHeaders } from '#lib/server/security-headers.js';
 
@@ -19,10 +20,18 @@ const guarded: Handle = async ({ event, resolve }) => {
 		}
 		return withAdminHeaders(await resolve(event));
 	}
-	// Off under vite dev, so local tools and screenshots never hit it; `bun run preview` has it.
+	// Limits and the page cache are off under vite dev, so local tools and screenshots never hit
+	// them (and edits show at once); `bun run preview` has both.
 	if (!dev) {
 		const limited = await rateLimited(event.request, event.route.id, event.url, env);
 		if (limited) return limited;
+		// Search and print pages come from the location's cache when they can (lib/server/page-cache.ts).
+		const ttl = cacheTtl(event.request.method, event.route.id);
+		if (ttl !== null) {
+			// Workers' CacheStorage; the DOM lib's type of `caches` hides `default`.
+			const cache = (caches as CacheStorage & { default: Cache }).default;
+			return cachedPage(event.request, ttl, () => resolve(event), { cache, db: env.DB, build: version, waitUntil });
+		}
 	}
 	return resolve(event);
 };

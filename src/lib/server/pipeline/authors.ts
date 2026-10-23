@@ -9,6 +9,7 @@
  * factorioprints' maintainer, so the command asks slowly, one id at a time, and an answer of no
  * name is kept too. A print whose record names its author keeps that name.
  */
+import { bumpPageVersion } from '../page-cache';
 import { analysisKey, withAuthorName } from './print-doc';
 
 export const FIREBASE_URL = 'https://facorio-blueprints.firebaseio.com';
@@ -160,5 +161,7 @@ export async function applyNameFixes(
 		rowsWritten += results.reduce((n, r) => n + (r.meta?.rows_written ?? 0), 0);
 		options.onChunk?.(Math.min(i + chunk, fixes.length), docsWritten);
 	}
+	// Cached pages still show the old names (lib/server/page-cache.ts).
+	if (docsWritten + rowsWritten > 0) await bumpPageVersion(db).run();
 	return { docsWritten, rowsWritten };
 }

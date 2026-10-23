@@ -206,6 +206,31 @@ request then reads it from R2 again (a Class B read; R2 has no egress fees). Che
 every HEAD request, `curl -I`, as `DYNAMIC`): `cf-cache-status` is `MISS` the first time
 and `HIT` after, and `age` counts up.
 
+## Page cache
+
+The search page, print pages and the full-screen render page (their HTML, and the `__data.json`
+the browser fetches when you click between pages) are kept in each Cloudflare location's cache by
+the Worker itself (`src/lib/server/page-cache.ts`, from `hooks.server.ts`), so a repeat visit
+reads neither D1 nor R2. Entries last an hour for searches and a day for print pages. Only `200`
+responses without cookies are kept; `/admin`, the view counter, errors and `429`s never are. The
+rate limits run first, so cached pages still count towards them. Browsers get `cache-control:
+no-cache`, and every response says `x-page-cache: hit` or `miss`.
+
+Nothing is deleted to purge it. Every key holds the build (new on each deploy) and the data
+version, `meta.sync_version` in D1, and everything that changes what pages show bumps that
+version: the ingest and backfill, `bun run render:flags`, the views sync (daily Worker and
+`views:sync`) and `bun run authors`. Each Worker instance rereads the version at most every 30 s,
+so a change shows everywhere within about half a minute and the old entries simply expire. After a
+change made some other way (SQL by hand), bump it yourself:
+
+```sh
+bunx wrangler d1 execute <database> --remote --command \
+  "INSERT INTO meta (key, value) VALUES ('sync_version', strftime('%s','now')) ON CONFLICT (key) DO UPDATE SET value = excluded.value"
+```
+
+Check a page with `curl -s -o /dev/null -D - https://example.com/` twice: `x-page-cache` is `miss`
+and then `hit`. The cache is per location, so the first visit in each location is a miss.
+
 ## Rate limits
 
 Two layers keep one visitor from running up the bill:

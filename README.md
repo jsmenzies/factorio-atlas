@@ -77,6 +77,9 @@ GitHub mirror of factorioprints (motlin/factorio-blueprint-firebase-cdn, one JSO
   user agent or cookie), and a daily scheduled Worker (`src/cron/views.ts`) totals the last 30
   days into D1 (`bun run views:sync` does the same by hand).
 - **Print pages** read only the print's R2 analysis document, never D1.
+- **Page cache:** search and print pages are kept in each Cloudflare location's cache, under keys
+  that hold the build and a data version in D1, so a deploy or any data change (ingest, render
+  flags, views, author names) shows at once and old entries just expire.
 - **Game renders:** `bun run render` draws in-game-looking images of each blueprint page offline
   with [fpsr](https://github.com/rickyzhangca/fpsr), from sprite assets built from an installed
   Factorio (`FPSR_ASSETS_DIR`). Each page gets an AVIF overview, AVIF map tiles at 16, 32 and

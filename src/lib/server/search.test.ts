@@ -422,3 +422,31 @@ describe('authors (bun run authors)', () => {
 		expect(run({ author: authorOf(SCIENCE) }).ids).toEqual([SCIENCE]);
 	});
 });
+
+describe('page cache purges (meta.sync_version)', () => {
+	const version = () => (sqlite.query(`SELECT value FROM meta WHERE key = 'sync_version'`).get() as { value: string } | null)?.value;
+	const changes = async (fn: () => Promise<unknown>) => {
+		sqlite.run(`UPDATE meta SET value = 'before' WHERE key = 'sync_version'`);
+		await fn();
+		return version() !== 'before';
+	};
+
+	test('render:flags, the views sync and the authors run bump it when they change something, and only then', async () => {
+		expect(await changes(() => syncRenderFlags(db, new Map([[SPACE, 1]])))).toBe(true);
+		expect(await changes(() => syncRenderFlags(db, new Map([[SPACE, 1]])))).toBe(false);
+		expect(await changes(() => syncRenderFlags(db, new Map([[SPACE, 1]]), { dryRun: true }))).toBe(false);
+		await syncRenderFlags(db, new Map());
+		expect(await changes(() => syncViews(db, new Map([[BELTS, 7]])))).toBe(true);
+		expect(await changes(() => syncViews(db, new Map([[BELTS, 7]])))).toBe(false);
+		await syncViews(db, new Map());
+		const bucket = { get: async () => null, put: async () => {} } as unknown as R2Bucket;
+		expect(await changes(() => applyNameFixes(db, bucket, []))).toBe(false);
+		sqlite.query(`UPDATE prints SET author_name = NULL WHERE id = ?`).run(BELTS);
+		sqlite
+			.query(
+				`INSERT OR REPLACE INTO authors (author_id, display_name, source, fetched_at) SELECT author_id, 'Belt Fan', 'firebase', 0 FROM prints WHERE id = ?`
+			)
+			.run(BELTS);
+		expect(await changes(async () => applyNameFixes(db, bucket, planNameFixes(await loadAuthorState(db))))).toBe(true);
+	});
+});
