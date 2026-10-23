@@ -13,6 +13,20 @@ export interface PickerItem {
 	n: number;
 }
 
+/** An item without its count: the same for every search, so sent once per visit (routes/+layout.server.ts). */
+export type PickerEntry = Omit<PickerItem, 'n'>;
+
+/** The entries with this search's counts: its "Makes" facet for items, its "Built with" facet for buildings. */
+export const withCounts = (
+	entries: PickerEntry[],
+	makes: { value: string; n: number }[],
+	uses: { value: string; n: number }[]
+): PickerItem[] => {
+	const made = new Map(makes.map((f) => [f.value, f.n]));
+	const used = new Map(uses.map((f) => [f.value, f.n]));
+	return entries.map((e) => ({ ...e, n: (isBuilding(e) ? used : made).get(e.signal) ?? 0 }));
+};
+
 /**
  * Dropdown sections, in display order. Science packs get their own section. Buildings are what
  * prints are built with (`?uses=`); every other section is what they make.

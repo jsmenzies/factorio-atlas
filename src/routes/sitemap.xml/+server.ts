@@ -1,6 +1,6 @@
 import { dev } from '$app/env';
 import { env } from 'cloudflare:workers';
-import { pickerItems } from '#lib/server/picker-items.js';
+import { pickerEntries } from '#lib/server/picker-items.js';
 import { sitemapRows, sitemapXml } from '#lib/server/sitemap.js';
 import type { RequestHandler } from './$types';
 
@@ -16,7 +16,7 @@ export const GET: RequestHandler = async ({ request, url }) => {
 	if (hit) return hit;
 	const { prints, landings } = await sitemapRows(env.DB);
 	// Landing pages only for game items and buildings the search knows (no modded names), as the page itself decides.
-	const known = new Set(pickerItems({}, {}).map((p) => p.signal));
+	const known = new Set(pickerEntries().map((p) => p.signal));
 	const body = sitemapXml(
 		url.origin,
 		prints,
