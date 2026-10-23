@@ -3,7 +3,8 @@
  * print in render_favorites (scripts/render/favorites.ts), whose older pages are drawn too; and
  * which prints a batch (`--next`) looks at. Pure, for tests; scripts/render-game.ts applies it.
  */
-import { gaveUp, type JobRow } from './queue.js';
+import type { RenderJobRow } from '#lib/server/render-queue.js';
+import { gaveUp } from './queue.js';
 import { hasUploadWork, planPrint, type UploadRow } from './upload.js';
 
 type Version = [number, number, number, number] | null;
@@ -26,7 +27,7 @@ export const versionSkip = (version: Version, favorite: boolean): 'pre-2.0' | nu
  * queued as a favourite (no rows: a pre-2.0 print looked at before it was in the list), or with
  * pages an earlier run skipped as 'pre-2.0'.
  */
-export const favoriteWork = (rows: Pick<JobRow, 'status' | 'reason'>[] | undefined) =>
+export const favoriteWork = (rows: Pick<RenderJobRow, 'status' | 'reason'>[] | undefined) =>
 	!rows || rows.some((r) => r.status === 'skipped' && r.reason === 'pre-2.0');
 
 /** The run's selection with `--top`'s prints first (by rank), each print once. */
@@ -47,7 +48,7 @@ export function byPrint<T extends { print_id: string }>(rows: Iterable<T>): Map<
 	return out;
 }
 
-export type BatchRow = Pick<JobRow, 'print_id' | 'path' | 'status' | 'reason' | 'attempts' | 'stamp' | 'finished_at'>;
+export type BatchRow = Pick<RenderJobRow, 'print_id' | 'path' | 'status' | 'reason' | 'attempts' | 'stamp' | 'finished_at'>;
 
 export interface BatchState {
 	/** render_jobs rows by print. */

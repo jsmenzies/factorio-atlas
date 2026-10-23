@@ -10,6 +10,10 @@ import { bytes, int, unitRate } from '../metrics.js';
 export type RenderOutcomeKey = 'rendered' | 'unchanged' | 'skipped' | 'failed';
 
 /** In bar order: work done, no-ops, pages not drawn, failures. */
+/** What stopping a render run leaves behind (RunControls' Stop confirmation). */
+export const RENDER_STOP_NOTE =
+	'The renderer finishes the pages in flight and exits. Run the same command again to carry on; rendered pages are never drawn again.';
+
 export const RENDER_OUTCOMES: { key: RenderOutcomeKey; label: string; hint: string; color: string }[] = [
 	{ key: 'rendered', label: 'Rendered', hint: 'drawn and written in this run', color: 'bg-emerald-500' },
 	{ key: 'unchanged', label: 'Unchanged', hint: 'already rendered with the same input; nothing written', color: 'bg-stone-500' },
@@ -94,7 +98,7 @@ export const uploadProgress = (run: Pick<RenderRun, 'upload_target' | 'uploaded'
  * `picking`: a batch still choosing its prints, so `total` is what it picked so far and `goal` its N.
  * Null for rows written before migration 0013, or before the run knows any print.
  */
-export const printProgress = (run: Pick<RenderRun, 'prints_total' | 'prints_done' | 'options'>) => {
+export const printProgress = (run: Pick<RenderRun, 'options'> & Partial<Pick<RenderRun, 'prints_total' | 'prints_done'>>) => {
 	const total = run.prints_total ?? 0;
 	const done = Math.min(total, run.prints_done ?? 0);
 	const batch = run.options.batch;
@@ -104,7 +108,7 @@ export const printProgress = (run: Pick<RenderRun, 'prints_total' | 'prints_done
 };
 
 /** What the run wrote, on average per rendered page and per print with a page rendered in it. */
-export const writtenAverages = (run: Pick<RenderRun, 'bytes' | 'files' | 'rendered' | 'prints_rendered'>) => {
+export const writtenAverages = (run: Pick<RenderRun, 'bytes' | 'files' | 'rendered'> & Partial<Pick<RenderRun, 'prints_rendered'>>) => {
 	const prints = run.prints_rendered ?? 0;
 	return {
 		perPage: run.rendered > 0 ? run.bytes / run.rendered : null,
@@ -125,7 +129,7 @@ export type UploadPace = 'idle' | 'keeping-up' | 'behind' | 'stalled' | 'drainin
  */
 export const uploadSpeed = (
 	run: Pick<RenderRun, 'upload_target' | 'upload_bytes' | 'upload_files' | 'uploaded' | 'uploads_pending' | 'rate' | 'total' | 'done'> &
-		Pick<RenderRun, 'upload_rate_bytes' | 'upload_rate_files' | 'upload_rate_pages'>,
+		Partial<Pick<RenderRun, 'upload_rate_bytes' | 'upload_rate_files' | 'upload_rate_pages'>>,
 	elapsedMs: number,
 	live: boolean
 ) => {

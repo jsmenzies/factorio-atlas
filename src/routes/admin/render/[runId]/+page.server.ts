@@ -2,7 +2,8 @@ import { error } from '@sveltejs/kit';
 import { env } from 'cloudflare:workers';
 import { BUSY_RESULT, orBusy } from '#lib/server/admin/busy.js';
 import { viewerTimeZone } from '#lib/server/admin/pipeline.js';
-import { RENDER_HEARTBEAT_MS, RENDER_STALE_MS, renderControlActions, renderRunPage } from '#lib/server/admin/render.js';
+import { renderControlActions, renderRunPage } from '#lib/server/admin/render.js';
+import { RENDER_HEARTBEAT_MS, RENDER_STALE_MS } from '#lib/server/render-queue.js';
 import type { Actions, PageServerLoad } from './$types';
 
 /** One render run and the pages it last touched, in one call; `busy` while the local database stays locked (no 500). */

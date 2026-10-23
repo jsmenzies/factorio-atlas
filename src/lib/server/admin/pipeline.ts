@@ -5,6 +5,7 @@
 import { fail, type Action, type Cookies } from '@sveltejs/kit';
 import { env } from 'cloudflare:workers';
 import { validTimeZone } from '#lib/components/admin/metrics.js';
+import { BUSY_RESULT, orBusy } from './busy.js';
 import {
 	CONTROL_STATES,
 	HEARTBEAT_MS,
@@ -81,36 +82,43 @@ export const failedPrints = async (db: D1Database, run: PipelineRun, page: numbe
 };
 
 /**
- * Asks the runner to pause, resume or stop at its next heartbeat. Only `control` is written,
- * never `updated_at` (that's the heartbeat). A later request replaces a pending one.
+ * Asks a backfill (`pipeline_runs`) or render run (`render_runs`) to pause, resume or stop at its
+ * next heartbeat. Only `control` is written, never `updated_at` (that's the heartbeat). A later
+ * request replaces a pending one; null withdraws it.
  */
-export const setControl = async (db: D1Database, id: string, control: RunControl | null) => {
+export const setControl = async (db: D1Database, table: 'pipeline_runs' | 'render_runs', id: string, control: RunControl | null) => {
 	const states = control ? CONTROL_STATES[control] : LIVE_STATES;
 	const result = await db
-		.prepare(`UPDATE pipeline_runs SET control = ? WHERE id = ? AND state IN (${states.map(() => '?').join(', ')})`)
+		.prepare(`UPDATE ${table} SET control = ? WHERE id = ? AND state IN (${states.map(() => '?').join(', ')})`)
 		.bind(control, id, ...states)
 		.run();
 	return result.meta.changes > 0;
 };
 
-const control =
-	(value: RunControl | null): Action =>
-	async ({ request }) => {
-		const id = (await request.formData()).get('id');
-		if (typeof id !== 'string' || !id) return fail(400, { message: 'Missing run id.' });
-		if (!(await setControl(env.DB, id, value))) {
-			return fail(409, { message: value ? `This run can't ${value} in its current state.` : 'This run has finished.' });
-		}
-		return { ok: true };
-	};
+/**
+ * Pause, resume, stop and cancel (withdraw) form actions for one kind of run. `busy`: the table is
+ * in the local database a run writes to, so retry its lock (busy.ts) and answer 503 if it holds.
+ */
+export const runControlActions = (table: 'pipeline_runs' | 'render_runs', { busy = false } = {}) => {
+	const control =
+		(value: RunControl | null): Action =>
+		async ({ request }) => {
+			const id = (await request.formData()).get('id');
+			if (typeof id !== 'string' || !id) return fail(400, { message: 'Missing run id.' });
+			const set = () => setControl(env.DB, table, id, value);
+			const changed = busy ? await orBusy(set) : await set();
+			if (changed === BUSY_RESULT)
+				return fail(503, { message: 'The local database is busy (a run is writing to it); try again in a moment.' });
+			if (!changed) {
+				return fail(409, { message: value ? `This run can't ${value} in its current state.` : 'This run has finished.' });
+			}
+			return { ok: true };
+		};
+	return { pause: control('pause'), resume: control('resume'), stop: control('stop'), cancel: control(null) };
+};
 
 /** Form actions shared by /admin/pipeline and /admin/pipeline/[runId]. */
-export const controlActions = {
-	pause: control('pause'),
-	resume: control('resume'),
-	stop: control('stop'),
-	cancel: control(null)
-};
+export const controlActions = runControlActions('pipeline_runs');
 
 /** `?name=` as a positive integer, else the fallback. */
 export const intParam = (url: URL, name: string, fallback: number) => {

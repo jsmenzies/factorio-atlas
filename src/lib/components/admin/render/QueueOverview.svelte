@@ -1,5 +1,6 @@
 <script lang="ts">
-	import type { JobStatus, QueueOverview } from '#lib/server/admin/render.js';
+	import type { QueueOverview } from '#lib/server/admin/render.js';
+	import type { JobStatus } from '#lib/server/render-queue.js';
 	import { bytes, compact, int, percent } from '../metrics.js';
 
 	/** Every page in the queue by status, across all runs (or one run's pages), and what the rendered ones store. */

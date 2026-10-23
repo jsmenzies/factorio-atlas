@@ -2,7 +2,8 @@
 	import { invalidate } from '$app/navigation';
 	import { PIPELINE_DEP } from '../live.svelte.js';
 	import type { RenderRun } from '#lib/server/admin/render.js';
-	import RenderControls from './RenderControls.svelte';
+	import RunControls from '../RunControls.svelte';
+	import { RENDER_STOP_NOTE } from './metrics.js';
 
 	/**
 	 * Start a render batch (`--next N`, optionally `--top N` so the top favourites go first) or resume the last run, from the page. Only under `vite dev`:
@@ -249,7 +250,7 @@
 	{#if error}<p class="text-sm text-rose-300" role="alert">{error}</p>{/if}
 
 	{#if run && live}
-		<RenderControls {run} {heartbeatMs} {message} />
+		<RunControls {run} {heartbeatMs} {message} who="renderer" stopNote={RENDER_STOP_NOTE} />
 	{/if}
 
 	{#if logTail}

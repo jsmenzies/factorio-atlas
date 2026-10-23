@@ -47,7 +47,7 @@ import {
 	type RenderSidecar
 } from '#lib/viewer/game-render.js';
 import { buildIndex, comparePaths, readSidecar } from './files.js';
-import type { JobRow } from './queue.js';
+import type { RenderJobRow } from '#lib/server/render-queue.js';
 import { isAbort, StoreError, withRetries, type RenderStore, type RetryOptions } from './store.js';
 
 export const UPLOAD_TARGETS = ['local', 'prod'] as const;
@@ -79,7 +79,7 @@ export interface UploadRow {
 	failed_at: number | null;
 }
 
-export type UploadJob = Pick<JobRow, 'print_id' | 'path' | 'status' | 'stamp' | 'finished_at'>;
+export type UploadJob = Pick<RenderJobRow, 'print_id' | 'path' | 'status' | 'stamp' | 'finished_at'>;
 
 /** Rows whose pages may have files in the bucket: rendered, or being rendered again (the old version stays up). */
 const KEEPS_FILES = new Set<string>(['done', 'pending', 'rendering']);

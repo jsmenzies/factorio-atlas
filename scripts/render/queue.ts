@@ -5,81 +5,9 @@
  * runner's parent process writes here.
  */
 import { setTimeout as sleep } from 'node:timers/promises';
+import { LIVE_STATES, type RunControl } from '#lib/server/pipeline/runs.js';
+import { RENDER_STALE_MS, type JobStatus, type RenderJobRow, type RenderRunRow } from '#lib/server/render-queue.js';
 import type { DueDelete, UploadRow } from './upload.js';
-
-export type RunState = 'starting' | 'running' | 'paused' | 'stopping' | 'finished' | 'stopped' | 'failed';
-export type RunControl = 'pause' | 'resume' | 'stop';
-export type JobStatus = 'pending' | 'rendering' | 'done' | 'failed' | 'skipped';
-
-/** How often the runner rewrites its row and reads `control`. */
-export const HEARTBEAT_MS = 2_000;
-/** A live-looking run whose heartbeat is older than this is dead (crashed, killed). */
-export const HEARTBEAT_STALE_MS = 30_000;
-
-export interface RunRow {
-	id: string;
-	host: string;
-	source: string;
-	options: string;
-	state: RunState;
-	control: RunControl | null;
-	total: number;
-	done: number;
-	rendered: number;
-	unchanged: number;
-	skipped: number;
-	failed: number;
-	files: number;
-	bytes: number;
-	rate: number | null;
-	eta_seconds: number | null;
-	started_at: number;
-	updated_at: number;
-	finished_at: number | null;
-	error: string | null;
-	/** Uploads (migration 0011): the bucket, pages up, objects put, their bytes, deletes, pages waiting, pages failing, the last error. */
-	upload_target: string | null;
-	uploaded: number;
-	upload_files: number;
-	upload_bytes: number;
-	upload_deleted: number;
-	uploads_pending: number;
-	upload_failed: number;
-	upload_error: string | null;
-	/** Deletions waiting in render_deletes for the target (migration 0012). */
-	upload_deletes_pending: number;
-	/** Prints the run works on, those finished (every page in a final state), those with a page rendered (migration 0013). */
-	prints_total: number;
-	prints_done: number;
-	prints_rendered: number;
-	/** Upload speed (0013): bytes/s and files/s over the last minute, pages/s over the last 5 minutes. */
-	upload_rate_bytes: number | null;
-	upload_rate_files: number | null;
-	upload_rate_pages: number | null;
-}
-
-export interface JobRow {
-	print_id: string;
-	path: string;
-	title: string | null;
-	label: string | null;
-	game_version: string | null;
-	entities: number;
-	input_key: string;
-	status: JobStatus;
-	reason: string | null;
-	attempts: number;
-	run_id: string | null;
-	files: number | null;
-	bytes: number | null;
-	ms: number | null;
-	overview: string | null;
-	stamp: string | null;
-	queued_at: number;
-	started_at: number | null;
-	finished_at: number | null;
-	uploaded_at: number | null;
-}
 
 /** Attempts a page gets at one input key before it's left failed. */
 export const MAX_ATTEMPTS = 3;
@@ -89,14 +17,12 @@ export const MAX_ATTEMPTS = 3;
  * queued nor work for `--next` until the key changes (the page, assets, fpsr or settings), or a run
  * with `--force` or `--retry-failed`. Without `key`, at whatever key the row has.
  */
-export const gaveUp = (row: Pick<JobRow, 'status' | 'attempts'> & Partial<Pick<JobRow, 'input_key'>>, key?: string): boolean =>
+export const gaveUp = (row: Pick<RenderJobRow, 'status' | 'attempts'> & Partial<Pick<RenderJobRow, 'input_key'>>, key?: string): boolean =>
 	row.status === 'failed' && row.attempts >= MAX_ATTEMPTS && (key === undefined || row.input_key === key);
 
 /** `<ISO time to the second>-<4 random chars>`: sorts by start, unique enough. */
 export const newRunId = (now = new Date()) =>
 	`${now.toISOString().replace(/\.\d{3}Z$/, 'Z')}-${Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('')}`;
-
-const LIVE: RunState[] = ['starting', 'running', 'paused', 'stopping'];
 
 const alive = (pid: number) => {
 	try {
@@ -167,7 +93,7 @@ const RUN_COLUMNS = [
 	'upload_rate_bytes',
 	'upload_rate_files',
 	'upload_rate_pages'
-] as const satisfies readonly (keyof RunRow)[];
+] as const satisfies readonly (keyof RenderRunRow)[];
 
 const JOB_COLUMNS = [
 	'print_id',
@@ -189,7 +115,7 @@ const JOB_COLUMNS = [
 	'queued_at',
 	'started_at',
 	'finished_at'
-] as const satisfies readonly (keyof JobRow)[];
+] as const satisfies readonly (keyof RenderJobRow)[];
 
 const UPLOAD_COLUMNS = [
 	'target',
@@ -205,15 +131,15 @@ const UPLOAD_COLUMNS = [
 	'failed_at'
 ] as const satisfies readonly (keyof UploadRow)[];
 
-export type RunnerRun = Omit<RunRow, 'control'>;
+export type RunnerRun = Omit<RenderRunRow, 'control'>;
 /** A row update that can wait for the next heartbeat; with `onlyIf`, applied only while the row has that status. */
 export interface DeferredUpdate {
 	printId: string;
 	path: string;
-	set: Partial<JobRow>;
+	set: Partial<RenderJobRow>;
 	onlyIf?: JobStatus;
 }
-export type JobWrite = Pick<JobRow, (typeof JOB_COLUMNS)[number]>;
+export type JobWrite = Pick<RenderJobRow, (typeof JOB_COLUMNS)[number]>;
 
 export function renderQueue(db: D1Database) {
 	const upsertRun = `INSERT INTO render_runs (${RUN_COLUMNS.join(', ')}) VALUES (${RUN_COLUMNS.map(() => '?').join(', ')})
@@ -224,8 +150,8 @@ export function renderQueue(db: D1Database) {
 		ON CONFLICT (print_id, path) DO UPDATE SET ${JOB_COLUMNS.filter((c) => c !== 'print_id' && c !== 'path')
 			.map((c) => `${c} = excluded.${c}`)
 			.join(', ')}`;
-	const updateStatement = (printId: string, path: string, set: Partial<JobRow>, onlyIf?: JobStatus) => {
-		const cols = Object.keys(set) as (keyof JobRow)[];
+	const updateStatement = (printId: string, path: string, set: Partial<RenderJobRow>, onlyIf?: JobStatus) => {
+		const cols = Object.keys(set) as (keyof RenderJobRow)[];
 		return db
 			.prepare(
 				`UPDATE render_jobs SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE print_id = ? AND path = ?${onlyIf ? ' AND status = ?' : ''}`
@@ -242,11 +168,13 @@ export function renderQueue(db: D1Database) {
 			retrying('live runs', async () =>
 				(
 					await db
-						.prepare(`SELECT id, host, options, updated_at FROM render_runs WHERE state IN (${LIVE.map(() => '?').join(', ')}) AND id != ?`)
-						.bind(...LIVE, except)
-						.all<Pick<RunRow, 'id' | 'host' | 'options' | 'updated_at'>>()
+						.prepare(
+							`SELECT id, host, options, updated_at FROM render_runs WHERE state IN (${LIVE_STATES.map(() => '?').join(', ')}) AND id != ?`
+						)
+						.bind(...LIVE_STATES, except)
+						.all<Pick<RenderRunRow, 'id' | 'host' | 'options' | 'updated_at'>>()
 				).results.filter((r) => {
-					if (now - r.updated_at >= HEARTBEAT_STALE_MS) return false;
+					if (now - r.updated_at >= RENDER_STALE_MS) return false;
 					if (r.host !== host) return true;
 					const pid = (JSON.parse(r.options) as { pid?: number }).pid;
 					return pid === undefined || alive(pid);
@@ -258,9 +186,11 @@ export function renderQueue(db: D1Database) {
 			retrying('dead runs', async () =>
 				(
 					await db
-						.prepare(`SELECT id, options FROM render_runs WHERE state IN (${LIVE.map(() => '?').join(', ')}) AND id != ? AND host = ?`)
-						.bind(...LIVE, except, host)
-						.all<Pick<RunRow, 'id' | 'options'>>()
+						.prepare(
+							`SELECT id, options FROM render_runs WHERE state IN (${LIVE_STATES.map(() => '?').join(', ')}) AND id != ? AND host = ?`
+						)
+						.bind(...LIVE_STATES, except, host)
+						.all<Pick<RenderRunRow, 'id' | 'options'>>()
 				).results.filter((r) => {
 					const pid = (JSON.parse(r.options) as { pid?: number }).pid;
 					return pid !== undefined && !alive(pid);
@@ -286,7 +216,7 @@ export function renderQueue(db: D1Database) {
 		 * Set a row's columns, and read the print's done pages (for its index.json) and how many of
 		 * its pages are still pending or rendering, in one transaction.
 		 */
-		finishJob: (printId: string, path: string, set: Partial<JobRow>) =>
+		finishJob: (printId: string, path: string, set: Partial<RenderJobRow>) =>
 			retrying('finish job', async () => {
 				const [, done, open] = await db.batch([
 					updateStatement(printId, path, set),
@@ -342,7 +272,7 @@ export function renderQueue(db: D1Database) {
 		jobsOf: (printId: string) =>
 			retrying(
 				'jobs of print',
-				async () => (await db.prepare('SELECT * FROM render_jobs WHERE print_id = ?').bind(printId).all<JobRow>()).results
+				async () => (await db.prepare('SELECT * FROM render_jobs WHERE print_id = ?').bind(printId).all<RenderJobRow>()).results
 			),
 
 		/** Pending or rendering rows of a print, any run: while there are some, its tiles may still be needed. */
@@ -369,11 +299,12 @@ export function renderQueue(db: D1Database) {
 		},
 
 		/** Set a few columns of one row. */
-		updateJob: (printId: string, path: string, set: Partial<JobRow>) =>
+		updateJob: (printId: string, path: string, set: Partial<RenderJobRow>) =>
 			retrying('update job', () => updateStatement(printId, path, set).run()),
 
 		/** The newest run, for `--resume`. */
-		latestRun: () => retrying('latest run', () => db.prepare('SELECT * FROM render_runs ORDER BY started_at DESC LIMIT 1').first<RunRow>()),
+		latestRun: () =>
+			retrying('latest run', () => db.prepare('SELECT * FROM render_runs ORDER BY started_at DESC LIMIT 1').first<RenderRunRow>()),
 
 		/** What `--next` needs of every row to tell which prints have work left. */
 		allJobs: () =>
@@ -383,7 +314,7 @@ export function renderQueue(db: D1Database) {
 					(
 						await db
 							.prepare('SELECT print_id, path, status, reason, attempts, stamp, finished_at FROM render_jobs')
-							.all<Pick<JobRow, 'print_id' | 'path' | 'status' | 'reason' | 'attempts' | 'stamp' | 'finished_at'>>()
+							.all<Pick<RenderJobRow, 'print_id' | 'path' | 'status' | 'reason' | 'attempts' | 'stamp' | 'finished_at'>>()
 					).results
 			),
 

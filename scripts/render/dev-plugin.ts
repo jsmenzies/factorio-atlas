@@ -31,15 +31,14 @@ import { homedir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { loadEnv, type Plugin } from 'vite';
+import { LIVE_STATES } from '#lib/server/pipeline/runs.js';
+import { RENDER_STALE_MS } from '#lib/server/render-queue.js';
 import { rendersDir } from '#lib/server/renders-dir.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 /** The run logs, in the renders folder (RENDERS_DIR from .env or the environment; set in configResolved). */
 let LOG_DIR = join(rendersDir(ROOT), 'logs');
 const D1_DIR = join(ROOT, '.wrangler', 'state', 'v3', 'd1', 'miniflare-D1DatabaseObject');
-const LIVE_STATES = ['starting', 'running', 'paused', 'stopping'];
-/** The runner's HEARTBEAT_STALE_MS. */
-const STALE_MS = 30_000;
 const LOG_NAME = /^render-[0-9TZ-]+\.log$/;
 /** SQLite's lock errors: a run writing to the database at that moment. */
 const LOCKED = /SQLITE_BUSY|database is locked/i;
@@ -189,7 +188,7 @@ async function liveRun(): Promise<LiveRun | null | 'busy'> {
 			)
 			.all(...LIVE_STATES) as { id: string; state: string; options: string; updated_at: number }[];
 		for (const r of rows) {
-			if (Date.now() - r.updated_at > STALE_MS) continue;
+			if (Date.now() - r.updated_at > RENDER_STALE_MS) continue;
 			let pid: number | undefined;
 			try {
 				pid = (JSON.parse(r.options) as { pid?: number }).pid;

@@ -1,7 +1,8 @@
 import { env } from 'cloudflare:workers';
 import { BUSY_RESULT, orBusy } from '#lib/server/admin/busy.js';
 import { intParam, viewerTimeZone } from '#lib/server/admin/pipeline.js';
-import { RENDER_HEARTBEAT_MS, RENDER_STALE_MS, renderControlActions, renderDashboard } from '#lib/server/admin/render.js';
+import { renderControlActions, renderDashboard } from '#lib/server/admin/render.js';
+import { RENDER_HEARTBEAT_MS, RENDER_STALE_MS } from '#lib/server/render-queue.js';
 import type { Actions, PageServerLoad } from './$types';
 
 /**

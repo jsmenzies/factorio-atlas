@@ -3,17 +3,10 @@
  * (migration 0010), which `bun run render` fills in the local database as it runs. The runner owns
  * every column except `render_runs.control`, which only this module sets.
  */
-import { fail, type Action } from '@sveltejs/kit';
-import { env } from 'cloudflare:workers';
-import { CONTROL_STATES, LIVE_STATES, type RunControl, type RunState } from '#lib/server/pipeline/runs.js';
-import { BUSY_RESULT, orBusy } from './busy.js';
-import { intParam } from './pipeline.js';
+import { LIVE_STATES } from '#lib/server/pipeline/runs.js';
+import { JOB_STATUSES, RENDER_STALE_MS, type JobStatus, type RenderJobRow, type RenderRunRow } from '#lib/server/render-queue.js';
+import { intParam, runControlActions } from './pipeline.js';
 import { parseScopes, scopeStatements } from './render-scope.js';
-
-/** How often the renderer rewrites its run row and reads `control` (the runner's own HEARTBEAT_MS). */
-export const RENDER_HEARTBEAT_MS = 2_000;
-/** A run that claims to be live with a heartbeat older than this has crashed or its machine is asleep (the runner's HEARTBEAT_STALE_MS). */
-export const RENDER_STALE_MS = 30_000;
 
 /** Run options as the renderer records them; every field optional, since older runs may lack some. */
 export interface RenderRunOptions {
@@ -38,53 +31,6 @@ export interface RenderRunOptions {
 	upload?: string | null;
 	resumedFrom?: string | null;
 	[key: string]: unknown;
-}
-
-export interface RenderRunRow {
-	id: string;
-	host: string;
-	source: string;
-	options: string;
-	state: RunState;
-	control: RunControl | null;
-	total: number;
-	done: number;
-	rendered: number;
-	unchanged: number;
-	skipped: number;
-	failed: number;
-	files: number;
-	bytes: number;
-	rate: number | null;
-	eta_seconds: number | null;
-	started_at: number;
-	updated_at: number;
-	finished_at: number | null;
-	error: string | null;
-	/** Uploads (migration 0011): the bucket ('local', 'prod') or null when the run uploads nothing. */
-	upload_target: string | null;
-	/** Pages up, objects put and their bytes, objects deleted, pages waiting, pages failing, the latest error. */
-	uploaded: number;
-	upload_files: number;
-	upload_bytes: number;
-	upload_deleted: number;
-	uploads_pending: number;
-	upload_failed: number;
-	upload_error: string | null;
-	/** Replaced files waiting out their grace period before deletion, for the target (migration 0012). */
-	upload_deletes_pending: number;
-	/**
-	 * Prints (migration 0013; absent on rows read before it): those the run works on (a batch's
-	 * picks, the ids given, else every print with a 2.0+ page), those whose every page reached a
-	 * final state, and those with a page rendered in this run.
-	 */
-	prints_total?: number;
-	prints_done?: number;
-	prints_rendered?: number;
-	/** Upload speed (0013): bytes/s and files/s over the last minute, pages/s over the last 5 minutes (as `rate`). */
-	upload_rate_bytes?: number | null;
-	upload_rate_files?: number | null;
-	upload_rate_pages?: number | null;
 }
 
 export interface RenderRun extends Omit<RenderRunRow, 'options'> {
@@ -160,9 +106,6 @@ const addRunHistory = (reads: Reads, db: D1Database, before?: number) =>
 			return { runs, older: results.length > RUNS_PAGE ? runs[runs.length - 1].started_at : null };
 		}
 	);
-
-export type JobStatus = 'pending' | 'rendering' | 'done' | 'failed' | 'skipped';
-export const JOB_STATUSES: JobStatus[] = ['pending', 'rendering', 'done', 'failed', 'skipped'];
 
 export interface QueueStatus {
 	pages: number;
@@ -276,24 +219,8 @@ const addCandidateSkips = (reads: Reads, db: D1Database) =>
 		}
 	);
 
-export interface RenderJob {
-	print_id: string;
-	path: string;
-	title: string | null;
-	label: string | null;
-	game_version: string | null;
-	entities: number;
-	status: JobStatus;
-	reason: string | null;
-	attempts: number;
-	run_id: string | null;
-	files: number | null;
-	bytes: number | null;
-	ms: number | null;
-	overview: string | null;
-	stamp: string | null;
-	started_at: number | null;
-	finished_at: number | null;
+/** A page as the job lists show it. */
+export interface RenderJob extends Omit<RenderJobRow, 'input_key' | 'queued_at' | 'uploaded_at'> {
 	/** Whether the print is in this site's database, so its print and render pages exist. */
 	onSite: boolean;
 }
@@ -381,37 +308,5 @@ export const renderRunPage = async (db: D1Database, id: string, url: URL) => {
 	return found ? { run: found, runSkips: skips(), queue: queue(), ...lists() } : null;
 };
 
-/**
- * Asks the renderer to pause, resume or stop at its next heartbeat. Only `control` is written,
- * never `updated_at` (that's the heartbeat). A later request replaces a pending one; null withdraws it.
- */
-export const setRenderControl = async (db: D1Database, id: string, control: RunControl | null) => {
-	const states = control ? CONTROL_STATES[control] : LIVE_STATES;
-	const result = await db
-		.prepare(`UPDATE render_runs SET control = ? WHERE id = ? AND state IN (${states.map(() => '?').join(', ')})`)
-		.bind(control, id, ...states)
-		.run();
-	return result.meta.changes > 0;
-};
-
-const control =
-	(value: RunControl | null): Action =>
-	async ({ request }) => {
-		const id = (await request.formData()).get('id');
-		if (typeof id !== 'string' || !id) return fail(400, { message: 'Missing run id.' });
-		const changed = await orBusy(() => setRenderControl(env.DB, id, value));
-		if (changed === BUSY_RESULT)
-			return fail(503, { message: 'The local database is busy (a run is writing to it); try again in a moment.' });
-		if (!changed) {
-			return fail(409, { message: value ? `This run can't ${value} in its current state.` : 'This run has finished.' });
-		}
-		return { ok: true };
-	};
-
 /** Form actions shared by /admin/render and /admin/render/[runId]. */
-export const renderControlActions = {
-	pause: control('pause'),
-	resume: control('resume'),
-	stop: control('stop'),
-	cancel: control(null)
-};
+export const renderControlActions = runControlActions('render_runs', { busy: true });

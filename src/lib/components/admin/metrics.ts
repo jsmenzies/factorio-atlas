@@ -26,6 +26,10 @@ export const STATE_LABEL: Record<ShownState, string> = {
 	crashed: 'Not responding'
 };
 
+/** What stopping a backfill leaves behind (RunControls' Stop confirmation). */
+export const STOP_NOTE =
+	'The runner finishes the prints in flight and exits. Run the same command again to carry on; finished prints are skipped.';
+
 export const KIND_LABEL: Record<RunKind, string> = { backfill: 'Backfill', sync: 'Daily sync', reanalyze: 'Re-analysis' };
 
 export type OutcomeKey = 'analysed' | 'viewer' | 'reindexed' | 'favorites' | 'unchanged' | 'failed' | 'skipped_failed';
@@ -47,6 +51,16 @@ export const OUTCOMES: { key: OutcomeKey; label: string; hint: string; color: st
 ];
 
 export const outcomeParts = (run: Pick<PipelineRun, OutcomeKey>) => OUTCOMES.map((o) => ({ ...o, n: run[o.key] })).filter((o) => o.n > 0);
+
+/** "1,100 analysed · 24 failed": a run's two biggest outcomes, and failures always (from outcomeParts or renderOutcomeParts). */
+export const outcomeSummary = (parts: { key: string; label: string; n: number }[]) => {
+	const failed = parts.filter((p) => p.key === 'failed');
+	const top = parts
+		.filter((p) => p.key !== 'failed')
+		.sort((a, b) => b.n - a.n)
+		.slice(0, 2);
+	return [...top, ...failed].map((p) => `${compact(p.n)} ${p.label.toLowerCase()}`).join(' · ') || 'nothing done';
+};
 
 const nf = new Intl.NumberFormat('en-GB');
 export const int = (n: number) => nf.format(Math.round(n));

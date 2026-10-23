@@ -1,14 +1,27 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
-	import type { PipelineRun } from '#lib/server/pipeline/runs.js';
+	import type { RunControl, RunState } from '#lib/server/pipeline/runs.js';
 	import { duration } from './metrics.js';
 
 	/**
 	 * Pause / Resume / Stop. Each sets `control`; the runner acts on it at its next heartbeat and
 	 * clears it, so until then the request shows as pending (and can be withdrawn). Works without
-	 * JavaScript: plain form posts, and Stop's confirmation is a <details>.
+	 * JavaScript: plain form posts, and Stop's confirmation is a <details>. For backfill runs and
+	 * render runs alike: `who` acts on the request, `stopNote` says what stopping leaves behind.
 	 */
-	let { run, heartbeatMs, message }: { run: PipelineRun; heartbeatMs: number; message?: string } = $props();
+	let {
+		run,
+		heartbeatMs,
+		message,
+		who,
+		stopNote
+	}: {
+		run: { id: string; state: RunState; control: RunControl | null };
+		heartbeatMs: number;
+		message?: string;
+		who: 'runner' | 'renderer';
+		stopNote: string;
+	} = $props();
 
 	const pending = $derived(run.control);
 	const canPause = $derived((run.state === 'running' || run.state === 'starting') && pending !== 'pause' && pending !== 'stop');
@@ -55,8 +68,7 @@
 				</summary>
 				<div class="absolute left-0 z-10 mt-2 w-72 max-w-[calc(100vw-2rem)] space-y-3 rounded-lg border border-stone-700 bg-stone-900 p-3 shadow-xl">
 					<p class="text-sm text-stone-300">
-						Stop this run? The runner finishes the prints in flight and exits. Run the same command again to carry on; finished prints are
-						skipped.
+						Stop this run? {stopNote}
 					</p>
 					<div class="flex gap-2">
 						<button formaction="?/stop" disabled={!!busy} class="{button} border-rose-700 bg-rose-600/80 text-white hover:bg-rose-600">
@@ -73,7 +85,7 @@
 			<span class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-amber-200">
 				<span class="inline-flex items-center gap-1.5 rounded bg-amber-500/10 px-2 py-1">
 					<span class="size-1.5 animate-pulse rounded-full bg-amber-400" aria-hidden="true"></span>
-					{PENDING[pending]} · waiting for the runner (it checks every {duration(heartbeatMs)})
+					{PENDING[pending]} · waiting for the {who} (it checks every {duration(heartbeatMs)})
 				</span>
 				<button formaction="?/cancel" disabled={!!busy} class="text-xs text-stone-400 underline decoration-stone-600 hover:text-stone-200">
 					{busy === 'cancel' ? 'Withdrawing…' : 'Withdraw'}
