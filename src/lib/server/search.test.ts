@@ -237,7 +237,28 @@ describe('only prints with a render', () => {
 				['-not-ingested', 2]
 			])
 		);
-		expect(more.plan).toEqual({ upsert: [[SPACE, 4]], remove: [], tag: [], untag: [] });
+		expect(more.plan).toEqual({ upsert: [[SPACE, 4]], cover: [], remove: [], tag: [], untag: [] });
+	});
+
+	test("a cover thumbnail goes on the row and on the print's card; a second sync writes nothing", async () => {
+		const cover = { page: '0', stamp: '0123456789', w: 1800, h: 900 };
+		const wanted = new Map([
+			[SPACE, 4],
+			[BELTS, 1],
+			['-not-ingested', 2]
+		]);
+		const r = await syncRenderFlags(db, wanted, { covers: new Map([[SPACE, cover]]) });
+		expect(r.plan.cover).toEqual([[SPACE, cover]]);
+		expect(r.plan.upsert).toEqual([]);
+		const card = (id: string) =>
+			(sqlite.query(searchStatements(params({})).results.sql).all() as Record<string, unknown>[]).find((c) => c.id === id)!;
+		expect(card(SPACE)).toMatchObject({ has_render: 1, cover_page: '0', cover_stamp: '0123456789', cover_w: 1800, cover_h: 900 });
+		expect(card(BELTS)).toMatchObject({ has_render: 1, cover_page: null, cover_stamp: null });
+		expect(card(SCIENCE)).toMatchObject({ has_render: 0, cover_page: null });
+		expect((await syncRenderFlags(db, wanted, { covers: new Map([[SPACE, cover]]) })).rowsWritten).toBe(0);
+		// Without covers the columns are left as they are.
+		expect((await syncRenderFlags(db, wanted)).rowsWritten).toBe(0);
+		expect(card(SPACE)).toMatchObject({ cover_stamp: '0123456789' });
 	});
 
 	test('a re-ingest keeps the token while the row exists', async () => {

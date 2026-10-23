@@ -145,12 +145,23 @@ export interface PrintCard {
 	mods: string[];
 	/** 1 when the print has a game render (a print_renders row). */
 	has_render: number;
+	/**
+	 * The cover page's thumbnail (migration 0018, set by `render:flags` once the print's thumbnails
+	 * are up): book path, overview stamp and size, for thumbFile/thumbTiers in #lib/viewer/thumbs.ts.
+	 * Null without one. Cards don't show it yet.
+	 */
+	cover_page: string | null;
+	cover_stamp: string | null;
+	cover_w: number | null;
+	cover_h: number | null;
 }
 
+/** A card's columns; `r` is print_renders, joined by primary key (CARD_JOIN). */
 const CARD = `p.id, p.title, p.author_id, p.author_name, p.favorites, p.image_id, p.image_type, p.updated_at, p.game_version,
 	p.blueprint_count, p.entity_count, p.requires_space_age, p.uses_circuits, p.uses_trains,
 	p.outputs, p.claimed_versions, p.planets, p.mods,
-	EXISTS (SELECT 1 FROM print_renders r WHERE r.print_id = p.id) AS has_render`;
+	r.print_id IS NOT NULL AS has_render, r.cover_page, r.cover_stamp, r.cover_w, r.cover_h`;
+const CARD_JOIN = 'LEFT JOIN print_renders r ON r.print_id = p.id';
 
 /** ORDER BY for the sorts that don't need a match; each has its own index on prints (migrations 0005, 0016). */
 const ORDERS = { favorites: 'p.favorites DESC', recent: 'p.updated_at DESC', popular: 'p.views_30d DESC, p.favorites DESC' };
@@ -176,7 +187,7 @@ export const searchStatements = (s: SearchParams): SearchStatements => {
 	if (!match) {
 		const order = ORDERS[s.sort === 'relevance' ? 'favorites' : s.sort];
 		return {
-			results: { sql: `SELECT ${CARD} FROM prints p ORDER BY ${order} ${page}`, binds: [] },
+			results: { sql: `SELECT ${CARD} FROM prints p ${CARD_JOIN} ORDER BY ${order} ${page}`, binds: [] },
 			total: { sql: 'SELECT COUNT(*) AS n FROM prints', binds: [] },
 			makes: { sql: `SELECT value, n FROM facet_counts WHERE kind = 'makes' ORDER BY n DESC, value`, binds: [] },
 			uses: { sql: `SELECT value, n FROM facet_counts WHERE kind = 'uses' ORDER BY n DESC, value`, binds: [] },
@@ -187,7 +198,7 @@ export const searchStatements = (s: SearchParams): SearchStatements => {
 	const matched = 'SELECT print_id FROM print_search WHERE print_search MATCH ?1';
 	return {
 		results: {
-			sql: `SELECT ${CARD} FROM print_search JOIN prints p ON p.id = print_search.print_id
+			sql: `SELECT ${CARD} FROM print_search JOIN prints p ON p.id = print_search.print_id ${CARD_JOIN}
 				WHERE print_search MATCH ?1 ORDER BY ${order} ${page}`,
 			binds: [match]
 		},

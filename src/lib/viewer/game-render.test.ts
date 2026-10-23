@@ -86,7 +86,10 @@ describe('game render', () => {
 			'3/1.page.json',
 			'12.abcdef0123.avif',
 			't/0123456789abcdef.avif',
-			'index.json'
+			'index.json',
+			'root.0123456789.t320.avif',
+			'3/1.0123456789.t960-v2.avif',
+			'thumbs.json'
 		])
 			expect(RENDER_FILE.test(ok)).toBe(true);
 		for (const bad of [
@@ -102,7 +105,10 @@ describe('game render', () => {
 			't/0123.avif',
 			't/0123456789ABCDEF.avif',
 			't/../index.json',
-			'x/index.json'
+			'x/index.json',
+			'root.0123456789.t32.avif',
+			'root.0123456789.320.avif',
+			'3/thumbs.json'
 		])
 			expect(RENDER_FILE.test(bad)).toBe(false);
 	});
@@ -111,6 +117,8 @@ describe('game render', () => {
 		expect(renderCacheControl('t/0123456789abcdef.avif')).toBe('public, max-age=31536000, immutable');
 		expect(renderCacheControl('3/1.0123456789.avif')).toBe('public, max-age=31536000, immutable');
 		expect(renderCacheControl('index.json')).toBe('public, max-age=60');
+		expect(renderCacheControl('thumbs.json')).toBe('public, max-age=60');
+		expect(renderCacheControl('root.0123456789.t320.avif')).toBe('public, max-age=31536000, immutable');
 		expect(renderCacheControl('3/1.json')).toBe('public, max-age=300');
 		expect(renderCacheControl('root.page.json')).toBe('public, max-age=300');
 	});

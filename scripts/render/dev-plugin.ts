@@ -379,9 +379,10 @@ export function renderControl(): Plugin {
 		apply: 'serve',
 		configResolved(c) {
 			env = loadEnv(c.mode, c.root, '');
-			// `bun run dev` doesn't pass .env to Vite, so hand RENDERS_DIR on: the dev site's render route
-			// (lib/server/dev-files.ts) and the runs started here read process.env.
+			// `bun run dev` doesn't pass .env to Vite, so hand RENDERS_DIR and THUMBS_DIR on: the dev site's
+			// render route (lib/server/dev-files.ts) and the runs started here read process.env.
 			if (env.RENDERS_DIR && !process.env.RENDERS_DIR) process.env.RENDERS_DIR = env.RENDERS_DIR;
+			if (env.THUMBS_DIR && !process.env.THUMBS_DIR) process.env.THUMBS_DIR = env.THUMBS_DIR;
 			LOG_DIR = join(rendersDir(ROOT), 'logs');
 		},
 		configureServer(server) {

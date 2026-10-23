@@ -26,7 +26,8 @@ export const renderBase = (id: string): string => {
 /** `key` is `<print id>/<file>`; callers check `<file>` against RENDER_FILE first. */
 export async function getRenderFile(key: string): Promise<RenderFile | null> {
 	if (dev) {
-		const file = await readDataFile('renders', key);
+		// Page thumbnails sit in their own folder on disk (THUMBS_DIR), beside the renders in the bucket.
+		const file = (await readDataFile('renders', key)) ?? (await readDataFile('thumbs', key));
 		if (file) return file;
 	}
 	const bucket = (env as Partial<Env>).RENDERS;

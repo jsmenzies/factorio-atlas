@@ -32,6 +32,7 @@
 		"render:top": "bun scripts/render-scope.ts top",
 		"render:check": "bun scripts/render-scope.ts check",
 		"render:flags": "bun scripts/render-flags.ts",
+		"render:thumbs": "bun scripts/render-thumbs.ts",
 		"views:sync": "bun scripts/views-sync.ts",
 		"authors": "bun scripts/authors.ts",
 		"game-data": "bun scripts/build-game-data.ts",

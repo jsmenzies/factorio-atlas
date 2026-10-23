@@ -104,9 +104,12 @@ export const STAMP = /^[0-9a-f]{10}$/;
 
 /**
  * Book paths are index numbers joined by "/"; anything else is not a render file. Every .avif is
- * named by its content (tiles by pixel hash, overviews by stamp), so it never changes.
+ * named by its content (tiles by pixel hash, overviews by stamp), so it never changes. Page
+ * thumbnails (`<base>.<stamp>.t<tier>[-v<n>].avif`) and their `thumbs.json` are uploaded beside the
+ * renders by `render:thumbs` (#lib/viewer/thumbs.ts).
  */
-export const RENDER_FILE = /^(?:(?:root|\d+(?:\/\d+)*)\.(?:[0-9a-f]{10}\.avif|json|page\.json)|t\/[0-9a-f]{16}\.avif|index\.json)$/;
+export const RENDER_FILE =
+	/^(?:(?:root|\d+(?:\/\d+)*)\.(?:[0-9a-f]{10}(?:\.t\d{3,4}(?:-v\d+)?)?\.avif|json|page\.json)|t\/[0-9a-f]{16}\.avif|index\.json|thumbs\.json)$/;
 
 /** The overview's name, `<base>.<stamp>.avif`: a re-render writes a new file, so a URL can be cached for good. */
 export const overviewFile = (path: string, stamp: string) => `${pageBase(path)}.${stamp}.avif`;
@@ -116,11 +119,15 @@ export const tileHashFile = (hash: string) => `t/${hash}.avif`;
 
 /**
  * Cache-Control for a render file (relative to its print), the same in the bucket and from the
- * Worker: images are named by content and never change; index.json changes as pages render;
+ * Worker: images are named by content and never change; index.json (and thumbs.json) change as pages render;
  * sidecars and page data keep their names across re-renders.
  */
 export const renderCacheControl = (file: string) =>
-	file.endsWith('.avif') ? 'public, max-age=31536000, immutable' : file === 'index.json' ? 'public, max-age=60' : 'public, max-age=300';
+	file.endsWith('.avif')
+		? 'public, max-age=31536000, immutable'
+		: file === 'index.json' || file === 'thumbs.json'
+			? 'public, max-age=60'
+			: 'public, max-age=300';
 
 /** The file for one tile of `level`, or null when the tile is transparent (or out of range). */
 export const tileFile = (level: Pick<RenderLevel, 'cols' | 'rows' | 'tiles'>, col: number, row: number): string | null => {

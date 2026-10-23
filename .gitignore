@@ -37,6 +37,8 @@ vite.config.ts.timestamp-*
 # Game renders and fpsr asset bundles. Renders made from real sprites derive from Wube's
 # art and must never be committed; atlases (assets-out) stay on the machine that made them.
 /data/renders/
+# Card thumbnails made from those renders (`bun run render:thumbs`).
+/data/thumbs/
 # Game icons and other sprite files from `bun run icons`: Wube's art, never committed.
 /data/sprites/
 /.cache/

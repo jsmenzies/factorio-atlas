@@ -21,9 +21,19 @@ export interface FtsFlag {
 	flagged: number;
 }
 
+/** A search card's render thumbnail (migration 0018): the cover page, its overview's stamp and size. */
+export interface RenderCover {
+	page: string;
+	stamp: string;
+	w: number;
+	h: number;
+}
+
 export interface RenderFlagState {
 	/** print_renders: print id → pages. */
 	rows: Map<string, number>;
+	/** print_renders' cover columns, when the sync manages them: print id → cover (absent: none). */
+	covers?: Map<string, RenderCover>;
 	/** Every FTS row, with whether it carries the token. */
 	fts: FtsFlag[];
 }
@@ -31,6 +41,8 @@ export interface RenderFlagState {
 export interface RenderFlagPlan {
 	/** print_renders rows to insert or update: [print id, pages]. */
 	upsert: [string, number][];
+	/** Rows whose cover columns to set (null: clear), when covers are managed. */
+	cover: [string, RenderCover | null][];
 	/** print_renders rows to delete. */
 	remove: string[];
 	/** FTS rowids that need the token, and rowids that must lose it. */
@@ -38,28 +50,58 @@ export interface RenderFlagPlan {
 	untag: number[];
 }
 
-/** The writes that bring `state` to `wanted` (print id → pages listed in its index, ≥ 1). Pure. */
-export function planRenderFlags(wanted: Map<string, number>, state: RenderFlagState): RenderFlagPlan {
+const sameCover = (a: RenderCover | undefined | null, b: RenderCover | undefined | null) =>
+	(a ?? null) === (b ?? null) || (!!a && !!b && a.page === b.page && a.stamp === b.stamp && a.w === b.w && a.h === b.h);
+
+/**
+ * The writes that bring `state` to `wanted` (print id → pages listed in its index, ≥ 1), and, when
+ * `covers` is given, each flagged print's cover columns to `covers` (absent: none). Pure.
+ */
+export function planRenderFlags(wanted: Map<string, number>, state: RenderFlagState, covers?: Map<string, RenderCover>): RenderFlagPlan {
 	const has = (id: string) => (wanted.get(id) ?? 0) > 0;
+	const byId = (a: [string, unknown], b: [string, unknown]) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
 	return {
-		upsert: [...wanted].filter(([id, pages]) => pages > 0 && state.rows.get(id) !== pages).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+		upsert: [...wanted].filter(([id, pages]) => pages > 0 && state.rows.get(id) !== pages).sort(byId),
+		cover: covers
+			? [...wanted]
+					.filter(([id, pages]) => pages > 0 && !sameCover(covers.get(id), state.covers?.get(id)))
+					.map(([id]): [string, RenderCover | null] => [id, covers.get(id) ?? null])
+					.sort(byId)
+			: [],
 		remove: [...state.rows.keys()].filter((id) => !has(id)).sort(),
 		tag: state.fts.filter((f) => !f.flagged && has(f.print_id)).map((f) => f.rowid),
 		untag: state.fts.filter((f) => !!f.flagged && !has(f.print_id)).map((f) => f.rowid)
 	};
 }
 
-export const planSize = (p: RenderFlagPlan) => p.upsert.length + p.remove.length + p.tag.length + p.untag.length;
+export const planSize = (p: RenderFlagPlan) => p.upsert.length + p.cover.length + p.remove.length + p.tag.length + p.untag.length;
 
-/** print_renders and the token on every FTS row, in pages (by primary key and by rowid, so no read sorts the table). */
-export async function loadRenderFlagState(db: D1Database, pageSize = 5000): Promise<RenderFlagState> {
+/**
+ * print_renders and the token on every FTS row, in pages (by primary key and by rowid, so no read
+ * sorts the table); with `covers`, also the cover columns (migration 0018).
+ */
+export async function loadRenderFlagState(db: D1Database, pageSize = 5000, covers = false): Promise<RenderFlagState> {
 	const rows = new Map<string, number>();
+	const coverMap = new Map<string, RenderCover>();
+	type Row = {
+		print_id: string;
+		pages: number;
+		cover_page?: string | null;
+		cover_stamp?: string | null;
+		cover_w?: number | null;
+		cover_h?: number | null;
+	};
+	const cols = covers ? 'print_id, pages, cover_page, cover_stamp, cover_w, cover_h' : 'print_id, pages';
 	for (let after = ''; ;) {
 		const { results } = await db
-			.prepare('SELECT print_id, pages FROM print_renders WHERE print_id > ? ORDER BY print_id LIMIT ?')
+			.prepare(`SELECT ${cols} FROM print_renders WHERE print_id > ? ORDER BY print_id LIMIT ?`)
 			.bind(after, pageSize)
-			.all<{ print_id: string; pages: number }>();
-		for (const r of results) rows.set(r.print_id, r.pages);
+			.all<Row>();
+		for (const r of results) {
+			rows.set(r.print_id, r.pages);
+			if (r.cover_page != null && r.cover_stamp && r.cover_w && r.cover_h)
+				coverMap.set(r.print_id, { page: r.cover_page, stamp: r.cover_stamp, w: r.cover_w, h: r.cover_h });
+		}
 		if (results.length < pageSize) break;
 		after = results[results.length - 1].print_id;
 	}
@@ -73,7 +115,7 @@ export async function loadRenderFlagState(db: D1Database, pageSize = 5000): Prom
 		if (results.length < pageSize) break;
 		after = results[results.length - 1].rowid;
 	}
-	return { rows, fts };
+	return covers ? { rows, covers: coverMap, fts } : { rows, fts };
 }
 
 /** Bound parameters per statement stay under D1's 100. */
@@ -90,6 +132,12 @@ export function renderFlagStatements(db: D1Database, plan: RenderFlagPlan, now =
 					ON CONFLICT (print_id) DO UPDATE SET pages = excluded.pages, updated_at = excluded.updated_at`
 				)
 				.bind(...c.flatMap(([id, pages]) => [id, pages, now]))
+		),
+		// After the upserts, so a newly flagged print's row exists.
+		...plan.cover.map(([id, c]) =>
+			db
+				.prepare('UPDATE print_renders SET cover_page = ?, cover_stamp = ?, cover_w = ?, cover_h = ?, updated_at = ? WHERE print_id = ?')
+				.bind(c?.page ?? null, c?.stamp ?? null, c?.w ?? null, c?.h ?? null, now, id)
 		),
 		...chunks(plan.remove, 99).map((c) => db.prepare(`DELETE FROM print_renders WHERE print_id IN (${marks(c.length)})`).bind(...c)),
 		// The token goes first, so facetText's cap never cuts it. The guards keep a repeat harmless.
@@ -125,10 +173,17 @@ export interface RenderFlagResult {
 export async function syncRenderFlags(
 	db: D1Database,
 	wanted: Map<string, number>,
-	options: { dryRun?: boolean; batchSize?: number; now?: number; onBatch?: (done: number, total: number) => void } = {}
+	options: {
+		dryRun?: boolean;
+		batchSize?: number;
+		now?: number;
+		onBatch?: (done: number, total: number) => void;
+		/** Each flagged print's search-card thumbnail (absent: none); without it the cover columns are left alone. */
+		covers?: Map<string, RenderCover>;
+	} = {}
 ): Promise<RenderFlagResult> {
-	const state = await loadRenderFlagState(db);
-	const plan = planRenderFlags(wanted, state);
+	const state = await loadRenderFlagState(db, 5000, !!options.covers);
+	const plan = planRenderFlags(wanted, state, options.covers);
 	const flagged = [...wanted.values()].filter((n) => n > 0).length;
 	const searchable = state.fts.filter((f) => (wanted.get(f.print_id) ?? 0) > 0).length;
 	let rowsWritten = 0;
@@ -140,7 +195,7 @@ export async function syncRenderFlags(
 			rowsWritten += results.reduce((n, r) => n + (r.meta?.rows_written ?? 0), 0);
 			options.onBatch?.(Math.min(i + size, stmts.length), stmts.length);
 		}
-		// Cards show render badges, so cached pages go (lib/server/page-cache.ts).
+		// Cards show render badges (and may show the cover thumbnail), so cached pages go (lib/server/page-cache.ts).
 		if (rowsWritten > 0) await bumpPageVersion(db).run();
 	}
 	return { plan, flagged, searchable, rowsWritten };

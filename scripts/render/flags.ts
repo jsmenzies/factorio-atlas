@@ -12,14 +12,18 @@ import { Database } from 'bun:sqlite';
 import { existsSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { rendersDir } from '#lib/server/renders-dir.js';
+import type { RenderCover } from '#lib/server/pipeline/render-flags.js';
+import { rendersDir, thumbsDir } from '#lib/server/renders-dir.js';
 import type { RenderIndex } from '#lib/viewer/game-render.js';
+import { THUMBS_INDEX, type ThumbsIndex } from '#lib/viewer/thumbs.js';
+import { comparePaths } from './files.js';
 import { byPrint } from './scope.js';
 import { planPrint, type UploadJob, type UploadRow } from './upload.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 export const LOCAL_D1_DIR = join(ROOT, '.wrangler', 'state', 'v3', 'd1', 'miniflare-D1DatabaseObject');
 export const RENDERS_DIR = rendersDir(ROOT);
+export const THUMBS_DIR = thumbsDir(ROOT);
 
 /** Pages each print has up in `target`, by print id (only prints with ≥ 1). Pure. */
 export function uploadedPages(jobs: UploadJob[], uploads: UploadRow[]): Map<string, number> {
@@ -80,5 +84,61 @@ export async function diskPages(dir = RENDERS_DIR): Promise<Map<string, number>>
 			}
 		})
 	);
+	return out;
+}
+
+/** A print's search-card thumbnail: its first page in book order (the render's cover) in thumbs.json, or null. Pure. */
+export function coverOf(index: ThumbsIndex | null | undefined): RenderCover | null {
+	const paths = Object.keys(index?.pages ?? {}).sort(comparePaths);
+	if (!paths.length) return null;
+	const p = index!.pages[paths[0]];
+	return { page: paths[0], stamp: p.stamp, w: p.w, h: p.h };
+}
+
+/** The thumbs.json each print has in `target`'s bucket (thumb_uploads, migration 0018), from the local D1 file, read-only. */
+export function readThumbUploads(file: string, target: string): Map<string, ThumbsIndex> {
+	const db = new Database(file, { readonly: true });
+	try {
+		db.run('PRAGMA busy_timeout = 10000');
+		if (!db.query(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'thumb_uploads'`).get())
+			throw new Error('the local D1 database has no thumb_uploads: run `bun run db:migrate`');
+		const rows = db.query('SELECT print_id, thumbs FROM thumb_uploads WHERE target = ?').all(target) as {
+			print_id: string;
+			thumbs: string;
+		}[];
+		return new Map(rows.map((r) => [r.print_id, JSON.parse(r.thumbs) as ThumbsIndex]));
+	} finally {
+		db.close();
+	}
+}
+
+/** Each print's <thumbs dir>/<id>/thumbs.json, for the local stage (the dev site reads the thumbs folder first). */
+export async function diskThumbs(dir = THUMBS_DIR): Promise<Map<string, ThumbsIndex>> {
+	const out = new Map<string, ThumbsIndex>();
+	if (!existsSync(dir)) return out;
+	const ids = readdirSync(dir, { withFileTypes: true })
+		.filter((d) => d.isDirectory())
+		.map((d) => d.name);
+	await Promise.all(
+		ids.map(async (id) => {
+			try {
+				const index = JSON.parse(await readFile(join(dir, id, THUMBS_INDEX), 'utf8')) as ThumbsIndex;
+				if (index.v === 1) out.set(id, index);
+			} catch {
+				// no thumbnails yet
+			}
+		})
+	);
+	return out;
+}
+
+/** Each print's cover from the first source that has thumbnails for it. */
+export function coversFrom(...sources: Map<string, ThumbsIndex>[]): Map<string, RenderCover> {
+	const out = new Map<string, RenderCover>();
+	for (const s of sources)
+		for (const [id, index] of s) {
+			const c = out.has(id) ? null : coverOf(index);
+			if (c) out.set(id, c);
+		}
 	return out;
 }

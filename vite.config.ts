@@ -9,7 +9,7 @@ export default defineConfig({
 		// Render output and the local D1/R2 hold hundreds of thousands of files that runs rewrite
 		// constantly; watching them costs the dev server one inotify watch per file, gigabytes of
 		// memory and a busy CPU. No module is ever imported from them.
-		watch: { ignored: ['**/data/renders/**', '**/.wrangler/**'] }
+		watch: { ignored: ['**/data/renders/**', '**/data/thumbs/**', '**/.wrangler/**'] }
 	},
 	plugins: [
 		// Dev only: starts render runs for /admin/render (scripts/render/dev-plugin.ts).
