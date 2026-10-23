@@ -84,6 +84,7 @@
 		...data.params.module.map((v) => ({ key: 'module', value: v, label: `Module ${signalName(v)}`, icon: `item:${v}` })),
 		...data.params.version.map((v) => ({ key: 'version', value: v, label: `Factorio ${v}` })),
 		...data.params.tag.map((v) => ({ key: 'tag', value: v, label: parseTag(v).label })),
+		...(data.params.author ? [{ key: 'author', value: data.params.author, label: `By ${data.authorName ?? 'this author'}` }] : []),
 		...(data.params.spaceAge
 			? [{ key: 'spaceAge', value: data.params.spaceAge, label: data.params.spaceAge === 'yes' ? 'Space Age' : 'No Space Age needed' }]
 			: []),
@@ -158,7 +159,7 @@
 		<SearchBox value={data.params.q} items={data.picker} icons={data.icons} onpick={pickItem} />
 	{/key}
 	<RenderToggle on={data.params.render} href={toggle('render', '1')} />
-	{#each [...MULTI_FILTERS, 'spaceAge', 'circuits', 'trains', 'render', 'sort'] as key (key)}
+	{#each [...MULTI_FILTERS, 'author', 'spaceAge', 'circuits', 'trains', 'render', 'sort'] as key (key)}
 		{#each page.url.searchParams.getAll(key).filter(Boolean) as value, i (i)}
 			<input type="hidden" name={key} {value} />
 		{/each}

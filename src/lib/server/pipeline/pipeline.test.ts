@@ -58,6 +58,7 @@ const harness = (id = ID) => {
 		Layer.succeed(PrintRepository, {
 			getState: (id) => Effect.succeed(states.get(id) ?? null),
 			rebuildFacets: () => Effect.void,
+			authorName: () => Effect.succeed(null),
 			upsert: (p) =>
 				Effect.sync(() => {
 					writes.upserts++;

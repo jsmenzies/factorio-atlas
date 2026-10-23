@@ -49,6 +49,13 @@ export const toPrintDoc = (id: string, sourceUrl: string, r: FirebaseRecord, ana
 	analysis
 });
 
+/** A serialised document credited to `name`; unchanged (the same string) when it already is, or with no name. */
+export const withAuthorName = (text: string, name: string | null): string => {
+	if (name === null) return text;
+	const doc = JSON.parse(text) as PrintDoc;
+	return doc.print.author_name === name ? text : JSON.stringify({ ...doc, print: { ...doc.print, author_name: name } });
+};
+
 export const parsePrintDoc = (text: string | null): PrintDoc | null => {
 	if (text === null) return null;
 	try {

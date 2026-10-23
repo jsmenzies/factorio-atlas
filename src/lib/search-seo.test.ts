@@ -26,6 +26,7 @@ describe('searchPage', () => {
 			'version=2.0',
 			'spaceAge=yes',
 			'tag=/x/',
+			'author=h5YXq2',
 			'p=2',
 			'makes=item:rail&p=2'
 		])

@@ -8,7 +8,7 @@
 import { MULTI_FILTERS } from './filters.js';
 
 /** Query keys that change a search's results or their order; anything else (utm_…, fbclid) doesn't. */
-const SEARCH_KEYS = ['q', ...MULTI_FILTERS, 'spaceAge', 'circuits', 'trains', 'render', 'sort', 'p'];
+const SEARCH_KEYS = ['q', ...MULTI_FILTERS, 'author', 'spaceAge', 'circuits', 'trains', 'render', 'sort', 'p'];
 
 export type Landing = { key: 'makes' | 'uses'; value: string };
 export type SearchPage = { kind: 'home' } | ({ kind: 'landing' } & Landing) | null;

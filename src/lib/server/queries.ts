@@ -1,5 +1,5 @@
 import type { MultiFilter } from '#lib/filters.js';
-import { RENDER_TOKEN, slug, versionTokens } from './pipeline/repository';
+import { authorToken, RENDER_TOKEN, slug, versionTokens } from './pipeline/repository';
 
 export { MULTI_FILTERS, type MultiFilter } from '#lib/filters.js';
 
@@ -15,6 +15,8 @@ export interface SearchParams {
 	version: string[];
 	/** Raw factorioprints author tags, e.g. "/general/tileable/". */
 	tag: string[];
+	/** One author's prints, by factorioprints user id (`?author=`; the `by_*` facet token). */
+	author: string | null;
 	spaceAge: 'yes' | 'no' | null;
 	circuits: boolean;
 	trains: boolean;
@@ -57,6 +59,7 @@ export const parseSearch = (url: URL): SearchParams => {
 	// Every value of a repeated filter, trimmed, blanks and repeats dropped, at most MAX_FILTER_VALUES.
 	const all = (k: MultiFilter) => [...new Set(url.searchParams.getAll(k).map((v) => v.trim()))].filter(Boolean).slice(0, MAX_FILTER_VALUES);
 	const sa = g('spaceAge');
+	const author = g('author');
 	const q = clipQuery(g('q') ?? '');
 	const sort = g('sort');
 	return {
@@ -69,6 +72,8 @@ export const parseSearch = (url: URL): SearchParams => {
 		module: all('module'),
 		version: all('version'),
 		tag: all('tag'),
+		// User ids are letters and digits; anything else can't be one, so it matches nothing.
+		author: author === null ? null : /^[A-Za-z0-9]{1,64}$/.test(author) ? author : 'none',
 		spaceAge: sa === 'yes' || sa === 'no' ? sa : null,
 		circuits: g('circuits') === '1',
 		trains: g('trains') === '1',
@@ -88,7 +93,7 @@ const textQuery = (q: string) =>
 		.join(' ');
 
 /** The FTS columns free text searches; `facets` only ever matches whole filter tokens. */
-const TEXT_COLUMNS = '{title description labels entities recipes nicknames}';
+const TEXT_COLUMNS = '{title description labels entities recipes nicknames author}';
 
 /** Filter tokens for the FTS `facets` column (written by `facetTokens` in repository.ts). */
 export const filterTokens = (s: SearchParams): string[] => {
@@ -101,6 +106,7 @@ export const filterTokens = (s: SearchParams): string[] => {
 	// "2.0" matches 2.0.x saves and "2.0" claims; a version that isn't numbers matches nothing.
 	for (const v of s.version) tokens.push(versionTokens(v).at(-1) ?? 'v_none');
 	for (const v of s.tag) tokens.push(`tag_${slug(v) || 'none'}`);
+	if (s.author) tokens.push(authorToken(s.author));
 	if (s.spaceAge) tokens.push(s.spaceAge === 'yes' ? 'sa_yes' : 'sa_no');
 	if (s.circuits) tokens.push('uses_circuits');
 	if (s.trains) tokens.push('uses_trains');
@@ -121,6 +127,7 @@ export const matchExpression = (s: SearchParams): string => {
 export interface PrintCard {
 	id: string;
 	title: string;
+	author_id: string | null;
 	author_name: string | null;
 	favorites: number;
 	image_id: string | null;
@@ -140,7 +147,7 @@ export interface PrintCard {
 	has_render: number;
 }
 
-const CARD = `p.id, p.title, p.author_name, p.favorites, p.image_id, p.image_type, p.updated_at, p.game_version,
+const CARD = `p.id, p.title, p.author_id, p.author_name, p.favorites, p.image_id, p.image_type, p.updated_at, p.game_version,
 	p.blueprint_count, p.entity_count, p.requires_space_age, p.uses_circuits, p.uses_trains,
 	p.outputs, p.claimed_versions, p.planets, p.mods,
 	EXISTS (SELECT 1 FROM print_renders r WHERE r.print_id = p.id) AS has_render`;
@@ -148,8 +155,8 @@ const CARD = `p.id, p.title, p.author_name, p.favorites, p.image_id, p.image_typ
 /** ORDER BY for the sorts that don't need a match; each has its own index on prints (migrations 0005, 0016). */
 const ORDERS = { favorites: 'p.favorites DESC', recent: 'p.updated_at DESC', popular: 'p.views_30d DESC, p.favorites DESC' };
 
-/** Title counts most for relevance, then page labels and nicknames (weights by FTS column). */
-const RELEVANCE = 'bm25(print_search, 0, 10, 1, 3, 1, 1, 2, 0)';
+/** Title counts most for relevance, then the author, page labels and nicknames (weights by FTS column). */
+const RELEVANCE = 'bm25(print_search, 0, 10, 1, 3, 1, 1, 2, 5, 0)';
 
 export interface Statement {
 	sql: string;

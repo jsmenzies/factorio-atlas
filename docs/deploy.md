@@ -351,6 +351,29 @@ in place of your login. The deploy binds it to the cron Worker as a secret; with
 warns and skips that Worker. `views:sync` reaches prod's D1 through the backfill's remote bindings
 (`wrangler login`, Node on PATH), and the deployed database must have migration 0016.
 
+## Author names
+
+Most factorioprints records carry only the author's user id; the name is kept in Firebase's public
+`users/<id>/displayName`. `bun run authors` puts names on a stage's prints: on the search cards, in
+the search index (typed text finds an author; `?author=<id>` lists their prints, linked from each
+print page) and in each print's R2 document. Names come from the prints' own records first, then
+one Firebase lookup per remaining author, at most 5 a second, since Firebase's bandwidth is billed
+to factorioprints. Every answer is kept, in the stage's `authors` table (migration 0017) and in
+`.cache/authors/firebase.json`, so no author is ever looked up twice, from any stage. A print whose
+record names its author keeps that name.
+
+```sh
+bun run authors --stage prod --dry-run   # what it would do
+bun run authors --stage prod             # asks before writing; --yes skips that; Ctrl-C stops and saves
+bun run authors --stage local            # the local D1 and bucket (reuses earlier answers)
+```
+
+It's resumable: a stopped run saves what came back, and the next one carries on (`--limit N` asks
+about at most N authors). New prints get their author's name at ingest when the table has it; run
+the command again to look up authors who are new to the site. It reaches prod through the
+backfill's remote bindings (`wrangler login`, Node on PATH), and the deployed database must have
+migration 0017.
+
 ## Swapping in a fresh D1 database
 
 D1 databases are numbered per stage in `DATABASES` in `infra/databases.ts`.

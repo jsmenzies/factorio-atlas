@@ -32,5 +32,7 @@ export const load: PageServerLoad = async ({ url }) => {
 		},
 		found.results.map((r) => r.title)
 	);
-	return { params, ...found, pageSize: PAGE_SIZE, icons, picker };
+	// `?author=`: every result is theirs, so the first names them for the filter's chip.
+	const authorName = params.author ? (found.results[0]?.author_name ?? null) : null;
+	return { params, ...found, pageSize: PAGE_SIZE, icons, picker, authorName };
 };

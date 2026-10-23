@@ -51,7 +51,12 @@
 		<h1 class="text-2xl font-semibold text-stone-100"><RichText text={title} {icons} size={26} /></h1>
 	</div>
 	<p class="text-sm text-stone-400">
-		by {print.author_name ?? 'unknown author'} · ★ {print.favorites} ·
+		by {#if print.author_id}<a
+				class="text-stone-300 underline decoration-stone-600 hover:text-amber-300"
+				href="/?author={print.author_id}"
+				rel={searchRel(`/?author=${print.author_id}`)}
+				title="Every print by this author">{print.author_name ?? 'unknown author'}</a
+			>{:else}unknown author{/if} · ★ {print.favorites} ·
 		<a class="text-amber-400 underline" href={sourceUrl(print.id)} rel="external">original on factorioprints.com</a>
 	</p>
 	<!-- On phones the sidebar (and its copy button) sits at the very bottom. -->

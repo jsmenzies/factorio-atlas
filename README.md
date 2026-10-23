@@ -72,6 +72,8 @@ GitHub mirror of factorioprints (motlin/factorio-blueprint-firebase-cdn, one JSO
   `facet_counts` table when unfiltered and are counted exactly over the matches otherwise.
   Filters that take several values (`makes`, `takes`, `uses`, `recipe`, `module`, `version`,
   `tag`) stack: `?makes=a&makes=b` matches prints that make both.
+  Each print's author name is a column too, and `?author=<id>` is a `by_<id>` token; names come
+  from the `authors` table (`bun run authors`).
   "Only prints with a render" (`?render=1`) is the `render_yes` token, set from the
   `print_renders` table by `bun run render:flags`, so a re-ingest keeps it.
   "Popular this month" (`?sort=popular`) orders by `prints.views_30d`: each print page sends one
@@ -166,6 +168,7 @@ this repository.
 | `bun run render … --upload local\|prod`                        | also upload each finished page to the local RENDERS bucket or the deployed one (needs an R2 API token; see docs/deploy.md, "Uploading renders")                                                                                                      |
 | `bun run render:resume`                                        | a new run with the latest run's options (`--resume`; flags given override them)                                                                                                                                                                      |
 | `bun run render:flags --stage local\|prod`                     | mark the prints with a render in that stage's bucket for the search filter (after uploads; `--dry-run`, `--db N`, `--yes`; see docs/deploy.md, "Uploading renders")                                                                                  |
+| `bun run authors --stage local\|prod`                          | put author names on prints whose record has only the author's id: records first, then one Firebase lookup per author, at most 5/s, never repeated (`--dry-run`, `--limit N`, `--db N`, `--yes`; see docs/deploy.md, "Author names")                  |
 | `bun run views:sync --stage local\|prod`                       | total prod's page views over the last 30 days into that stage's D1 for the Popular sort (`--dry-run`, `--db N`, `--yes`; needs `ANALYTICS_API_TOKEN`; see docs/deploy.md, "Page views")                                                              |
 | `bun run game-data <script-output dir> <factorio data dir>`    | regenerate `data/game/game-data-*.json` from the game's `--dump-data` and `--dump-prototype-locale` output (steps in `scripts/build-game-data.ts`)                                                                                                   |
 | `bun run icons <script-output dir>`                            | WebP icons from the game's `--dump-icon-sprites` output into `data/sprites/` and the local SPRITES bucket; writes `data/game/icons.json`                                                                                                             |

@@ -12,6 +12,8 @@ import { toEpochMs } from './record';
  * Bump it when that changes: the next run rewrites only the D1 rows of every print, from the
  * analysis document already in R2, with no re-analysis and no R2 writes (`planIngest`'s 'refresh').
  * 1: `uses_entity_*`, `recipe_*` and `module_*` tokens, and `print_uses` (migration 0009).
+ * (The `author` column and `by_*` token came with migration 0017, which wrote them into every row
+ * itself, so they needed no bump.)
  */
 export const INDEX_VERSION = 1;
 
@@ -26,6 +28,8 @@ export interface StoredPrint {
 	readonly analysis: PrintAnalysis;
 	/** VIEWER_VERSION of the print's viewer files in R2, already written. */
 	readonly viewerVersion: number;
+	/** The record's own author name, else the `authors` table's (`resolveAuthorName`). */
+	readonly authorName: string | null;
 }
 
 /** What the pipeline last did with a record (`ingest_state`). */
@@ -63,6 +67,8 @@ export class PrintRepository extends Context.Service<
 		readonly setViewerVersion: (id: string, viewerVersion: number) => Effect.Effect<void, StorageError>;
 		/** Recompute the unfiltered sidebar counts and bump `sync_version`; run once after a batch of writes. */
 		readonly rebuildFacets: () => Effect.Effect<void, StorageError>;
+		/** The `authors` table's name for an author id (migration 0017), or null. */
+		readonly authorName: (authorId: string) => Effect.Effect<string | null, StorageError>;
 	}
 >()('PrintRepository') {}
 
@@ -86,12 +92,20 @@ export const versionTokens = (version: string) => {
 	return parts.map((_, i) => `v_${parts.slice(0, i + 1).join('_')}`);
 };
 
+/** The record's author id (factorioprints user id: 28 letters and digits). */
+export const authorIdOf = (r: Pick<FirebaseRecord, 'author' | 'authorId'>) => r.author?.userId ?? r.authorId ?? null;
+
+/** The `?author=` filter's token; first in the column, so facetText's cap never drops it. */
+export const authorToken = (authorId: string) => `by_${slug(authorId)}`;
+
 /**
  * Keyword tokens for the FTS `facets` column. Every search filter is one of these, so text plus
  * any mix of filters resolves in a single FTS lookup (see `matchExpression` in queries.ts).
  */
-export const facetTokens = (r: Pick<FirebaseRecord, 'tags'>, a: PrintAnalysis): string[] => {
+export const facetTokens = (r: Pick<FirebaseRecord, 'tags' | 'author' | 'authorId'>, a: PrintAnalysis): string[] => {
+	const author = authorIdOf(r);
 	const tokens = new Set<string>([
+		...(author ? [authorToken(author)] : []),
 		...a.outputs.map((s) => `makes_${slug(s)}`),
 		...a.inputs.map((s) => `takes_${slug(s)}`),
 		...[a.gameVersion, ...a.claimedVersions].flatMap((v) => (v ? versionTokens(v) : [])),
@@ -239,6 +253,20 @@ export const loadIngestStates = async (db: D1Database, pageSize = 5000): Promise
 	}
 };
 
+/** Every named author in the `authors` table (migration 0017), in pages by primary key. */
+export const loadAuthorNames = async (db: D1Database, pageSize = 5000): Promise<Map<string, string>> => {
+	const names = new Map<string, string>();
+	for (let after = ''; ;) {
+		const { results } = await db
+			.prepare('SELECT author_id, display_name FROM authors WHERE author_id > ? ORDER BY author_id LIMIT ?')
+			.bind(after, pageSize)
+			.all<{ author_id: string; display_name: string | null }>();
+		for (const r of results) if (r.display_name) names.set(r.author_id, r.display_name);
+		if (results.length < pageSize) return names;
+		after = results[results.length - 1].author_id;
+	}
+};
+
 export interface PrintRepositoryHooks {
 	/** Called with D1's `meta.rows_written` after every write, e.g. to total a run's writes. */
 	readonly onWrite?: (op: 'upsert' | 'recordFailure' | 'updateFavorites' | 'setViewerVersion' | 'rebuildFacets', rows: number) => void;
@@ -252,7 +280,11 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 			hooks.onWrite?.(op, rows);
 			return rows;
 		};
+	// Read once, on the first print that needs it: a bulk run then looks names up in memory.
+	let authors: Promise<Map<string, string>> | undefined;
 	return Layer.succeed(PrintRepository, {
+		authorName: (authorId) =>
+			tryD1(`d1.authorName ${authorId}`, async () => (await (authors ??= loadAuthorNames(db))).get(authorId) ?? null),
 		getState: (id) =>
 			tryD1(`d1.getState ${id}`, async () => {
 				const row = await db.prepare(`SELECT ${STATE_COLUMNS} FROM ingest_state WHERE print_id = ?`).bind(id).first<StateRow>();
@@ -312,9 +344,11 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 						.bind(String(Date.now()))
 				])
 			).pipe(Effect.map(counted('rebuildFacets')), Effect.asVoid),
-		upsert: ({ id, sourceUrl, rawKey, rawSha256, contentSha256, record: r, analysis: a, viewerVersion }) =>
+		upsert: ({ id, sourceUrl, rawKey, rawSha256, contentSha256, record: r, analysis: a, viewerVersion, authorName }) =>
 			tryD1(`d1.upsert ${id}`, async () => {
 				const now = Date.now();
+				const authorId = authorIdOf(r);
+				const ownName = r.author?.displayName || null;
 				const items = [
 					...new Set(a.outputs.map((item) => `output\u0000${item}`)),
 					...new Set(a.inputs.map((item) => `input\u0000${item}`))
@@ -343,8 +377,8 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 							id,
 							sourceUrl,
 							r.title,
-							r.author?.userId ?? r.authorId ?? null,
-							r.author?.displayName ?? null,
+							authorId,
+							authorName,
 							r.numberOfFavorites ?? 0,
 							r.image?.id ?? null,
 							r.image?.type ?? null,
@@ -373,9 +407,22 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 						'INSERT INTO print_uses (print_id, entity)',
 						buildingsIn(Object.keys(a.entities)).map((entity) => [id, entity])
 					),
+					// A record's own name names its author's other prints too (`bun run authors` spreads it).
+					...(authorId && ownName
+						? [
+								db
+									.prepare(
+										`INSERT INTO authors (author_id, display_name, source, fetched_at) VALUES (?, ?, 'record', ?)
+										ON CONFLICT (author_id) DO UPDATE SET display_name = excluded.display_name, source = excluded.source,
+											fetched_at = excluded.fetched_at WHERE authors.display_name IS NULL`
+									)
+									.bind(authorId, ownName, now)
+							]
+						: []),
 					db
 						.prepare(
-							`INSERT INTO print_search (print_id, title, description, labels, entities, recipes, nicknames, facets) VALUES (?, ?, ?, ?, ?, ?, ?,
+							`INSERT INTO print_search (print_id, title, description, labels, entities, recipes, nicknames, author, facets)
+							VALUES (?, ?, ?, ?, ?, ?, ?, ?,
 								CASE WHEN EXISTS (SELECT 1 FROM print_renders WHERE print_id = ?) THEN '${RENDER_TOKEN} ' ELSE '' END || ?)`
 						)
 						.bind(
@@ -386,6 +433,7 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 							cap(Object.keys(a.entities).join(' ').replaceAll('-', ' ')),
 							cap([...Object.keys(a.recipes), ...a.outputs.map((o) => o.split(':')[1])].join(' ').replaceAll('-', ' ')),
 							cap(nicknameText(a)),
+							authorName ?? '',
 							id,
 							facetText(facetTokens(r, a))
 						),
@@ -401,7 +449,9 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 						favorites: r.numberOfFavorites ?? 0
 					})
 				];
-				return counted('upsert')(await db.batch(stmts));
+				const rows = counted('upsert')(await db.batch(stmts));
+				if (authorId && ownName) void authors?.then((m) => m.has(authorId) || m.set(authorId, ownName));
+				return rows;
 			})
 	});
 };

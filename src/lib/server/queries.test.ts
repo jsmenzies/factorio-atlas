@@ -60,6 +60,14 @@ describe('parseSearch render', () => {
 		expect(of('?render=yes').render).toBe(false);
 	});
 
+	test('?author= is one user id, its by_ token; anything that cannot be an id matches nothing', () => {
+		expect(of('').author).toBeNull();
+		expect(of('?author=h5YXq2').author).toBe('h5YXq2');
+		expect(filterTokens(of('?author=h5YXq2'))).toEqual(['by_h5yxq2']);
+		expect(of('?author=a%20b').author).toBe('none');
+		expect(of('?author=x"y').author).toBe('none');
+	});
+
 	test('works with text, sort and other filters', () => {
 		const s = of('?q=smelting&render=1&spaceAge=no&sort=recent&makes=item:iron-plate');
 		expect([s.q, s.render, s.spaceAge, s.sort, s.makes]).toEqual(['smelting', true, 'no', 'recent', ['item:iron-plate']]);

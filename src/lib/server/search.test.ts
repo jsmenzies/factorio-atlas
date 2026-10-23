@@ -9,6 +9,8 @@ import { ingestText, type IngestOutcome } from './pipeline/pipeline';
 import { RawStore } from './pipeline/raw-store';
 import { PrintRepository, PrintRepositoryD1, RENDER_TOKEN } from './pipeline/repository';
 import { syncRenderFlags } from './pipeline/render-flags';
+import { analysisKey, parsePrintDoc } from './pipeline/print-doc';
+import { applyNameFixes, authorRowStatements, loadAuthorState, planNameFixes, recordNames, unknownAuthors } from './pipeline/authors';
 import { syncViews } from './views';
 import { MAX_PAGES, matchExpression, MULTI_FILTERS, PAGE_SIZE, searchStatements, type MultiFilter, type SearchParams } from './queries';
 
@@ -44,10 +46,10 @@ const setup = async () => {
 			yield* (yield* PrintRepository).rebuildFacets();
 		}).pipe(Effect.provide(layer))
 	);
-	return { sqlite, outcomes, layer };
+	return { sqlite, outcomes, layer, r2 };
 };
 
-const { sqlite, outcomes, layer } = await setup();
+const { sqlite, outcomes, layer, r2 } = await setup();
 const db = d1FromSqlite(sqlite);
 
 /** Search params; a filter given as one string is that one value. */
@@ -58,6 +60,7 @@ const params = (p: TestParams): SearchParams => ({
 	circuits: false,
 	trains: false,
 	render: false,
+	author: null,
 	sort: 'favorites',
 	page: 1,
 	...p,
@@ -122,7 +125,7 @@ describe('search over the slim schema', () => {
 		expect(run({ q: 'science', spaceAge: 'yes' }).ids).toEqual([SPACE]);
 		expect(run({ q: 'science', sort: 'relevance' }).ids.length).toBe(2);
 		expect(matchExpression(params({ q: 'red sci', spaceAge: 'no' }))).toBe(
-			'{title description labels entities recipes nicknames} : ("red"* "sci"*) AND facets : "sa_no"'
+			'{title description labels entities recipes nicknames author} : ("red"* "sci"*) AND facets : "sa_no"'
 		);
 	});
 
@@ -180,7 +183,7 @@ describe('only prints with a render', () => {
 	test('the token joins every filter in the one match', () => {
 		expect(matchExpression(params({ render: true }))).toBe(`facets : "${RENDER_TOKEN}"`);
 		expect(matchExpression(params({ q: 'red sci', render: true }))).toBe(
-			`{title description labels entities recipes nicknames} : ("red"* "sci"*) AND facets : "${RENDER_TOKEN}"`
+			`{title description labels entities recipes nicknames author} : ("red"* "sci"*) AND facets : "${RENDER_TOKEN}"`
 		);
 	});
 
@@ -281,7 +284,9 @@ describe('query plans', () => {
 		{ q: 'science', render: true, sort: 'relevance' },
 		{ render: true, spaceAge: 'yes', uses: 'entity:foundry' },
 		{ sort: 'popular' },
-		{ q: 'science', makes: 'item:automation-science-pack', sort: 'popular' }
+		{ q: 'science', makes: 'item:automation-science-pack', sort: 'popular' },
+		{ author: 'h5YXabc' },
+		{ q: 'science', author: 'h5YXabc', sort: 'recent' }
 	];
 
 	test('no search query scans a whole table', () => {
@@ -342,5 +347,78 @@ describe('views (bun run views:sync)', () => {
 		await Effect.runPromise(ingestText(BELTS, text, 'test', { force: true }).pipe(Effect.provide(layer)));
 		expect(sqlite.query('SELECT views_30d FROM prints WHERE id = ?').get(BELTS)).toEqual({ views_30d: 4 });
 		await syncViews(db, new Map());
+	});
+});
+
+describe('authors (bun run authors)', () => {
+	const authorOf = (id: string) => (sqlite.query('SELECT author_id FROM prints WHERE id = ?').get(id) as { author_id: string }).author_id;
+	/** An R2Bucket over the setup's documents, for applyNameFixes. */
+	const bucket = {
+		get: async (k: string) => (r2.has(k) ? { text: async () => r2.get(k)! } : null),
+		put: async (k: string, v: string) => void r2.set(k, v)
+	} as unknown as R2Bucket;
+
+	test("a record's own name is on its card, its document and the authors table, and typed text finds it", () => {
+		expect(sqlite.query('SELECT author_name FROM prints WHERE id = ?').get(SPACE)).toEqual({ author_name: 'Pet111' });
+		expect(sqlite.query('SELECT display_name, source FROM authors WHERE author_id = ?').get(authorOf(SPACE))).toEqual({
+			display_name: 'Pet111',
+			source: 'record'
+		});
+		expect(run({ q: 'pet111' }).ids).toEqual([SPACE]);
+		expect(run({ q: 'pet' }).ids).toEqual([SPACE]);
+	});
+
+	test('?author= is the by_ token: alone, with text, and an id nobody has', () => {
+		expect(run({ author: authorOf(SPACE) }).ids).toEqual([SPACE]);
+		expect(run({ author: authorOf(SCIENCE), q: 'science' }).ids).toEqual([SCIENCE]);
+		expect(run({ author: authorOf(SCIENCE), spaceAge: 'yes' }).ids).toEqual([]);
+		expect(run({ author: 'nobody1234' }).ids).toEqual([]);
+		expect(matchExpression(params({ author: 'AbC9' }))).toBe('facets : "by_abc9"');
+	});
+
+	test('names from Firebase reach the card, the search row and the document, once', async () => {
+		const state = await loadAuthorState(db);
+		expect(recordNames(state)).toEqual([]);
+		expect(unknownAuthors(state).sort()).toEqual([authorOf(SCIENCE), authorOf(BELTS)].sort());
+		// What a Firebase lookup would bring back: a name for one, none for the other.
+		await db.batch(
+			authorRowStatements(
+				db,
+				[
+					[authorOf(SCIENCE), 'Factorio Fan'],
+					[authorOf(BELTS), null]
+				],
+				'firebase'
+			)
+		);
+		const after = await loadAuthorState(db);
+		expect(unknownAuthors(after)).toEqual([]);
+		const fixes = planNameFixes(after);
+		expect(fixes.map((f) => [f.id, f.name])).toEqual([[SCIENCE, 'Factorio Fan']]);
+		const done = await applyNameFixes(db, bucket, fixes);
+		expect(done.docsWritten).toBe(1);
+		expect(parsePrintDoc(r2.get(analysisKey(SCIENCE))!)?.print.author_name).toBe('Factorio Fan');
+		expect(sqlite.query('SELECT author_name FROM prints WHERE id = ?').get(SCIENCE)).toEqual({ author_name: 'Factorio Fan' });
+		expect(run({ q: 'factorio fan' }).ids).toEqual([SCIENCE]);
+		expect(planNameFixes(await loadAuthorState(db))).toEqual([]);
+		expect((await applyNameFixes(db, bucket, fixes)).docsWritten).toBe(0);
+	});
+
+	test('a re-ingest keeps the name from the authors table', async () => {
+		// A fresh repository, as a new run would have: it reads the authors table once.
+		const fresh = Layer.mergeAll(
+			PrintRepositoryD1(db),
+			Layer.succeed(RawStore, {
+				put: (k, v) => Effect.sync(() => void r2.set(k, v)),
+				get: (k) => Effect.succeed(r2.get(k) ?? null),
+				delete: (k) => Effect.sync(() => void r2.delete(k))
+			})
+		);
+		const text = await fixtureRecord(SCIENCE);
+		await Effect.runPromise(ingestText(SCIENCE, text, 'test', { force: true }).pipe(Effect.provide(fresh)));
+		expect(sqlite.query('SELECT author_name FROM prints WHERE id = ?').get(SCIENCE)).toEqual({ author_name: 'Factorio Fan' });
+		expect(parsePrintDoc(r2.get(analysisKey(SCIENCE))!)?.print.author_name).toBe('Factorio Fan');
+		expect(run({ q: 'factorio fan' }).ids).toEqual([SCIENCE]);
+		expect(run({ author: authorOf(SCIENCE) }).ids).toEqual([SCIENCE]);
 	});
 });

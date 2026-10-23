@@ -3,10 +3,10 @@ import { ANALYZER_VERSION, analyzePrint, claimedPlanets, claimedVersions, type P
 import { decodeExchangeString } from './decode';
 import { BlueprintDecodeError, RecordParseError, StorageError } from './errors';
 import { gameData } from './game-data';
-import { analysisKey, parsePrintDoc, toPrintDoc } from './print-doc';
+import { analysisKey, parsePrintDoc, toPrintDoc, withAuthorName } from './print-doc';
 import { RawStore } from './raw-store';
 import { FirebaseRecord, stripPrivateFields } from './record';
-import { INDEX_VERSION, PrintRepository, type FailedPrint, type IngestState, type StoredPrint } from './repository';
+import { authorIdOf, INDEX_VERSION, PrintRepository, type FailedPrint, type IngestState, type StoredPrint } from './repository';
 import { PrintSource } from './source';
 import { buildViewerFilesEffect, deleteViewerFiles, putViewerFiles, VIEWER_VERSION, type ViewerFiles } from './viewer-files';
 
@@ -17,6 +17,17 @@ const sha256 = (text: string) =>
 	});
 
 export const rawKey = (id: string) => `factorioprints/${id}.json`;
+
+/**
+ * The name a print is credited to: its record's own author name, else the `authors` table's
+ * (migration 0017; most records carry only the author's id, see `bun run authors`).
+ */
+const resolveAuthorName = Effect.fn('resolveAuthorName')(function* (record: FirebaseRecord) {
+	const own = record.author?.displayName || null;
+	const authorId = authorIdOf(record);
+	if (own || !authorId) return own;
+	return yield* (yield* PrintRepository).authorName(authorId);
+});
 
 const decodeRecord = (id: string, text: string) =>
 	Schema.decodeUnknownEffect(Schema.fromJsonString(FirebaseRecord))(text).pipe(
@@ -202,7 +213,9 @@ const planAnalysis = Effect.fn('planAnalysis')(function* (
 			contentSha256,
 			record,
 			analysis,
-			viewerVersion: VIEWER_VERSION
+			viewerVersion: VIEWER_VERSION,
+			// The record's own; applyPlan looks up the rest.
+			authorName: record.author?.displayName || null
 		}
 	};
 });
@@ -309,8 +322,9 @@ export const applyPlan = Effect.fn('applyPlan')(function* (
 		case 'analysed': {
 			if (plan.archive !== null) yield* raw.put(rawKey(id), plan.archive);
 			const viewerFiles = plan.viewerFiles ? yield* putViewerFiles(id, plan.viewerFiles) : 0;
-			yield* raw.put(analysisKey(id), plan.doc);
-			const rowsWritten = yield* repo.upsert(plan.print);
+			const authorName = yield* resolveAuthorName(plan.print.record);
+			yield* raw.put(analysisKey(id), withAuthorName(plan.doc, authorName));
+			const rowsWritten = yield* repo.upsert({ ...plan.print, authorName });
 			const { record, analysis } = plan.print;
 			return { status: 'analysed', id, title: record.title, analysis, rowsWritten, viewerFiles };
 		}
@@ -336,7 +350,11 @@ const reindex = Effect.fn('reindex')(function* (
 	}
 	const record = yield* decodeRecord(id, r.text).pipe(Effect.mapError((cause) => new StorageError({ op: `reindex ${id}`, cause })));
 	const viewerFiles = viewer ? yield* putViewerFiles(id, viewer) : 0;
-	if (favorites !== null) yield* raw.put(analysisKey(id), JSON.stringify({ ...doc, print: { ...doc.print, favorites } }));
+	const authorName = (yield* resolveAuthorName(record)) ?? doc.print.author_name;
+	if (favorites !== null || authorName !== doc.print.author_name) {
+		const print = { ...doc.print, favorites: favorites ?? doc.print.favorites, author_name: authorName };
+		yield* raw.put(analysisKey(id), JSON.stringify({ ...doc, print }));
+	}
 	const rowsWritten = yield* (yield* PrintRepository).upsert({
 		id,
 		sourceUrl: r.sourceUrl,
@@ -345,7 +363,8 @@ const reindex = Effect.fn('reindex')(function* (
 		contentSha256: r.contentSha256,
 		record,
 		analysis: doc.analysis,
-		viewerVersion: VIEWER_VERSION
+		viewerVersion: VIEWER_VERSION,
+		authorName
 	});
 	return { status: 'reindexed', id, rowsWritten, viewerFiles };
 });
