@@ -3,13 +3,15 @@
 	import { page as route } from '$app/state';
 	import BlueprintIcons from '#lib/components/BlueprintIcons.svelte';
 	import BlueprintViewer from '#lib/components/BlueprintViewer.svelte';
+	import Icon from '#lib/components/Icon.svelte';
 	import PageMeta from '#lib/components/PageMeta.svelte';
 	import PagePicker from '#lib/components/PagePicker.svelte';
+	import Rate from '#lib/components/Rate.svelte';
 	import RichText from '#lib/components/RichText.svelte';
 	import ShotLightbox from '#lib/components/ShotLightbox.svelte';
 	import { groupPages } from '#lib/book-groups.js';
 	import { plainText } from '#lib/richtext.js';
-	import { formatRate, signalName } from '#lib/format.js';
+	import { signalName } from '#lib/format.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -80,9 +82,10 @@
 
 {#snippet stats(here: NonNullable<typeof data.info[string]>)}
 	{#if here.makes}
-		<span class="font-mono text-emerald-300" title={here.makes.claimed ? 'Rate given by the author' : 'Nameplate estimate'}
-			>{here.makes.claimed ? '' : '≈ '}{formatRate(here.makes.rate)}</span
+		<span class="font-mono text-emerald-300" title={here.makes.claimed ? 'Rate given by the author' : 'Calculated: every machine crafting at full speed'}
+			>{here.makes.claimed ? '' : '≈ '}<Rate value={here.makes.rate} /></span
 		>
+		<Icon icons={data.icons} signal={here.makes.signal} label={signalName(here.makes.signal)} size={16} />
 		{signalName(here.makes.signal).toLowerCase()}{here.makes.more ? ` +${here.makes.more}` : ''}
 	{:else if here.summary}
 		{here.summary}

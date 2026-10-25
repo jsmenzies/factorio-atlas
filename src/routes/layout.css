@@ -1,1 +1,12 @@
 @import 'tailwindcss';
+
+/* Rates come in both units (Rate.svelte); <html data-rate>, set by app.html before the page draws, picks one. */
+:root:not([data-rate='min']) .rate-min,
+:root[data-rate='min'] .rate-s {
+	display: none;
+}
+:root:not([data-rate='min']) .rate-unit[data-unit='s'],
+:root[data-rate='min'] .rate-unit[data-unit='min'] {
+	background-color: var(--color-stone-700);
+	color: var(--color-stone-50);
+}

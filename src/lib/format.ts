@@ -5,7 +5,20 @@ export const signalName = (signal: string) => {
 	return words.charAt(0).toUpperCase() + words.slice(1);
 };
 
-export const formatRate = (perSecond: number) => (perSecond >= 1 ? `${+perSecond.toFixed(2)}/s` : `${+(perSecond * 60).toFixed(1)}/min`);
+/** The unit rates are shown in: per second (the default) or per minute. Belt speeds are always per second. */
+export type RateUnit = 's' | 'min';
+
+const WHOLE: Record<RateUnit, Intl.NumberFormat> = {
+	s: new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 }),
+	min: new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 })
+};
+const SMALL = new Intl.NumberFormat('en-GB', { maximumSignificantDigits: 2 });
+
+/** A rate stored in items per second, in `unit`: "1.5/s", "90/min", "0.025/s", "36,710/min". Below 1, two significant figures. */
+export const formatRate = (perSecond: number, unit: RateUnit = 's') => {
+	const n = unit === 'min' ? perSecond * 60 : perSecond;
+	return `${(n >= 1 ? WHOLE[unit] : SMALL).format(n)}/${unit}`;
+};
 
 /**
  * Imgur-hosted screenshot (the image factorioprints itself links to): "m" 320px, "l" 640px, "h"

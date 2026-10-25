@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { Effect } from 'effect';
 import { fixtureRecord } from '#lib/server/fixtures.js';
-import { analyzePrint } from './analyze';
+import { analyzePrint, parseRate } from './analyze';
 import { decodeExchangeString } from './decode';
 import { facetText, facetTokens } from './repository';
 
@@ -131,5 +131,30 @@ describe('a real space platform', () => {
 		expect(a.entities.crusher).toBe(13);
 		expect(a.entitiesByQuality).toMatchObject({ 'crusher@uncommon': 12, crusher: 1, 'solar-panel@uncommon': 33, 'cargo-bay@rare': 3 });
 		expect(Object.values(a.entitiesByQuality).reduce((s, n) => s + n, 0)).toBe(a.entityCount);
+	});
+});
+
+describe('parseRate', () => {
+	// Rates are stored in items per second, whatever unit the label uses.
+	test('per second labels', () => {
+		expect(parseRate('Red science 10/s')).toBe(10);
+		expect(parseRate('1.5 items/s')).toBe(1.5);
+		expect(parseRate('Gears 2,5/sec')).toBe(2.5);
+		expect(parseRate('7.5 / second')).toBe(7.5);
+	});
+
+	test('per minute labels are divided by 60', () => {
+		expect(parseRate('Military science 45/min')).toBe(0.75);
+		expect(parseRate('3 / minute')).toBe(0.05);
+		expect(parseRate('90/m')).toBe(1.5);
+		expect(parseRate('1 item/min')).toBeCloseTo(1 / 60);
+	});
+
+	test('forms it does not read yet', () => {
+		expect(parseRate('45 SPM')).toBeNull();
+		expect(parseRate('45 per minute')).toBeNull();
+		expect(parseRate('1k spm base')).toBeNull();
+		expect(parseRate('Smelting')).toBeNull();
+		expect(parseRate(null)).toBeNull();
 	});
 });

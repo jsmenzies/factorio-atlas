@@ -392,20 +392,88 @@ export const describeBook = (a: PrintAnalysis): string => {
 	return `Book of ${pages.length} pages. ${mix}`;
 };
 
-/** One page's infra in short lines ("Belts: 75 belts · 12 splitters"), for the selected-page panel. */
-export const pageInfra = (n: NodeAnalysis): { title: string; text: string }[] => {
-	const ctx = nodeContext(n, n.beltThroughput);
+/** One count in a page's facts, drawn as its icon: an entity, or a module (an item, maybe above normal quality). */
+export interface IconCount {
+	kind: 'entity' | 'item';
+	name: string;
+	quality?: string;
+	n: number;
+	/** "48 stone furnaces", for the tooltip. */
+	label: string;
+}
+
+/** A line of a page's facts: counts as icons, then what counts can't say ("up to 15/s per belt"). */
+export interface FactLine {
+	title: string;
+	counts: IconCount[];
+	notes: string[];
+}
+
+/** Entity counts as icons, largest first. */
+const entityCounts = (c: Counts | undefined, keep: (name: string) => boolean = () => true, k = 4): IconCount[] =>
+	Object.entries(c ?? {})
+		.filter(([name, n]) => n > 0 && keep(name))
+		.sort((x, y) => y[1] - x[1])
+		.slice(0, k)
+		.map(([name, n]) => ({ kind: 'entity', name, n, label: plural(n, name) }));
+
+/** `describeSetup` as icons: machines, modules (by quality) and beacons. */
+export const setupCounts = (n: Pick<NodeAnalysis, 'modules' | 'entities' | 'byCategory'>): IconCount[] => {
+	const modules = Object.entries(n.modules)
+		.sort((x, y) => y[1] - x[1])
+		.slice(0, 4)
+		.map(([key, x]): IconCount => {
+			const [name, quality] = key.split('@');
+			return { kind: 'item', name, quality, n: x, label: plural(x, name) + (quality ? ` (${quality})` : '') };
+		});
+	return [
+		...entityCounts(n.byCategory.production, (x) => !/beacon/.test(x)),
+		...modules,
+		...entityCounts(n.entities, (x) => /beacon/.test(x), 2)
+	];
+};
+
+/** One page's infra as lines of icons ("Belts: [belt] 75 [splitter] 12"), for the selected-page panel. */
+export const pageInfra = (n: NodeAnalysis): FactLine[] => {
 	const c = n.byCategory;
-	return (
-		[
-			['belts', 'Belts', !!c.belts],
-			['rail', 'Trains', !!c.rail],
-			['power', 'Power', sum(c.power, (x) => !isPole(x)) > 0],
-			['defence', 'Defence', !!c.defence],
-			['circuits', 'Circuits', n.circuitControlled > 0 || sum(c.circuits, (x) => !/constant|lamp/.test(x)) > 0]
-		] as [Category, string, boolean][]
-	)
-		.filter(([, , show]) => show)
-		.map(([cat, title]) => ({ title, text: describeCategory(cat, c, ctx) }))
-		.filter((x) => x.text);
+	const lines: FactLine[] = [];
+	if (c.belts) {
+		const kinds = [(x: string) => x.endsWith('transport-belt'), (x: string) => /splitter/.test(x), (x: string) => /underground/.test(x)];
+		lines.push({
+			title: 'Belts',
+			counts: kinds.flatMap((keep) => entityCounts(c.belts, keep)),
+			notes: n.beltThroughput ? [`up to ${n.beltThroughput}/s per belt`] : []
+		});
+	}
+	if (c.rail) {
+		const stops = n.trainStops.flatMap((s) => (s.name ? [s.name] : []));
+		// Straight, curved and diagonal pieces share one icon: count them together.
+		const rails = Object.entries(c.rail).filter(([x]) => /rail/.test(x) && !isSignal(x));
+		const railCount = rails.reduce((s, [, x]) => s + x, 0);
+		const largest = rails.reduce<[string, number] | null>((m, r) => (!m || r[1] > m[1] ? r : m), null);
+		lines.push({
+			title: 'Trains',
+			counts: [
+				...(largest ? [{ kind: 'entity' as const, name: largest[0], n: railCount, label: plural(railCount, 'rail piece') }] : []),
+				...entityCounts(c.rail, isSignal),
+				...entityCounts(c.rail, isRollingStock)
+			],
+			notes: stops.length ? [`${plural(stops.length, 'station')} (${stops.slice(0, 3).join(', ')}${stops.length > 3 ? '…' : ''})`] : []
+		});
+	}
+	if (sum(c.power, (x) => !isPole(x)) > 0) lines.push({ title: 'Power', counts: entityCounts(c.power, (x) => !isPole(x)), notes: [] });
+	if (c.defence) lines.push({ title: 'Defence', counts: entityCounts(c.defence), notes: [] });
+	if (n.circuitControlled > 0 || sum(c.circuits, (x) => !/constant|lamp/.test(x)) > 0) {
+		// Signs are constant combinators too; they get their own note.
+		const combinators = entityCounts(c.circuits, (x) => /combinator/.test(x), Infinity)
+			.map((x) => (x.name === 'constant-combinator' ? { ...x, n: x.n - n.signs, label: plural(x.n - n.signs, x.name) } : x))
+			.filter((x) => x.n > 0);
+		const wires = n.wires.red + n.wires.green;
+		lines.push({
+			title: 'Circuits',
+			counts: [...combinators, ...entityCounts(c.circuits, (x) => !/combinator/.test(x), 2)],
+			notes: [wires && plural(wires, 'wire'), n.signs && `${plural(n.signs, 'sign')} (labels)`].filter((x): x is string => !!x)
+		});
+	}
+	return lines.filter((x) => x.counts.length || x.notes.length);
 };

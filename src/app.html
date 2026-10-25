@@ -8,6 +8,12 @@
 		<link rel="icon" href="/favicon.ico" sizes="48x48" />
 		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+		<!-- The visitor's rate unit (lib/rate-unit.svelte.ts), before the page draws: cached pages carry both units. -->
+		<script nonce="%sveltekit.nonce%">
+			try {
+				if (localStorage.getItem('atlas.rate') === 'min') document.documentElement.dataset.rate = 'min';
+			} catch {}
+		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

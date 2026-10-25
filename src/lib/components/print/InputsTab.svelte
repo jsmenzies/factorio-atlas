@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
-	import { formatRate, signalName } from '#lib/format.js';
+	import Rate from '#lib/components/Rate.svelte';
+	import { signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import type { NodeAnalysis } from '#lib/server/pipeline/analyze.js';
 
@@ -36,7 +37,7 @@
 <div class="space-y-3">
 	<p class="text-sm text-stone-400">
 		{single
-			? 'What this blueprint needs fed in, at nameplate rates (every machine running flat out).'
+			? 'What this blueprint needs fed in, with every machine crafting at full speed.'
 			: 'What the pages need fed in. Whole-book inputs are not rated: each page assumes its own supply. Pick This page above for one page’s inputs at its rates.'}
 	</p>
 	<ul class="divide-y divide-stone-800 border-y border-stone-800 text-sm lg:max-w-2xl">
@@ -45,8 +46,8 @@
 				<Icon {icons} signal={r.signal} label={signalName(r.signal)} size={28} />
 				<span class="min-w-0 flex-1 truncate text-stone-200">{signalName(r.signal)}</span>
 				{#if single}
-					<span class="tabular-nums {r.rate ? 'text-amber-200' : 'text-stone-500'}" title={r.rate ? 'Nameplate rate taken in' : 'Not rated: smelting and mining are not rated yet'}
-						>{r.rate ? formatRate(r.rate) : '—'}</span
+					<span class="tabular-nums {r.rate ? 'text-amber-200' : 'text-stone-500'}" title={r.rate ? 'Taken in with every machine crafting at full speed' : 'Not rated: smelting and mining are not rated yet'}
+						>{#if r.rate}<Rate value={r.rate} />{:else}—{/if}</span
 					>
 				{:else if onpick}
 					<button

@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { uniqueTails } from '#lib/book-groups.js';
 	import BlueprintIcons from '#lib/components/BlueprintIcons.svelte';
+	import Rate from '#lib/components/Rate.svelte';
 	import RichText from '#lib/components/RichText.svelte';
 	import { describeNode, pageTitle } from '#lib/describe.js';
-	import { formatRate, signalName } from '#lib/format.js';
+	import { signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import { plainClick } from '#lib/links.js';
 	import { plainText } from '#lib/richtext.js';
@@ -96,9 +97,9 @@
 	/** The card's second line: its rate, else what it makes, else what it is. */
 	const note = (n: NodeAnalysis) => {
 		const rate = rateOf(n);
-		if (rate) return { text: `${n.claimedRate ? '' : '≈ '}${formatRate(rate)}`, rate: true };
-		if (n.outputs.length) return { text: n.outputs.slice(0, 3).map((s) => signalName(s).toLowerCase()).join(' · '), rate: false };
-		return { text: describeNode(n), rate: false };
+		if (rate) return { text: n.claimedRate ? '' : '≈ ', rate };
+		if (n.outputs.length) return { text: n.outputs.slice(0, 3).map((s) => signalName(s).toLowerCase()).join(' · '), rate: null };
+		return { text: describeNode(n), rate: null };
 	};
 </script>
 
@@ -162,7 +163,8 @@
 						</span>
 						<span class="min-w-0 flex-1 bg-stone-900/70 px-3 py-2.5 group-hover:bg-stone-900">
 							<span class="block truncate font-medium {t.derived ? 'text-stone-300 italic' : 'text-stone-100'}"><RichText text={t.text} {icons} size={16} /></span>
-							<span class="mt-0.5 block truncate font-mono text-xs {line.rate ? 'text-stone-100' : 'text-stone-400'}"><RichText text={line.text} {icons} size={14} /></span>
+							<span class="mt-0.5 block truncate font-mono text-xs {line.rate ? 'text-stone-100' : 'text-stone-400'}">{#if line.rate}{line.text}<Rate value={line.rate} />{:else}<RichText text={line.text} {icons} size={14} />{/if}</span
+							>
 						</span>
 					</a>
 				</li>

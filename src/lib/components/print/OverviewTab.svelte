@@ -1,9 +1,10 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
+	import Rate from '#lib/components/Rate.svelte';
 	import RichText from '#lib/components/RichText.svelte';
 	import ShotLightbox from '#lib/components/ShotLightbox.svelte';
 	import { describeBook, describeSetup, infraCards, pageTitle, type MadeItem } from '#lib/describe.js';
-	import { formatRate, signalName } from '#lib/format.js';
+	import { signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import type { NodeAnalysis, PrintAnalysis, Role } from '#lib/server/pipeline/analyze.js';
 	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
@@ -112,14 +113,14 @@
 					<dt>{@render go('produces', 'Produces')}</dt>
 					<dd class="flex flex-wrap items-center gap-x-4 gap-y-2">
 						{#each main as m (m.signal)}
-							<span class="flex items-center gap-1.5" title="{signalName(m.signal)}{m.rate ? `: ${m.claimed ? 'claimed' : 'nameplate estimate'}` : ''}">
+							<span class="flex items-center gap-1.5" title="{signalName(m.signal)}{m.rate ? `: ${m.claimed ? 'claimed' : 'calculated at full speed'}` : ''}">
 								<span class="relative inline-block leading-none">
 									<Icon {icons} signal={m.signal} label={signalName(m.signal)} size={28} />
 									{#if bestQuality.get(m.signal)}<span class="absolute -bottom-0.5 -left-0.5"
 											><Icon {icons} kind="quality" name={bestQuality.get(m.signal)} label="" size={12} /></span
 										>{/if}
 								</span>
-								{#if m.rate}<span class="text-base text-stone-100 tabular-nums">{m.claimed ? '' : '≈ '}{formatRate(m.rate)}</span>{/if}
+								{#if m.rate}<span class="text-base text-stone-100 tabular-nums">{m.claimed ? '' : '≈ '}<Rate value={m.rate} /></span>{/if}
 							</span>
 						{/each}
 						{#if more}{@render go('produces', `+${more} more`)}{/if}
@@ -134,7 +135,7 @@
 						{#each takes.slice(0, TAKES_LIMIT) as t (t.signal)}
 							<span class="flex items-center gap-1 text-stone-300" title={signalName(t.signal)}>
 								<Icon {icons} signal={t.signal} label={signalName(t.signal)} size={22} />
-								{#if t.rate}<span class="text-stone-400 tabular-nums">{formatRate(t.rate)}</span>{:else if takes.length <= 4}{signalName(t.signal)}{/if}
+								{#if t.rate}<span class="text-stone-400 tabular-nums"><Rate value={t.rate} /></span>{:else if takes.length <= 4}{signalName(t.signal)}{/if}
 							</span>
 						{/each}
 						{#if takes.length > TAKES_LIMIT}{@render go('inputs', `+${takes.length - TAKES_LIMIT} more`)}{/if}

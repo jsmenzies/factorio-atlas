@@ -26,7 +26,8 @@ export const load: PageServerLoad = async ({ params, url }) => {
 			n.path,
 			{
 				title: pageTitle(n),
-				summary: n.kind === 'blueprint' ? describeNode(n, { withRate: true }) : null,
+				// No rate: `makes` carries it, shown in the visitor's unit.
+				summary: n.kind === 'blueprint' ? describeNode(n) : null,
 				// The header's "611.84/s Space science pack": the author's rate where the label gives one.
 				makes:
 					n.kind === 'blueprint' && n.role === 'production' && n.outputs.length && (n.claimedRate ?? n.estimatedRate)
@@ -52,7 +53,8 @@ export const load: PageServerLoad = async ({ params, url }) => {
 			}
 		])
 	);
-	const icons = iconSet({ signals: nodes.flatMap((n) => n.icons) }, printTexts(doc));
+	// Page icons, and the item beside each header's rate.
+	const icons = iconSet({ signals: nodes.flatMap((n) => [...n.icons, ...n.outputs.slice(0, 1)]) }, printTexts(doc));
 	const print = { id: row.id, title: row.title, author_name: row.author_name, image_id: row.image_id, image_type: row.image_type };
 	// Like the print page, only R2: the screenshot's manifest for the lightbox and the link preview.
 	const shot = await loadShotView(row);

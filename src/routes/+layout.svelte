@@ -1,8 +1,12 @@
 <script lang="ts">
 	import './layout.css';
+	import RateToggle from '#lib/components/RateToggle.svelte';
+	import { readRateUnit } from '#lib/rate-unit.svelte.js';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
+	// After hydration, so tooltips switch to the visitor's unit instead of mismatching the server's HTML.
+	$effect(() => readRateUnit());
 </script>
 
 <svelte:head>
@@ -14,9 +18,10 @@
 	<header class="border-b border-stone-800 bg-stone-900/80">
 		<div class="mx-auto flex max-w-7xl items-center gap-6 px-4 py-3">
 			<a href="/" class="text-lg font-semibold tracking-tight text-amber-400">Blueprint Atlas</a>
+			<div class="ml-auto"><RateToggle /></div>
 			<a
 				href="https://github.com/jsmenzies/factorio-atlas"
-				class="ml-auto text-stone-400 hover:text-amber-300"
+				class="text-stone-400 hover:text-amber-300"
 				aria-label="Source code on GitHub"
 				title="Source code on GitHub"
 				><svg aria-hidden="true" viewBox="0 0 16 16" class="size-5" fill="currentColor"

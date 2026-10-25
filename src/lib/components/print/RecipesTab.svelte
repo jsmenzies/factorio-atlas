@@ -10,8 +10,9 @@
 
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
+	import Rate from '#lib/components/Rate.svelte';
 	import { GROUP_ORDER } from '#lib/describe.js';
-	import { formatRate, signalName } from '#lib/format.js';
+	import { signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import type { NodeAnalysis } from '#lib/server/pipeline/analyze.js';
 
@@ -111,8 +112,8 @@
 							{r.machines.toLocaleString()} machine{r.machines === 1 ? '' : 's'}
 						</span>
 						{#if single}
-							<span class="min-w-20 shrink-0 text-right whitespace-nowrap tabular-nums {r.rate ? 'text-stone-100' : 'text-stone-600'}" title="Nameplate rate of its main product">
-								{r.rate ? `≈ ${formatRate(r.rate)}` : '—'}
+							<span class="min-w-20 shrink-0 text-right whitespace-nowrap tabular-nums {r.rate ? 'text-stone-100' : 'text-stone-600'}" title="Its main product, with every machine crafting at full speed">
+								{#if r.rate}≈ <Rate value={r.rate} />{:else}—{/if}
 							</span>
 						{:else}
 							<span class="w-20 shrink-0 text-right text-stone-500">{r.pages} page{r.pages === 1 ? '' : 's'}</span>

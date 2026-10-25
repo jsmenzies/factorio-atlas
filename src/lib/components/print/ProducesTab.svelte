@@ -1,8 +1,10 @@
 <script lang="ts">
 	import Icon from '#lib/components/Icon.svelte';
+	import Rate from '#lib/components/Rate.svelte';
 	import RichText from '#lib/components/RichText.svelte';
 	import { GROUP_ORDER, type MadeItem, type ProductGroup } from '#lib/describe.js';
 	import { formatRate, signalName } from '#lib/format.js';
+	import { rateUnit } from '#lib/rate-unit.svelte.js';
 	import type { IconSet } from '#lib/icons.js';
 	import { countRows, QUALITIES } from './CountSection.svelte';
 	import QualityChips from './QualityChips.svelte';
@@ -97,13 +99,13 @@
 		return ps?.some((p) => p.quality !== 'normal') ? ` Made at ${ps.map((p) => `${p.quality} (${p.n} machine${p.n === 1 ? '' : 's'})`).join(', ')}.` : '';
 	};
 	const tip = (m: MadeItem) =>
-		`${signalName(m.signal)}${m.rate ? `: ${m.claimed ? 'claimed' : 'nameplate estimate'} ${formatRate(m.rate)}` : ': not rated'}${
+		`${signalName(m.signal)}${m.rate ? `: ${m.claimed ? 'claimed' : 'calculated'} ${formatRate(m.rate, rateUnit.unit)}` : ': not rated'}${
 			m.pages.length > 1 ? `, best of ${m.pages.length} pages` : ''
 		}.${madeAt(m.signal)}${onpick ? ' Click to find the pages that make it.' : ''}`;
 </script>
 
 <!-- One row per item, as the Entities tab's lists: icon, name, rate on the right. -->
-{#snippet row(signal: string, title: string, rate: string | null, pick: ((signal: string) => void) | null | undefined = onpick)}
+{#snippet row(signal: string, title: string, made: MadeItem | null, pick: ((signal: string) => void) | null | undefined = onpick)}
 	{@const best = badgeOf(signal)}
 	<li class="break-inside-avoid">
 		<svelte:element
@@ -121,14 +123,16 @@
 				{/if}
 			</span>
 			<span class="min-w-0 flex-1 truncate text-stone-200 {pick ? 'group-hover:text-amber-300' : ''}">{signalName(signal)}</span>
-			{#if rate !== null}<span class="shrink-0 text-right tabular-nums {rate ? 'text-stone-300' : 'text-stone-500'}">{rate || '—'}</span>{/if}
+			{#if made}<span class="shrink-0 text-right tabular-nums {made.rate ? 'text-stone-300' : 'text-stone-500'}"
+					>{#if made.rate}{made.claimed ? '' : '≈ '}<Rate value={made.rate} />{:else}—{/if}</span
+				>{/if}
 		</svelte:element>
 	</li>
 {/snippet}
 
 {#snippet list(items: MadeItem[], label: string, columns: string)}
 	<ul class="mt-1.5 gap-10 text-sm {columns}" aria-label={label}>
-		{#each items as m (m.signal)}{@render row(m.signal, tip(m), m.rate ? `${m.claimed ? '' : '≈ '}${formatRate(m.rate)}` : '')}{/each}
+		{#each items as m (m.signal)}{@render row(m.signal, tip(m), m)}{/each}
 	</ul>
 {/snippet}
 
@@ -204,7 +208,7 @@
 	{/if}
 
 	<p class="text-xs text-stone-500">
-		Rates are nameplate (every machine running flat out, no research productivity) or the author's own when the page's name states one; a book shows its best
+		Rates are calculated with every machine crafting at full speed (no research productivity), or the author's own when the page's name states one; a book shows its best
 		single page's rate, never a sum.{onpick ? ' Click an item to see the pages that make it.' : ''}
 	</p>
 </div>
