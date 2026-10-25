@@ -38,7 +38,7 @@ The selected page's render first, then every book and sub-book, with a thumbnail
 render so you can find the one you want by looking. Copy the whole book, or just the page you're
 looking at.
 
-![The AutoRail book's Render & pages tab: the selected page's game render, its sub-books, and thumbnails of their pages](docs/screenshots/book.webp)
+![Tileable Science Production's Render & pages tab: the selected page's game render and facts, then a thumbnail of every page's render with its rate](docs/screenshots/book.webp)
 
 ### Calculated rates
 
