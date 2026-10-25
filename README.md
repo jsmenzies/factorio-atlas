@@ -17,10 +17,12 @@ machine shows its recipe, modules, size and direction.</sub>
 ### Search by what's inside
 
 Filter by what a print makes, the buildings, recipes and modules it uses, game version, Space Age,
-planets, mods, circuits and trains, all read from the blueprint itself. Filters stack, so each
-click narrows the results, and community nicknames ("red science", "gc") work as search text.
+planets, mods, circuits and trains, all read from the blueprint itself. Makes, buildings and
+modules can carry a quality ("legendary beacons", "processing units crafted at rare or above").
+Filters stack, so each click narrows the results, and community nicknames ("red science", "gc")
+work as search text.
 
-![Search with four stacked filters: makes firearm magazines, uses asteroid collectors, needs Space Age, has a render: 26 space platforms](docs/screenshots/filters.webp)
+![Search with four stacked filters: makes firearm magazines, uses asteroid collectors, needs Space Age, has a render: 634 prints](docs/screenshots/filters.webp)
 
 ### High-res game renders
 
@@ -32,19 +34,23 @@ recipe, modules and connections.
 
 ### Books you can navigate
 
-Tabs for every book and sub-book, with the selected page's render first. Copy the whole book, or
-just the page you're looking at.
+The selected page's render first, then every book and sub-book, with a thumbnail of each page's
+render so you can find the one you want by looking. Copy the whole book, or just the page you're
+looking at.
 
-![A blueprint book: the selected page's game render, then tabs for its books and sub-books over the pages](docs/screenshots/book.webp)
+![The AutoRail book's Render & pages tab: the selected page's game render, its sub-books, and thumbnails of their pages](docs/screenshots/book.webp)
 
 ### Calculated rates
 
 No rate in the description? It's worked out from the page's machines and recipes, with their
-modules and beacons, so you see what a build makes per second at nameplate speed.
+modules and beacons, so you see what a build makes with every machine crafting at full speed, per
+second or per minute.
 
-![Big Boy Space Science's print page: about 611.84 space science packs per second, from 464 assembling machines with 1,876 productivity modules, 586 speed modules and 112 beacons](docs/screenshots/rates.webp)
+![Big Boy Space Science's overview: about 611.84 space science packs per second, what it takes in, and what it's built with: 464 assembling machines with 1,876 productivity modules, 586 speed modules and 112 beacons](docs/screenshots/rates.webp)
 
-Every print links back to its page on factorioprints.com and credits its author.
+Every print links back to its page on factorioprints.com and credits its author. Authors'
+screenshots are served from the site's own copies of their Imgur uploads, so they load where Imgur
+is blocked.
 
 ## How it works
 
