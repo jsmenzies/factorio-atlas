@@ -168,7 +168,7 @@
 	 * hidden heading. Results pages past the first are
 	 * noindex too, titled after the search they page through.
 	 */
-	const seo = $derived.by((): { meta: ComponentProps<typeof PageMeta>; heading: string; style: 'title' | 'hidden' } => {
+	const seo = $derived.by((): { meta: ComponentProps<typeof PageMeta>; heading: string; style: 'title' | 'hidden'; home?: boolean } => {
 		const n = data.params.page;
 		const unpaged = new URLSearchParams(page.url.search);
 		unpaged.delete('p');
@@ -189,7 +189,8 @@
 					canonical: '/'
 				},
 				heading: 'Search Factorio blueprints',
-				style: 'hidden'
+				style: 'hidden',
+				home: true
 			};
 		}
 		const item = kind ? data.picker.find((p) => p.signal === kind.value) : undefined;
@@ -212,9 +213,21 @@
 			style: 'hidden'
 		};
 	});
+
+	const websiteLd = $derived(
+		`<script type="application/ld+json">${JSON.stringify({ '@context': 'https://schema.org', '@type': 'WebSite', name: 'Blueprint Atlas', url: `${page.url.origin}/` })}</` + 'script>'
+	);
 </script>
 
 <PageMeta {...seo.meta} />
+
+<!-- The site's name for search results (Google's site names read WebSite data on the home page). Without it Google
+     takes the parent domain's name. A data block, so the CSP doesn't apply to it. -->
+<svelte:head>
+	{#if seo.home}
+		{@html websiteLd}
+	{/if}
+</svelte:head>
 
 <!-- A landing page's title, or (the home page and other searches) a heading for screen readers only. -->
 <h1 class={{ title: 'mb-3 text-xl font-semibold text-stone-100', hidden: 'sr-only' }[seo.style]}>
