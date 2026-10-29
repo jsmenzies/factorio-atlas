@@ -3,6 +3,7 @@ import adapter from '@sveltejs/adapter-cloudflare';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import { renderControl } from './scripts/render/dev-plugin.ts';
+import { syncControl } from './scripts/sync/dev-plugin.ts';
 
 export default defineConfig({
 	server: {
@@ -14,6 +15,8 @@ export default defineConfig({
 	plugins: [
 		// Dev only: starts render runs for /admin/render (scripts/render/dev-plugin.ts).
 		renderControl(),
+		// Dev only: the admin Overview's update and check buttons (scripts/sync/dev-plugin.ts).
+		syncControl(),
 		tailwindcss(),
 		sveltekit({
 			compilerOptions: {

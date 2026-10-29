@@ -18,6 +18,8 @@ declare module 'bun:test' {
 	export function describe(name: string, fn: () => void): void;
 	export function beforeEach(fn: () => void | Promise<void>): void;
 	export function afterEach(fn: () => void | Promise<void>): void;
+	export function beforeAll(fn: () => void | Promise<void>): void;
+	export function afterAll(fn: () => void | Promise<void>): void;
 	export function expect(actual: unknown): Matchers;
 	export const mock: { module(specifier: string, factory: () => unknown): void };
 }

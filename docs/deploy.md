@@ -483,12 +483,54 @@ D1 databases are numbered per stage in `DATABASES` in `infra/databases.ts`.
    roll back, set `bound: 1` and deploy (add `--adopt` if Alchemy says the database isn't its
    own). On a staging stage, db-1 is deleted by that deploy.
 
-## Admin page (`/admin/pipeline`, `/admin/render`)
+## Keeping up with the mirror (`bun run sync`)
+
+One update brings a stage up to date with the print sources (today the mirror), on the machine
+that renders (it needs the mirror clone, the sprite assets and the renders folder):
+
+```sh
+bun run sync                 # prod; asks for "prod" unless --yes
+bun run sync --plan          # fetch the mirror and say what an update would do; changes nothing
+bun run sync --accept <hash> # let a held-back mirror commit through on the next update
+bun run sync --stage local   # try it on the local stage
+```
+
+In order, each step being the command you'd otherwise run by hand:
+
+1. Removals: reserved for removal requests, skipped for now.
+2. Fetch: for the mirror, `git fetch`, a comparison by print id, then a fast-forward. A source is
+   held back, and only it, when the prints added, deleted or moved since the last fetch are more than
+   5% of them (as a layout change would; edits in place don't count), when it would be left with no
+   prints, or when the clone has commits the mirror doesn't. Once you've looked at the mirror,
+   `bun run sync --accept <commit>` (or Accept on the Overview) lets that commit through.
+3. Ingest: `backfill --from-clone`, skipped when neither the sources nor the analyzer, index or
+   viewer version changed since the last update that ran it to the end. A backfill whose failures
+   aren't the records' own (storage, the network, a worker) doesn't count as the end.
+4. `authors`, then 5. `screenshots`, `--upload` and `screenshots:flags`.
+5. Render: `render:top` and `render:check`, then `render --next … --upload … --flags`.
+6. The stage's counts.
+
+A failed step is marked and the steps that don't need it still run; authors and render need ingest.
+Prints deleted from the mirror are counted and kept. Each update is a `sync_runs` row in the local
+D1 (migration 0020, so run `bun run db:migrate` first) and one log, `sync-<time>.log`, in the run
+logs folder (`<renders dir>/logs/`). Ctrl-C, or Stop on the Overview, ends the current step cleanly
+and starts no more; Ctrl-C again, or Quit now, ends the step at once, and kills it 30 s later if it
+hasn't. An update refuses to start while another is running or a render run is live; one whose
+process was killed is closed as failed by the next, once its processes are gone.
+
+Its settings (the top N favourites to render, how many prints to render per update, render workers,
+screenshots, Imgur rechecks, author lookups and the 5% guard) are saved in the local D1 from
+`/admin/settings` under `bun run dev`; without them the defaults apply. `/admin` under `bun run dev`
+is the Overview: what the next update would do, Update everything, the figures and past updates.
+
+## Admin page (`/admin`, `/admin/pipeline`, `/admin/render`)
 
 `/admin` is the only private part of the site: backfill runs (`/admin/pipeline`) and render runs
-(`/admin/render`), with pause, resume and stop. Render runs happen on the machine that renders and
-are recorded in its local D1, so `/admin/render` shows them under `bun run dev`, where it can also
-start a batch. Two locks, both required:
+(`/admin/render`), with pause, resume and stop. Render runs and updates happen on the machine that
+renders and are recorded in its local D1, so `/admin/render` shows them under `bun run dev`, where
+it can also start a batch, and `/admin` is the Overview and `/admin/settings` the update's settings
+(deployed, `/admin` goes to `/admin/pipeline` and the settings page is a 404). Two locks, both
+required:
 
 1. **Cloudflare Access** in front of `<domain>/admin*`, allowing only `ADMIN_EMAIL`. Alchemy
    creates it (`Cloudflare.Access.Application`, inline policy) when the stage has a

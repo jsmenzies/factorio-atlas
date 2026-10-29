@@ -11,7 +11,7 @@ declare module 'bun:sqlite' {
 		constructor(filename?: string, options?: { create?: boolean; readonly?: boolean; strict?: boolean });
 		query(sql: string): Query;
 		run(sql: string): void;
-		transaction<T>(fn: () => T): () => T;
+		transaction<T>(fn: () => T): (() => T) & { deferred: () => T; immediate: () => T; exclusive: () => T };
 		close(): void;
 	}
 }

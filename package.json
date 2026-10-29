@@ -34,6 +34,7 @@
 		"render:flags": "bun scripts/render-flags.ts",
 		"render:thumbs": "bun scripts/render-thumbs.ts",
 		"views:sync": "bun scripts/views-sync.ts",
+		"sync": "bun scripts/sync.ts",
 		"authors": "bun scripts/authors.ts",
 		"screenshots": "bun scripts/screenshots.ts",
 		"screenshots:flags": "bun scripts/screenshots-flags.ts",

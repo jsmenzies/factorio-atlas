@@ -34,6 +34,8 @@ import { loadEnv, type Plugin } from 'vite';
 import { LIVE_STATES } from '#lib/server/pipeline/runs.js';
 import { RENDER_STALE_MS } from '#lib/server/render-queue.js';
 import { rendersDir } from '#lib/server/renders-dir.js';
+import { LIVE_SYNC_WHERE, liveSyncParams } from '#lib/server/sync.js';
+import { defaultAssets } from './assets-dir.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 /** The run logs, in the renders folder (RENDERS_DIR from .env or the environment; set in configResolved). */
@@ -105,7 +107,7 @@ export function scopeArgs(kind: 'top' | 'check', body: unknown, cloneDir: string
 }
 
 /** Run a command to its end (without a shell, never blocking the dev server's thread): exit code and output. */
-const runToEnd = (cmd: string, argv: string[], env: NodeJS.ProcessEnv, timeoutMs: number) =>
+export const runToEnd = (cmd: string, argv: string[], env: NodeJS.ProcessEnv, timeoutMs: number) =>
 	new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve) => {
 		const child = spawn(cmd, argv, { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
 		let stdout = '';
@@ -123,7 +125,7 @@ const runToEnd = (cmd: string, argv: string[], env: NodeJS.ProcessEnv, timeoutMs
 		});
 	});
 
-const json = (res: ServerResponse, status: number, body: unknown) => {
+export const json = (res: ServerResponse, status: number, body: unknown) => {
 	res.statusCode = status;
 	res.setHeader('content-type', 'application/json');
 	res.setHeader('cache-control', 'no-store');
@@ -145,6 +147,26 @@ const readBody = (req: IncomingMessage, max = 4096) =>
 		req.on('error', reject);
 	});
 
+/** A same-origin JSON body, or null once an error was sent. */
+export async function jsonBody(req: IncomingMessage, res: ServerResponse): Promise<{ body: unknown } | null> {
+	if (!/^application\/json\b/.test(req.headers['content-type'] ?? '')) {
+		json(res, 415, { error: 'send JSON (content-type: application/json)' });
+		return null;
+	}
+	// Only the site's own pages: a page elsewhere can't start runs through the browser.
+	const origin = req.headers.origin;
+	if (origin && origin !== `http://${req.headers.host}`) {
+		json(res, 403, { error: 'cross-origin request refused' });
+		return null;
+	}
+	try {
+		return { body: JSON.parse(await readBody(req)) as unknown };
+	} catch (e) {
+		json(res, 400, { error: `bad JSON: ${e instanceof Error ? e.message : e}` });
+		return null;
+	}
+}
+
 const executable = (p: string) => {
 	try {
 		accessSync(p, constants.X_OK);
@@ -155,7 +177,7 @@ const executable = (p: string) => {
 };
 
 /** bun: BUN_BIN, else on PATH, else what mise has. */
-function findBun(env: Record<string, string>): string | null {
+export function findBun(env: Record<string, string>): string | null {
 	if (env.BUN_BIN && executable(env.BUN_BIN)) return env.BUN_BIN;
 	for (const dir of (process.env.PATH ?? '').split(delimiter)) if (dir && executable(join(dir, 'bun'))) return join(dir, 'bun');
 	const mise = spawnSync('mise', ['which', 'bun'], { cwd: ROOT, encoding: 'utf8' });
@@ -207,20 +229,41 @@ async function liveRun(): Promise<LiveRun | null | 'busy'> {
 	}
 }
 
-/** Without FPSR_ASSETS_DIR: the last (by name) asset bundle in ~/fpsr-assets/<game version>/, if any. */
-const defaultAssets = () => {
-	const dir = join(homedir(), 'fpsr-assets');
+/**
+ * The update (`bun run sync`) running now, from the same file, or null. Its steps pull the clone,
+ * refresh the top N and start a render run themselves, so this panel's do neither meanwhile.
+ */
+async function liveSync(): Promise<{ id: string } | null | 'busy'> {
+	const file = (() => {
+		try {
+			return readdirSync(D1_DIR).find((f) => f.endsWith('.sqlite') && f !== 'metadata.sqlite');
+		} catch {
+			return undefined;
+		}
+	})();
+	if (!file) return null;
+	const { DatabaseSync } = await import('node:sqlite');
 	try {
-		return (
-			readdirSync(dir)
-				.filter((d) => existsSync(join(dir, d, 'manifest.json')))
-				.sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-				.map((d) => join(dir, d))
-				.at(-1) ?? null
-		);
-	} catch {
-		return null;
+		const db = new DatabaseSync(join(D1_DIR, file), { readOnly: true, timeout: BUSY_TIMEOUT_MS });
+		try {
+			return (
+				(db.prepare(`SELECT id FROM sync_runs WHERE ${LIVE_SYNC_WHERE} LIMIT 1`).get(...liveSyncParams()) as { id: string } | undefined) ??
+				null
+			);
+		} finally {
+			db.close();
+		}
+	} catch (e) {
+		// Busy, or no sync tables yet (migration 0020 not applied).
+		return LOCKED.test(e instanceof Error ? e.message : String(e)) ? 'busy' : null;
 	}
+}
+
+/** A 409/503 answer when an update is running (or the database is too busy to say), else null. */
+const syncRefusal = async (what: string): Promise<[number, string] | null> => {
+	const sync = await liveSync();
+	if (sync === 'busy') return [503, 'the local database is busy (a run is writing to it); try again in a moment'];
+	return sync ? [409, `an update is running (${sync.id}): ${what} once it ends, or stop it on the Overview`] : null;
 };
 
 const latestLog = () => {
@@ -257,26 +300,6 @@ export function renderControl(): Plugin {
 		return { cloneDir, assetsDir, r2, problems };
 	};
 
-	/** A same-origin JSON body, or null once an error was sent. */
-	async function jsonBody(req: IncomingMessage, res: ServerResponse): Promise<{ body: unknown } | null> {
-		if (!/^application\/json\b/.test(req.headers['content-type'] ?? '')) {
-			json(res, 415, { error: 'send JSON (content-type: application/json)' });
-			return null;
-		}
-		// Only the site's own pages: a page elsewhere can't start runs through the browser.
-		const origin = req.headers.origin;
-		if (origin && origin !== `http://${req.headers.host}`) {
-			json(res, 403, { error: 'cross-origin request refused' });
-			return null;
-		}
-		try {
-			return { body: JSON.parse(await readBody(req)) as unknown };
-		} catch (e) {
-			json(res, 400, { error: `bad JSON: ${e instanceof Error ? e.message : e}` });
-			return null;
-		}
-	}
-
 	/** One top, check or pull at a time. */
 	let scopeBusy: string | null = null;
 
@@ -284,6 +307,8 @@ export function renderControl(): Plugin {
 		const got = await jsonBody(req, res);
 		if (!got) return;
 		if (scopeBusy) return json(res, 409, { error: `a ${scopeBusy} is already running` });
+		const refused = await syncRefusal(kind === 'pull' ? 'pull' : kind === 'top' ? 'refresh the top list' : 'check');
+		if (refused) return json(res, refused[0], { error: refused[1] });
 		const c = config();
 		if (!existsSync(c.cloneDir)) return json(res, 409, { error: `no mirror clone at ${c.cloneDir} (set RENDER_CLONE_DIR in .env)` });
 		if (kind === 'pull') {
@@ -335,6 +360,8 @@ export function renderControl(): Plugin {
 		if (live === 'busy') return json(res, 503, { error: 'the local database is busy (a run is writing to it); try again in a moment' });
 		if (live)
 			return json(res, 409, { error: `a render run is live (${live.id}, ${live.state}): pause or stop it first, or wait for it to end` });
+		const refused = await syncRefusal('start a run');
+		if (refused) return json(res, refused[0], { error: refused[1] });
 		const bun = findBun(env);
 		if (!bun) return json(res, 500, { error: 'bun not found: put it on PATH or set BUN_BIN' });
 

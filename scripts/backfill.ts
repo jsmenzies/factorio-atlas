@@ -56,6 +56,7 @@ const USAGE = `usage: bun run backfill --stage local|prod [options]
   --retry-failed     retry prints that failed before, even if unchanged
   --db N             D1 generation for prod (default: DATABASES.<stage>.bound in infra/databases.ts)
   --yes              don't ask before writing to prod
+  --json             end with the run as one line of JSON (id, state, counts, failures by kind)
 
 keys (TTY): p pause · r resume · s stop after in-flight · q quit now · Ctrl-C stop, twice quit now`;
 
@@ -92,6 +93,7 @@ const { values: flags } = (() => {
 				force: { type: 'boolean', default: false },
 				'retry-failed': { type: 'boolean', default: false },
 				yes: { type: 'boolean', default: false },
+				json: { type: 'boolean', default: false },
 				status: { type: 'boolean', default: false },
 				help: { type: 'boolean', short: 'h', default: false }
 			},
@@ -483,6 +485,18 @@ const finish = async (state: 'finished' | 'stopped' | 'failed', error: string | 
 	else console.log(statusLines(run, now(), { slowest, overheadRows: counters.overheadRows, fetch: records.describe() }).join('\n'));
 	term.freeze();
 	term.close();
+	if (flags.json)
+		console.log(
+			JSON.stringify({
+				id: run.id,
+				state: run.state,
+				total: run.total,
+				done: run.done,
+				analysed: run.analysed,
+				failed: run.failed,
+				failures: run.failures
+			})
+		);
 };
 
 /** q, a second Ctrl-C: abandon in-flight prints (their writes are ordered, so nothing claims missing files) and mark the run stopped. */

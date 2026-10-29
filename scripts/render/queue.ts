@@ -20,7 +20,8 @@ export const MAX_ATTEMPTS = 3;
 export const gaveUp = (row: Pick<RenderJobRow, 'status' | 'attempts'> & Partial<Pick<RenderJobRow, 'input_key'>>, key?: string): boolean =>
 	row.status === 'failed' && row.attempts >= MAX_ATTEMPTS && (key === undefined || row.input_key === key);
 
-const alive = (pid: number) => {
+/** Whether a process exists (one owned by another user counts). */
+export const alive = (pid: number) => {
 	try {
 		process.kill(pid, 0);
 		return true;

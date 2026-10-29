@@ -123,7 +123,9 @@ GitHub mirror of factorioprints (motlin/factorio-blueprint-firebase-cdn, one JSO
   and `/admin/render` shows render runs (progress, rate and ETA, latest renders, skipped and
   failed pages, uploads, pause, resume, stop); under `bun run dev` it can also start a batch or
   resume the last run on this machine. They're open under `bun run dev`; deployed, they require
-  Cloudflare Access (see docs/deploy.md).
+  Cloudflare Access (see docs/deploy.md). Under `bun run dev`, `/admin` is the Overview: what the
+  next update from the mirror would do, one button that runs it (`bun run sync`), the site's and the
+  renders' figures and past updates; `/admin/settings` holds the update's settings.
 
 Stack: SvelteKit 3 on Cloudflare Workers (`@sveltejs/adapter-cloudflare`), D1, R2, Effect 4, bun,
 Tailwind 4. Deploys use [Alchemy](https://alchemy.run).
@@ -183,6 +185,8 @@ this repository.
 | `bun run render:flags --stage local\|prod`                     | mark the prints with a render in that stage's bucket for the search filter, with each one's cover thumbnail (after uploads; `--dry-run`, `--db N`, `--yes`, `--bump`; see docs/deploy.md, "Uploading renders")                                       |
 | `bun run authors --stage local\|prod`                          | put author names on prints whose record has only the author's id: records first, then one Firebase lookup per author, at most 5/s, never repeated (`--dry-run`, `--limit N`, `--db N`, `--yes`; see docs/deploy.md, "Author names")                  |
 | `bun run views:sync --stage local\|prod`                       | total prod's page views over the last 30 days into that stage's D1 for the Popular sort (`--dry-run`, `--db N`, `--yes`; needs `ANALYTICS_API_TOKEN`; see docs/deploy.md, "Page views")                                                              |
+| `bun run sync [--stage prod\|local]`                           | one update with the saved settings: fetch the mirror, ingest, authors, screenshots, renders, counts (docs/deploy.md)                                                                                                                                 |
+| `bun run sync --plan`                                          | fetch the mirror and say what an update would do, changing nothing                                                                                                                                                                                   |
 | `bun run game-data <script-output dir> <factorio data dir>`    | regenerate `data/game/game-data-*.json` from the game's `--dump-data` and `--dump-prototype-locale` output (steps in `scripts/build-game-data.ts`)                                                                                                   |
 | `bun run icons <script-output dir>`                            | WebP icons from the game's `--dump-icon-sprites` output into `data/sprites/` and the local SPRITES bucket; writes `data/game/icons.json`                                                                                                             |
 | `bun run icons --upload local\|remote`                         | upload that icon set again, to the local bucket or to the deployed sprites bucket every stage shares                                                                                                                                                 |
