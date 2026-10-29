@@ -56,8 +56,10 @@
 	const coverIndex = $derived(!single && data.cover ? pages.findIndex((n) => n.path === data.cover?.path) + 1 || null : null);
 	// Each book page has its own URL, for links and search engines; the first page's is the print's.
 	const pageHref = (path: string) => (path === pages[0]?.path ? `/prints/${p.id}` : `/prints/${p.id}?page=${encodeURIComponent(path)}`);
-	// A book page's URL opens on its render; the first page's is the print's own, so it says so.
-	const select = (path: string) => goto(path === pages[0]?.path ? `${pageHref(path)}?tab=pages` : pageHref(path), { shallow: true, replace: true });
+	// A book page's URL opens on its render; the first page's is the print's own, so it says so. Every pick
+	// and tab switch is a history entry, as following the link it stands in for would be, so Back steps back
+	// through them before leaving the print.
+	const select = (path: string) => goto(path === pages[0]?.path ? `${pageHref(path)}?tab=pages` : pageHref(path), { shallow: true });
 	// In a book, the counting tabs show the whole book or the selected page (BookScope).
 	// A page picked on the render tab (or named in the URL) is the one the other tabs show.
 	let scope = $state<'book' | 'page'>(untrack(() => (query.has('page') ? 'page' : 'book')));
@@ -71,7 +73,7 @@
 	/** Picks a page without leaving `tab`. */
 	const selectOn = (tab: TabId) => (path: string) => {
 		const href = pageHref(path);
-		goto(`${href}${href.includes('?') ? '&' : '?'}tab=${tab}`, { shallow: true, replace: true });
+		goto(`${href}${href.includes('?') ? '&' : '?'}tab=${tab}`, { shallow: true });
 	};
 
 	const tabs = $derived(
@@ -105,7 +107,7 @@
 		const url = new URL((route.shallow?.url ?? route.url).href);
 		if (id === defaultTab) url.searchParams.delete('tab');
 		else url.searchParams.set('tab', id);
-		goto(url.pathname + url.search, { shallow: true, replace: true });
+		goto(url.pathname + url.search, { shallow: true });
 	};
 
 	// The Overview's picture: the selected page's render, else the biggest rendered page's (its
