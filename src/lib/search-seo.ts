@@ -3,7 +3,8 @@
  * or one `uses` value ("Electronic circuit blueprints") at any quality, with nothing else that changes the results.
  * Every other search (text, several filters, a sort, other filters, a results page past the first)
  * is `noindex, follow`, and links to one carry `rel="nofollow"`, so crawlers spend their time on
- * prints (all in the sitemap) and landing pages.
+ * prints (all in the sitemap) and landing pages. Googlebot follows nofollow links anyway, so robots.txt
+ * (robotsTxt in lib/server/sitemap.ts) blocks the same URLs; keep the two in step.
  */
 import { MULTI_FILTERS } from './filters.js';
 import { splitQuality } from './quality.js';

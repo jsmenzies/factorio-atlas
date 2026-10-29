@@ -49,16 +49,28 @@ export const sitemapXml = (origin: string, prints: SitemapPrint[], landings: Lan
 	].join('\n');
 
 /**
- * Everything may be crawled except the blueprint strings, the inline viewer's JSON and a quality chip's
- * counts: data for the page's own buttons and scripts, useless in search results. All also send
- * `X-Robots-Tag: noindex`. (The full-screen render page is fetched but `noindex`, so crawlers see that.)
+ * Crawlers may fetch the home page, landing pages (lib/search-seo.ts) and print pages. Kept off: the blueprint
+ * strings, the inline viewer's JSON and a quality chip's counts (data for the page's own scripts, also sent with
+ * `X-Robots-Tag: noindex`), and every `noindex` page with a crawlable link to it: the full-screen render pages
+ * and searches other than a landing page. `nofollow` on links into search is only a hint: Googlebot crawled
+ * ≈ 160k of those noindex pages in the site's first week while the prints waited. The longest matching rule
+ * wins (RFC 9309), so a landing page (`/?makes=<one value>`, `/?uses=<one value>`) is allowed, and the same
+ * with a second parameter (`&`) or a quality (`@`, `%40`) is not.
  */
 export const robotsTxt = (origin: string) =>
 	[
 		'User-agent: *',
 		'Disallow: /prints/*/string',
 		'Disallow: /prints/*/viewer',
+		'Disallow: /prints/*/render',
 		'Disallow: /quality-levels',
+		'Disallow: /?',
+		...['makes', 'uses'].flatMap((key) => [
+			`Allow: /?${key}=`,
+			`Disallow: /?${key}=*&`,
+			`Disallow: /?${key}=*@`,
+			`Disallow: /?${key}=*%40`
+		]),
 		'',
 		`Sitemap: ${origin}/sitemap.xml`,
 		''

@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
 import { d1FromSqlite } from './pipeline/d1-sqlite.js';
 import { robotsTxt, sitemapRows, sitemapXml } from './sitemap.js';
+import { landingPath } from '#lib/search-seo.js';
 
 describe('sitemap', () => {
 	test('home page first, then every print with its lastmod', () => {
@@ -56,9 +57,59 @@ describe('sitemap', () => {
 		});
 	});
 
-	test('robots.txt keeps crawlers off the string and viewer data, and names the sitemap', () => {
-		expect(robotsTxt('https://example.com')).toBe(
-			'User-agent: *\nDisallow: /prints/*/string\nDisallow: /prints/*/viewer\nDisallow: /quality-levels\n\nSitemap: https://example.com/sitemap.xml\n'
-		);
+	test('robots.txt names the sitemap', () => {
+		expect(robotsTxt('https://example.com').endsWith('\nSitemap: https://example.com/sitemap.xml\n')).toBe(true);
+	});
+
+	/** RFC 9309 matching, as Google and Bing do it: the longest matching rule wins, Allow on a tie; `*` is any run, `$` the end. */
+	const allowed = (robots: string, url: string) => {
+		const rules = robots
+			.split('\n')
+			.map((line) => /^(Allow|Disallow): (.+)$/.exec(line))
+			.filter((m) => m !== null)
+			.map(([, kind, path]) => ({ allow: kind === 'Allow', path }));
+		const matches = rules.filter(({ path }) => {
+			const end = path.endsWith('$');
+			const body = (end ? path.slice(0, -1) : path).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*');
+			return new RegExp(`^${body}${end ? '$' : ''}`).test(url);
+		});
+		const best = matches.sort((a, b) => b.path.length - a.path.length || Number(b.allow) - Number(a.allow))[0];
+		return best?.allow ?? true;
+	};
+
+	test('robots.txt lets crawlers fetch the home page, landing pages and prints, and nothing else in search', () => {
+		const robots = robotsTxt('https://example.com');
+		const open = [
+			'/',
+			landingPath({ key: 'makes', value: 'item:rocket-fuel' }),
+			landingPath({ key: 'uses', value: 'entity:foundry' }),
+			'/prints/-LI0gc-a-2_VLWR-tx1d',
+			'/prints/-LI0gc-a-2_VLWR-tx1d?page=5',
+			'/sitemap.xml',
+			'/robots.txt',
+			'/og.png'
+		];
+		const closed = [
+			'/?q=red%20science',
+			'/?p=2',
+			'/?sort=popular',
+			'/?author=SWFBEjQvP7aHu91wPxwryXXflTf2',
+			'/?render=1',
+			'/?version=2.0',
+			'/?makes=item%3Arocket-fuel&version=2.0.77',
+			'/?makes=item%3Arocket-fuel&makes=item%3Asolid-fuel',
+			'/?makes=item%3Arocket-fuel&p=2',
+			'/?uses=entity%3Afoundry&spaceAge=yes',
+			'/?uses=entity%3Abeacon%40epic',
+			'/?uses=entity:beacon@epic',
+			'/?render=1&makes=item%3Arocket-fuel',
+			'/prints/-LI0gc-a-2_VLWR-tx1d/render?page=0',
+			'/prints/-LI0gc-a-2_VLWR-tx1d/render?page=0&from=overview',
+			'/prints/-LI0gc-a-2_VLWR-tx1d/string?page=1',
+			'/prints/-LI0gc-a-2_VLWR-tx1d/viewer',
+			'/quality-levels?uses=entity%3Abeacon'
+		];
+		expect(open.filter((url) => !allowed(robots, url))).toEqual([]);
+		expect(closed.filter((url) => allowed(robots, url))).toEqual([]);
 	});
 });
