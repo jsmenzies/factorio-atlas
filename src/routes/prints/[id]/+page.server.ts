@@ -4,7 +4,7 @@ import { iconSet } from '#lib/server/icon-set.js';
 import { landingLinks } from '#lib/server/picker-items.js';
 import { renderDescription } from '#lib/server/markdown.js';
 import { gameData } from '#lib/server/pipeline/game-data.js';
-import { loadPrintDoc, printTexts } from '#lib/server/print-pages.js';
+import { loadPrintDoc, loadRelated, printTexts } from '#lib/server/print-pages.js';
 import { pageThumbs, renderBase, renderOverviews } from '#lib/server/renders.js';
 import { loadShotView } from '#lib/server/screenshots.js';
 import type { PageServerLoad } from './$types';
@@ -17,7 +17,7 @@ export const load: PageServerLoad = async ({ params }) => {
 	// The print page reads only R2 (its document, render index, thumbnails and screenshot manifest), never D1.
 	const thumbs = pageThumbs(params.id);
 	const [found, overviews] = await loadPrintDoc(params.id, renderOverviews(params.id));
-	const shot = await loadShotView(found.print);
+	const [shot, related] = await Promise.all([loadShotView(found.print), loadRelated(found)]);
 	const a = found.analysis;
 	// Each rendered page's overview image: the Overview tab's preview, and the header's background
 	// when the author has no screenshot.
@@ -93,6 +93,8 @@ export const load: PageServerLoad = async ({ params }) => {
 		cover,
 		thumbs: await thumbs,
 		shot,
+		// The soft fold (fold.ts): the earlier print a same-author copy points at, or the earliest one an identical print by someone else does.
+		related,
 		// Links to the landing pages of what it makes and is built with (the sidebar's "Search for more blueprints"),
 		// what it makes ranked as the page ranks it.
 		landings: landingLinks(a, ranked)

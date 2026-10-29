@@ -1,3 +1,5 @@
+import { isFactorioprintsId } from './print-id';
+
 /** "item:electronic-circuit" → "Electronic circuit" */
 export const signalName = (signal: string) => {
 	const name = signal.includes(':') ? signal.slice(signal.indexOf(':') + 1) : signal;
@@ -31,7 +33,8 @@ export const imgurUrl = (id: string, type: string | null, size: 'thumb' | 'large
 	return `https://i.imgur.com/${id}${suffix}.${ext}`;
 };
 
-export const sourceUrl = (id: string) => `https://factorioprints.com/view/${id}`;
+/** factorioprints' page for a print first seen there; null for uploads and prints first seen on other sites. */
+export const sourceUrl = (id: string) => (isFactorioprintsId(id) ? `https://factorioprints.com/view/${id}` : null);
 
 const DAY = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 /** "24 Oct 2026": the same on the server and in every browser, so hydration never disagrees. */

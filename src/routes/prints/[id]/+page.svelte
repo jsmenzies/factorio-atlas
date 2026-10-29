@@ -175,7 +175,10 @@
 		if (kind === 'deconstruction_planner') return 'Factorio deconstruction planner';
 		return 'Factorio blueprint';
 	});
-	const meta = $derived(
+	// A later exact copy of an earlier print (the soft fold): its pages point search engines at the original.
+	const copyOf = $derived(data.related.copyOf);
+	const identicalTo = $derived(data.related.identicalTo);
+	const ownMeta = $derived(
 		bookPage
 			? {
 					title: `${plainText(pageTitle(bookPage).text)} · ${plainText(title)} · Factorio blueprint · Blueprint Atlas`,
@@ -184,6 +187,13 @@
 				}
 			: { title: `${plainText(title)} · ${what} · Blueprint Atlas`, description: metaDescription(a, p.author_name, { rendered: rendered.size > 0, makes: [...products.main, ...products.groups.flatMap((g) => g.items)].map((m) => m.signal) }), canonical: `/prints/${p.id}` }
 	);
+	// A folded copy's page N points at the original's page N (an exact copy has the same pages in the same order).
+	const copyCanonical = $derived.by(() => {
+		if (!copyOf) return null;
+		const target = selectedIndex > 0 ? data.related.copyPages[selectedIndex] : undefined;
+		return target ? `/prints/${copyOf.id}?page=${encodeURIComponent(target)}` : `/prints/${copyOf.id}`;
+	});
+	const meta = $derived(copyCanonical ? { ...ownMeta, canonical: copyCanonical } : ownMeta);
 	// Link previews show the author's screenshot, for the print and each of its book pages: our copy's
 	// preview JPEG, else Imgur's while ours isn't there yet, else (gone or removed) the site's card.
 	const image = $derived(data.shot.og ? { ...data.shot.og, alt: `Screenshot of ${plainText(title)}` } : undefined);
@@ -221,6 +231,18 @@
 	oncopy={() => copy('book')}
 	icons={data.icons}
 />
+
+{#if copyOf}
+	<p class="mb-6 rounded border border-stone-800 bg-stone-900/60 px-4 py-3 text-sm text-stone-300">
+		Same blueprint as <a class="text-amber-400 underline hover:text-amber-300" href="/prints/{copyOf.id}">{plainText(copyOf.title)}</a>, posted
+		earlier{#if copyOf.author_name}{' '}by {copyOf.author_name}{/if}.
+	</p>
+{:else if identicalTo}
+	<p class="mb-6 rounded border border-stone-800 bg-stone-900/60 px-4 py-3 text-sm text-stone-300">
+		Identical to <a class="text-amber-400 underline hover:text-amber-300" href="/prints/{identicalTo.id}">{plainText(identicalTo.title)}</a
+		>{#if identicalTo.author_name}{' '}by {identicalTo.author_name}{/if}, posted earlier.
+	</p>
+{/if}
 
 <div class="grid gap-8 lg:grid-cols-[minmax(0,1fr)_20rem]">
 	<div class="min-w-0">

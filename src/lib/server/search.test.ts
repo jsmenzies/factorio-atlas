@@ -103,11 +103,14 @@ const chipStatement = (p: TestParams) => {
 	return key ? [qualityLevelsStatement(s, key, s[key][0])] : [];
 };
 const run = runOn(sqlite);
+/** Every match expression leaves folded copies out (fold.ts). */
+const unfolded = (expr: string) => `(${expr}) NOT facets : "folded_yes"`;
 
 describe('search over the slim schema', () => {
 	test('every fixture was analysed, at a handful of rows each', () => {
 		expect(outcomes.map((o) => o.status)).toEqual(['analysed', 'analysed', 'analysed']);
-		for (const o of outcomes) if (o.status === 'analysed') expect(o.rowsWritten < 60).toBe(true);
+		// Plus the identity rows: a source, and four fingerprints (two index entries each) per page and for the whole print.
+		for (const o of outcomes) if (o.status === 'analysed') expect(o.rowsWritten < 70 + 8 * o.analysis.blueprintCount).toBe(true);
 	});
 
 	test('no filters: every print, most favourited first, sidebar from facet_counts', () => {
@@ -150,7 +153,7 @@ describe('search over the slim schema', () => {
 		expect(run({ q: 'science', spaceAge: 'yes' }).ids).toEqual([SPACE]);
 		expect(run({ q: 'science', sort: 'relevance' }).ids.length).toBe(2);
 		expect(matchExpression(params({ q: 'red sci', spaceAge: 'no' }))).toBe(
-			'{title description labels entities recipes nicknames author} : ("red"* "sci"*) AND facets : "sa_no"'
+			unfolded('{title description labels entities recipes nicknames author} : ("red"* "sci"*) AND facets : "sa_no"')
 		);
 	});
 
@@ -172,7 +175,7 @@ describe('search over the slim schema', () => {
 		expect(run({ uses: 'entity:express-splitter', spaceAge: 'no', version: '0.15', q: 'blue' }).ids).toEqual([BELTS]);
 		expect(run({ uses: 'entity:express-splitter', q: 'science' }).ids).toEqual([]);
 		expect(run({ uses: 'entity:beacon', makes: 'item:space-science-pack' }).ids).toEqual([SPACE]);
-		expect(matchExpression(params({ uses: 'entity:foundry' }))).toBe('facets : "uses_entity_foundry"');
+		expect(matchExpression(params({ uses: 'entity:foundry' }))).toBe(unfolded('facets : "uses_entity_foundry"'));
 	});
 
 	test('recipe and module tokens', () => {
@@ -206,9 +209,9 @@ describe('only prints with a render', () => {
 		fixtureRecord(id).then((text) => Effect.runPromise(ingestText(id, text, 'test', { force: true }).pipe(Effect.provide(layer))));
 
 	test('the token joins every filter in the one match', () => {
-		expect(matchExpression(params({ render: true }))).toBe(`facets : "${RENDER_TOKEN}"`);
+		expect(matchExpression(params({ render: true }))).toBe(unfolded(`facets : "${RENDER_TOKEN}"`));
 		expect(matchExpression(params({ q: 'red sci', render: true }))).toBe(
-			`{title description labels entities recipes nicknames author} : ("red"* "sci"*) AND facets : "${RENDER_TOKEN}"`
+			unfolded(`{title description labels entities recipes nicknames author} : ("red"* "sci"*) AND facets : "${RENDER_TOKEN}"`)
 		);
 	});
 
@@ -422,7 +425,7 @@ describe('authors (bun run authors)', () => {
 		expect(run({ author: authorOf(SCIENCE), q: 'science' }).ids).toEqual([SCIENCE]);
 		expect(run({ author: authorOf(SCIENCE), spaceAge: 'yes' }).ids).toEqual([]);
 		expect(run({ author: 'nobody1234' }).ids).toEqual([]);
-		expect(matchExpression(params({ author: 'AbC9' }))).toBe('facets : "by_abc9"');
+		expect(matchExpression(params({ author: 'AbC9' }))).toBe(unfolded('facets : "by_abc9"'));
 	});
 
 	test('names from Firebase reach the card, the search row and the document, once', async () => {

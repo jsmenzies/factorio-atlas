@@ -10,7 +10,7 @@ import { env } from 'cloudflare:workers';
 import { iconSet } from '#lib/server/icon-set.js';
 import { gameData } from '#lib/server/pipeline/game-data.js';
 import { rawKey } from '#lib/server/pipeline/pipeline.js';
-import { readPrintDoc, type PrintDoc } from '#lib/server/pipeline/print-doc.js';
+import { analysisKey, PRINT_DOC_VERSION, readPrintDoc, type PrintDoc } from '#lib/server/pipeline/print-doc.js';
 import { pageStringKey, parseViewerIndex, viewerIndexKey } from '#lib/server/pipeline/viewer-files.js';
 import { getRenderPageData, getRenderSidecar, renderedPages } from '#lib/server/renders.js';
 import { firstPagePath } from '#lib/viewer/extract.js';
@@ -115,6 +115,71 @@ export const loadPrintDoc = async <T>(id: string, alongside: Promise<T>): Promis
 	if (removed) error(410, 'Removed on request');
 	if (!doc) error(404, 'Print not found');
 	return [doc, other];
+};
+
+/** Another print a page names (the soft fold's original, fold.ts): its id, title and author. */
+export interface RelatedPrint {
+	readonly id: string;
+	readonly title: string;
+	readonly author_name: string | null;
+}
+
+/** How much of a document's start to read for its `print` part, which comes before the analysis. */
+const HEAD_BYTES = 64 * 1024;
+
+/**
+ * A print's title and author from its R2 document, reading only its start when that holds the whole
+ * `print` part (it always comes first: `{"v":…,"print":{…},"analysis":…}`; `,"analysis":` can't occur
+ * inside a JSON string, whose quotes are escaped), else the whole document.
+ */
+const readPrintHead = async (id: string): Promise<RelatedPrint | null> => {
+	const head = await env.RAW.get(analysisKey(id), { range: { offset: 0, length: HEAD_BYTES } });
+	if (!head) return null;
+	const text = await head.text();
+	const end = text.indexOf(',"analysis":');
+	const doc = end > 0 ? (JSON.parse(`${text.slice(0, end)}}`) as Pick<PrintDoc, 'v' | 'print'>) : await readPrintDoc(env.RAW, id);
+	if (!doc || doc.v !== PRINT_DOC_VERSION) return null;
+	return { id: doc.print.id, title: doc.print.title, author_name: doc.print.author_name };
+};
+
+export interface Related {
+	/** The earlier print by the same author a folded copy points at. */
+	readonly copyOf: RelatedPrint | null;
+	/** Its blueprint pages' paths in book order, so the copy's page N names the original's page N. */
+	readonly copyPages: readonly string[];
+	/** The earliest print an identical print by someone else points at. */
+	readonly identicalTo: RelatedPrint | null;
+}
+
+/**
+ * The prints a folded copy or an identical print points at, from R2 only (only on a page-cache miss, only
+ * for those few prints; never D1). Anything missing or unreadable is left out: the page shows without it,
+ * never an error.
+ */
+export const loadRelated = async ({ print }: PrintDoc): Promise<Related> => {
+	const safe = async <T>(read: () => Promise<T>, fallback: T) => {
+		try {
+			return await read();
+		} catch {
+			return fallback;
+		}
+	};
+	const copyId = print.copy_of?.id;
+	const identicalId = print.identical_to?.id;
+	const [copyOf, copyPages, identicalTo] = await Promise.all([
+		copyId ? safe(() => readPrintHead(copyId), null) : null,
+		copyId
+			? safe(
+					async () =>
+						parseViewerIndex(await read(viewerIndexKey(copyId)))
+							?.pages.filter((p) => p.kind === 'blueprint')
+							.map((p) => p.path) ?? [],
+					[] as string[]
+				)
+			: [],
+		identicalId ? safe(() => readPrintHead(identicalId), null) : null
+	]);
+	return { copyOf, copyPages, identicalTo };
 };
 
 /** The print's texts that may hold rich-text icons, for iconSet: its title and every page's label. */

@@ -4,7 +4,8 @@
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { UPLOAD_TARGETS, type UploadTarget } from './ledger.js';
-import { IMGUR_ID, PRINT_ID } from './records.js';
+import { isPrintId } from '#lib/print-id.js';
+import { IMGUR_ID } from './records.js';
 
 /** Sent with every request; no Referer is ever sent (Imgur refuses some). */
 export const USER_AGENT = 'BlueprintAtlas-screenshots/1.0 (+https://github.com/jsmenzies/factorio-atlas)';
@@ -107,7 +108,7 @@ export function parseArgs(argv: readonly string[], defaults: { clone: string; di
 				.split(',')
 				.map((s) => s.trim())
 				.filter(Boolean);
-			const bad = ids.filter((id) => !PRINT_ID.test(id) && !IMGUR_ID.test(id));
+			const bad = ids.filter((id) => !isPrintId(id) && !IMGUR_ID.test(id));
 			if (bad.length) throw new UsageError(`not a print or Imgur id: ${bad.join(', ')}`);
 			a.ids = [...new Set([...(a.ids ?? []), ...ids])];
 		} else if (flag === '--limit') {

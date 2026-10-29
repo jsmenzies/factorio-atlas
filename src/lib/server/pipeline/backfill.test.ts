@@ -259,7 +259,7 @@ describe('compute/write split', () => {
 		const r = JSON.parse(FIXTURE) as Record<string, unknown>;
 		r.numberOfFavorites = 4242;
 		const { plan, outcome } = await viaWorker(h, ID, JSON.stringify(r));
-		expect(plan).toEqual({ kind: 'refresh', id: ID, favorites: 4242, viewerFiles: null, reindex: null });
+		expect(plan).toEqual({ kind: 'refresh', id: ID, favorites: 4242, viewerFiles: null, reindex: null, identity: null });
 		expect(outcome).toEqual({ status: 'favorites', id: ID, favorites: 4242 });
 		expect(h.writes.updateFavorites).toBe(2);
 	});

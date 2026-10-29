@@ -11,6 +11,27 @@ import { Schema } from 'effect';
  */
 const Timestamp = Schema.Union([Schema.Number, Schema.String]);
 
+const SITE = Schema.Literals(['factorioprints', 'upload', 'factoriobin', 'codex', 'fprints']);
+const NullableNumber = Schema.optional(Schema.NullOr(Schema.Number));
+
+/**
+ * Where a record from another site came from (source-record.ts `toPipelineText`); factorioprints'
+ * own records never have it.
+ */
+const PipelineSource = Schema.Struct({
+	site: SITE,
+	siteId: Schema.String,
+	url: Schema.String,
+	author: Schema.optional(
+		Schema.NullOr(Schema.Struct({ site: SITE, id: Schema.NullOr(Schema.String), name: Schema.NullOr(Schema.String) }))
+	),
+	image: Schema.optional(Schema.NullOr(Schema.Struct({ key: Schema.String, url: Schema.String }))),
+	uploadedAt: NullableNumber,
+	updatedAt: NullableNumber,
+	versions: Schema.optional(Schema.Array(Schema.String)),
+	sourceHints: Schema.optional(Schema.Array(Schema.String))
+});
+
 export const FirebaseRecord = Schema.Struct({
 	title: Schema.String,
 	blueprintString: Schema.String,
@@ -31,7 +52,8 @@ export const FirebaseRecord = Schema.Struct({
 			id: Schema.String,
 			type: Schema.optional(Schema.String)
 		})
-	)
+	),
+	source: Schema.optional(PipelineSource)
 });
 
 export type FirebaseRecord = typeof FirebaseRecord.Type;
@@ -46,11 +68,14 @@ export const toEpochMs = (t: number | string | undefined): number | null => {
 /**
  * A record's JSON text without the fields we must never store or republish: `favorites` maps the
  * user ids of everyone who favourited the print, and `image.deletehash` (an Imgur deletion secret)
- * isn't ours to keep. Throws when the text isn't JSON.
+ * isn't ours to keep. A top-level `source` (which site the record is from) is dropped too unless
+ * `keepSource`: only `toPipelineText` (source-record.ts) writes one, and a factorioprints record that
+ * carried its own must not pass for another site's. Throws when the text isn't JSON.
  */
-export const stripPrivateFields = (text: string): string => {
+export const stripPrivateFields = (text: string, keepSource = false): string => {
 	const record = JSON.parse(text) as Record<string, unknown>;
 	delete record.favorites;
+	if (!keepSource) delete record.source;
 	const image = record.image as Record<string, unknown> | undefined;
 	if (image && typeof image === 'object') delete image.deletehash;
 	return JSON.stringify(record);

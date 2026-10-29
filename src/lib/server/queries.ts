@@ -8,6 +8,7 @@ import {
 	withQualityValue,
 	type QualityLevel
 } from '#lib/quality.js';
+import { FOLDED_TOKEN } from './pipeline/fold';
 import { atQuality, authorToken, MODULES, moduleToken, qualityToken, RENDER_TOKEN, slug, versionTokens } from './pipeline/repository';
 
 export { MULTI_FILTERS, type MultiFilter } from '#lib/filters.js';
@@ -140,13 +141,15 @@ export const filterTokens = (s: SearchParams): string[][] => {
 
 /**
  * One FTS5 expression for the text and every filter, e.g.
- * `{title …} : ("red"* "science"*) AND facets : "sa_no" AND facets : ("uses_entity_beacon_at_epic" OR "uses_entity_beacon_at_legendary")`.
- * Empty when the search has neither, in which case results come straight from `prints` in index order.
+ * `({title …} : ("red"* "science"*) AND facets : "sa_no" AND facets : ("uses_entity_beacon_at_epic" OR "uses_entity_beacon_at_legendary")) NOT facets : "folded_yes"`:
+ * folded copies (fold.ts) never match. Empty when the search has neither, in which case results come
+ * straight from `prints` in index order.
  */
 export const matchExpression = (s: SearchParams): string => {
 	const text = textQuery(s.q);
 	const terms = filterTokens(s).map((t) => (t.length === 1 ? `facets : "${t[0]}"` : `facets : (${t.map((x) => `"${x}"`).join(' OR ')})`));
-	return [...(text ? [`${TEXT_COLUMNS} : (${text})`] : []), ...terms].join(' AND ');
+	const all = [...(text ? [`${TEXT_COLUMNS} : (${text})`] : []), ...terms].join(' AND ');
+	return all ? `(${all}) NOT facets : "${FOLDED_TOKEN}"` : '';
 };
 
 /** `match` narrowed by one more filter token. */
@@ -270,8 +273,12 @@ export const searchStatements = (s: SearchParams): SearchStatements => {
 		return {
 			modules: stored('module', MODULES),
 			qualities: stored('quality', [...QUALITY_LEVELS]),
-			results: { sql: `SELECT ${CARD} FROM prints p ${CARD_JOIN} ORDER BY ${order} ${page}`, binds: [] },
-			total: { sql: 'SELECT COUNT(*) AS n FROM prints', binds: [] },
+			// Folded copies (fold.ts) left out: the column filters the index walk; the count subtracts them by their partial index.
+			results: { sql: `SELECT ${CARD} FROM prints p ${CARD_JOIN} WHERE p.duplicate_of IS NULL ORDER BY ${order} ${page}`, binds: [] },
+			total: {
+				sql: 'SELECT (SELECT COUNT(*) FROM prints) - (SELECT COUNT(*) FROM prints WHERE duplicate_of IS NOT NULL) AS n',
+				binds: []
+			},
 			makes: { sql: `SELECT value, n FROM facet_counts WHERE kind = 'makes' ORDER BY n DESC, value`, binds: [] },
 			uses: { sql: `SELECT value, n FROM facet_counts WHERE kind = 'uses' ORDER BY n DESC, value`, binds: [] },
 			versions: { sql: `SELECT value, n FROM facet_counts WHERE kind = 'version' ORDER BY value`, binds: [] }

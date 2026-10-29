@@ -7,10 +7,8 @@
  * volume, and nothing stops a visitor reloading beyond the page's per-tab dedupe and the rate limits.
  */
 
+import { isPrintId } from '#lib/print-id.js';
 import { bumpPageVersion } from './page-cache';
-
-/** factorioprints ids: 20 characters of Firebase's push-id alphabet. */
-export const PRINT_ID = /^[A-Za-z0-9_-]{20}$/;
 
 /** User agents that announce a crawler, preview fetcher or headless browser. */
 const BOT = /bot|crawl|spider|slurp|preview|headless|lighthouse|python|curl|wget|httpclient|fetch/i;
@@ -27,7 +25,7 @@ export interface ViewDataset {
  * index, so Analytics Engine samples per print and `_sample_interval` sums back to a count.
  */
 export const recordView = (dataset: ViewDataset | undefined, id: string, userAgent: string | null): boolean => {
-	if (!dataset || !PRINT_ID.test(id) || isBot(userAgent)) return false;
+	if (!dataset || !isPrintId(id) || isBot(userAgent)) return false;
 	dataset.writeDataPoint({ indexes: [id] });
 	return true;
 };
@@ -53,7 +51,7 @@ export const parseViews = (body: unknown): Map<string, number> => {
 	const out = new Map<string, number>();
 	for (const row of data) {
 		const views = Math.round(Number(row.views));
-		if (typeof row.id === 'string' && PRINT_ID.test(row.id) && views > 0) out.set(row.id, views);
+		if (typeof row.id === 'string' && isPrintId(row.id) && views > 0) out.set(row.id, views);
 	}
 	return out;
 };

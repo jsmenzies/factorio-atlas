@@ -10,10 +10,10 @@
  * (e.g. written by an older build) is put right.
  */
 import { bumpPageVersion } from '../page-cache';
+import { addToken, hasToken, removeToken } from './facet-token';
 import { RENDER_TOKEN } from './repository';
 
-/** `' ' || facets || ' '` holds the token as a whole word. */
-const HAS_TOKEN = `instr(' ' || facets || ' ', ' ${RENDER_TOKEN} ') > 0`;
+const HAS_TOKEN = hasToken(RENDER_TOKEN);
 
 export interface FtsFlag {
 	rowid: number;
@@ -142,14 +142,12 @@ export function renderFlagStatements(db: D1Database, plan: RenderFlagPlan, now =
 		...chunks(plan.remove, 99).map((c) => db.prepare(`DELETE FROM print_renders WHERE print_id IN (${marks(c.length)})`).bind(...c)),
 		// The token goes first, so facetText's cap never cuts it. The guards keep a repeat harmless.
 		...chunks(plan.tag, 99).map((c) =>
-			db
-				.prepare(`UPDATE print_search SET facets = '${RENDER_TOKEN} ' || facets WHERE rowid IN (${marks(c.length)}) AND NOT ${HAS_TOKEN}`)
-				.bind(...c)
+			db.prepare(`UPDATE print_search SET ${addToken(RENDER_TOKEN)} WHERE rowid IN (${marks(c.length)}) AND NOT ${HAS_TOKEN}`).bind(...c)
 		),
 		...chunks(plan.untag, 99).map((c) =>
 			db
 				.prepare(
-					`UPDATE print_search SET facets = trim(replace(' ' || facets || ' ', ' ${RENDER_TOKEN} ', ' '))
+					`UPDATE print_search SET ${removeToken(RENDER_TOKEN)}
 					WHERE rowid IN (${marks(c.length)}) AND ${HAS_TOKEN}`
 				)
 				.bind(...c)

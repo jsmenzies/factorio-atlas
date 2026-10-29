@@ -16,6 +16,11 @@ import {
 	type ReportStatus,
 	type SubjectKind
 } from '#lib/reports.js';
+import { Effect, Layer } from 'effect';
+import { identicalCopiesStatement, toIdenticalCopies, type IdenticalCopy } from './pipeline/identity-db';
+import { syncFold } from './pipeline/pipeline';
+import { RawStoreR2 } from './pipeline/raw-store';
+import { PrintRepositoryD1 } from './pipeline/repository';
 import { TakedownError, takedownPrint, type PurgeList, type TakedownEnv, type TakedownResult } from './takedown';
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -103,6 +108,8 @@ export interface ReportRow {
 	/** JSON PurgeList, while an approved report isn't applied. */
 	pending_purge: string | null;
 	apply_error: string | null;
+	/** JSON array of the identical copies taken down with the print (migration 0022), or null. */
+	copies: string | null;
 }
 
 /** A subject with its open reports, and what the admin needs to recognise it. */
@@ -113,10 +120,15 @@ export interface QueueEntry {
 	/** The print concerned; null when there is none or it is no longer on the site. */
 	print: { title: string; author_name: string | null; image_id: string | null; favorites: number } | null;
 	requests: ReportRow[];
+	/**
+	 * Live prints with exactly the same content (fold.ts groups, 50 entities and tiles or more), for the
+	 * approval to take down with it: the same author's ticked by default, others' not.
+	 */
+	copies: IdenticalCopy[];
 }
 
 const COLUMNS = `id, kind, subject_kind, subject_id, print_id, reason, details, contact, reporter_user_id, status, created_at,
-	decided_at, decided_by, note, applied_at, pending_purge, apply_error`;
+	decided_at, decided_by, note, applied_at, pending_purge, apply_error, copies`;
 
 /**
  * What /admin/reports shows: every open report, grouped by subject (the subject with the oldest report
@@ -140,10 +152,16 @@ export async function reportQueue(db: D1Database, recent = 50) {
 			subjectId: r.subject_id,
 			printId: r.print_id,
 			print: r.print_id === null ? null : (byId.get(r.print_id) ?? null),
-			requests: []
+			requests: [],
+			copies: []
 		};
 		e.requests.push(r);
 		entries.set(key, e);
+	}
+	const withPrint = [...entries.values()].filter((e) => e.print && e.printId);
+	if (withPrint.length) {
+		const copies = await db.batch(withPrint.map((e) => identicalCopiesStatement(db, e.printId!)));
+		withPrint.forEach((e, i) => (e.copies = toIdenticalCopies(copies[i].results as Record<string, unknown>[])));
 	}
 	return { open: [...entries.values()], decided: decided.results };
 }
@@ -157,6 +175,8 @@ export interface Decision {
 	readonly by: string;
 	/** For an approved removal: take the screenshot down even when other prints share it. */
 	readonly screenshotToo?: boolean;
+	/** For an approved removal: identical copies to take down with it (only those `identicalCopiesStatement` lists count). */
+	readonly copies?: readonly string[];
 	readonly now?: number;
 }
 
@@ -166,12 +186,19 @@ export interface Decision {
  * finishes it); for removal requests about a print it then runs the takedown (`applyTakedown`). Other
  * subjects' actions belong to their callers. Returns the takedown's result when one ran.
  */
-export async function decide(env: TakedownEnv, d: Decision): Promise<{ decided: number; takedown: TakedownResult | null }> {
+export async function decide(env: TakedownEnv, d: Decision): Promise<{ decided: number; takedown: CopiesTakedownResult | null }> {
 	const now = d.now ?? Date.now();
+	// Only copies that really are identical now: a form can't name any other print.
+	let chosen: string[] = [];
+	if (d.approve && d.subjectKind === 'print' && d.copies?.length) {
+		const wanted = new Set(d.copies);
+		const live = toIdenticalCopies((await identicalCopiesStatement(env.DB, d.subjectId).all<Record<string, unknown>>()).results);
+		chosen = live.map((c) => c.id).filter((id) => wanted.has(id));
+	}
 	const { meta } = await env.DB.prepare(
-		`UPDATE reports SET status = ?, decided_at = ?, decided_by = ?, note = ? WHERE subject_kind = ? AND subject_id = ? AND status = 'open'`
+		`UPDATE reports SET status = ?, decided_at = ?, decided_by = ?, note = ?, copies = ? WHERE subject_kind = ? AND subject_id = ? AND status = 'open'`
 	)
-		.bind(d.approve ? 'approved' : 'rejected', now, d.by, d.note, d.subjectKind, d.subjectId)
+		.bind(d.approve ? 'approved' : 'rejected', now, d.by, d.note, chosen.length ? JSON.stringify(chosen) : null, d.subjectKind, d.subjectId)
 		.run();
 	const decided = meta.changes ?? 0;
 	if (!d.approve || d.subjectKind !== 'print') return { decided, takedown: null };
@@ -190,31 +217,74 @@ const parsePurge = (s: string | null): PurgeList => {
 	}
 };
 
+/** The result of a print taken down with its copies: counts summed, purge lists joined, purged only when all were. */
+export interface CopiesTakedownResult extends TakedownResult {
+	/** The identical copies taken down with it. */
+	readonly copies: readonly string[];
+}
+
+const joinPurge = (lists: readonly PurgeList[]): PurgeList => ({
+	prefixes: [...new Set(lists.flatMap((p) => p.prefixes))],
+	urls: [...new Set(lists.flatMap((p) => p.urls))]
+});
+
+const joinResults = (results: readonly TakedownResult[], copies: readonly string[]): CopiesTakedownResult => {
+	const [main] = results;
+	const purge = joinPurge(results.map((r) => r.purge));
+	return {
+		d1Rows: results.reduce((n, r) => n + r.d1Rows, 0),
+		rawObjects: results.reduce((n, r) => n + r.rawObjects, 0),
+		renderObjects: results.reduce((n, r) => n + r.renderObjects, 0),
+		screenshot: main.screenshot,
+		screenshotObjects: results.reduce((n, r) => n + r.screenshotObjects, 0),
+		purge: { prefixes: [...purge.prefixes], urls: [...purge.urls] },
+		purged: results.every((r) => r.purged),
+		purgeError: results.find((r) => r.purgeError)?.purgeError ?? null,
+		copies
+	};
+};
+
 /**
- * Run (or finish) the takedown of a print whose removal was approved. Its requests become applied only
- * when every step succeeded and the edge cache was purged; otherwise they keep what is still to purge
- * (merged with what earlier runs couldn't purge, which this run purges too) and the error, and the admin
- * page offers to run it again. A takedown that throws records its error and throws on.
+ * The soft fold after prints went (fold.ts): prints that pointed at them (copies left up, notes of
+ * identical prints) and their groups, recomputed, documents first, with a page-cache bump.
+ */
+const refoldAfter = (env: TakedownEnv, ids: readonly string[]) =>
+	Effect.runPromise(
+		Effect.forEach(ids, (id) => syncFold(id), { discard: true }).pipe(
+			Effect.provide(Layer.mergeAll(RawStoreR2(env.RAW), PrintRepositoryD1(env.DB)))
+		)
+	);
+
+/**
+ * Run (or finish) the takedown of a print whose removal was approved, and of the identical copies the
+ * approval chose (`reports.copies`), each with its own blocks and tombstone; then refold what pointed
+ * at them. Every step is idempotent, so a run that stopped part-way through the copies is finished by
+ * running it all again. Its requests become applied only when every takedown succeeded and the edge
+ * cache was purged; otherwise they keep what is still to purge (merged with what earlier runs couldn't
+ * purge, which this run purges too) and the error, and the admin page offers to run it again. A takedown
+ * that throws records its error and throws on.
  */
 export async function applyTakedown(env: TakedownEnv, printId: string, screenshotToo: boolean, now = Date.now()) {
 	const [latest, pendingRows] = (await env.DB.batch([
 		env.DB.prepare(
-			`SELECT id FROM reports WHERE subject_kind = 'print' AND subject_id = ? AND kind = 'removal' AND status = 'approved'
+			`SELECT id, copies FROM reports WHERE subject_kind = 'print' AND subject_id = ? AND kind = 'removal' AND status = 'approved'
 			ORDER BY decided_at DESC, created_at LIMIT 1`
 		).bind(printId),
 		env.DB.prepare(`SELECT pending_purge FROM reports WHERE ${UNAPPLIED} AND pending_purge IS NOT NULL`).bind(printId)
-	])) as [D1Result<{ id: string }>, D1Result<{ pending_purge: string }>];
-	const earlier = pendingRows.results.map((r) => parsePurge(r.pending_purge));
-	const purgeAlso: PurgeList = {
-		prefixes: [...new Set(earlier.flatMap((p) => p.prefixes))],
-		urls: [...new Set(earlier.flatMap((p) => p.urls))]
-	};
-	let result: TakedownResult;
+	])) as [D1Result<{ id: string; copies: string | null }>, D1Result<{ pending_purge: string }>];
+	const purgeAlso = joinPurge(pendingRows.results.map((r) => parsePurge(r.pending_purge)));
+	const reportId = latest.results[0]?.id ?? null;
+	const copies = parseCopies(latest.results[0]?.copies ?? null).filter((id) => id !== printId);
+	const results: TakedownResult[] = [];
+	let result: CopiesTakedownResult;
 	try {
-		result = await takedownPrint(env, printId, latest.results[0]?.id ?? null, { screenshotToo, now, purgeAlso });
+		results.push(await takedownPrint(env, printId, reportId, { screenshotToo, now, purgeAlso }));
+		for (const copy of copies) results.push(await takedownPrint(env, copy, reportId, { now }));
+		await refoldAfter(env, [printId, ...copies]);
+		result = joinResults(results, copies);
 	} catch (e) {
 		const message = e instanceof Error ? e.message : String(e);
-		const pending = e instanceof TakedownError ? e.purge : purgeAlso;
+		const pending = joinPurge([purgeAlso, ...results.map((r) => r.purge), ...(e instanceof TakedownError ? [e.purge] : [])]);
 		await env.DB.prepare(`UPDATE reports SET pending_purge = ?, apply_error = ? WHERE ${UNAPPLIED}`)
 			.bind(JSON.stringify(pending), message.slice(0, 500), printId)
 			.run();
@@ -231,6 +301,15 @@ export async function applyTakedown(env: TakedownEnv, printId: string, screensho
 	}
 	return result;
 }
+
+const parseCopies = (s: string | null): string[] => {
+	try {
+		const v = JSON.parse(s ?? '[]') as unknown;
+		return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+	} catch {
+		return [];
+	}
+};
 
 /**
  * The admin purged by hand (Custom Purge in the dashboard) what a finished takedown couldn't: its requests

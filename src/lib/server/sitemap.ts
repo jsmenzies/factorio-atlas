@@ -19,7 +19,8 @@ export const LANDING_MIN_PRINTS = 3;
  */
 export const sitemapRows = async (db: D1Database): Promise<{ prints: SitemapPrint[]; landings: Landing[] }> => {
 	const [prints, landings] = await db.batch([
-		db.prepare('SELECT id, updated_at FROM prints ORDER BY id'),
+		// Folded copies (fold.ts) are left out: their pages point at the original.
+		db.prepare('SELECT id, updated_at FROM prints WHERE duplicate_of IS NULL ORDER BY id'),
 		db
 			.prepare(`SELECT kind AS key, value FROM facet_counts WHERE kind IN ('makes', 'uses') AND n >= ? ORDER BY kind, value`)
 			.bind(LANDING_MIN_PRINTS)

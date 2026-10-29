@@ -124,6 +124,18 @@
 						placeholder="Note (optional)"
 						class="min-w-48 flex-1 rounded border border-stone-700 bg-stone-900 px-2 py-1 text-stone-100 focus:border-amber-500 focus:outline-none"
 					/>
+					{#if e.copies.length}
+						<fieldset class="w-full space-y-1 rounded border border-stone-800 p-2">
+							<legend class="px-1 text-xs text-stone-400">Identical prints (same blueprint, 50+ entities): tick those to take down too</legend>
+							{#each e.copies as c (c.id)}
+								<label class="flex items-baseline gap-2 text-stone-300">
+									<input type="checkbox" name="copy" value={c.id} checked={c.sameAuthor} class="accent-amber-500" />
+									<a class="hover:text-amber-300" href="/prints/{c.id}" target="_blank" rel="noopener">{plainText(c.title)}</a>
+									<span class="text-xs text-stone-500">by {c.author_name ?? 'unknown'}{c.sameAuthor ? ' (same author)' : ''} · {c.id}</span>
+								</label>
+							{/each}
+						</fieldset>
+					{/if}
 					<label class="flex items-center gap-1.5 text-stone-400" title="Delete the screenshot even if other prints use the same image">
 						<input type="checkbox" name="screenshot" checked={e.requests.some((r) => r.reason === 'screenshot')} class="accent-amber-500" />
 						Screenshot even if shared

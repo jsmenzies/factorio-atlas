@@ -87,21 +87,34 @@ export interface GameData extends GameDataFile {
 	migrate: (kind: 'entity' | 'item' | 'recipe' | 'tile', name: string, saved: readonly [number, number]) => string;
 }
 
-/** Whether a name saved in `[major, minor]` predates `before` ("2.1"). */
-const savedBefore = ([major, minor]: readonly [number, number], before: string) => {
-	const [bMajor, bMinor] = before.split('.').map(Number);
-	return major < bMajor || (major === bMajor && minor < bMinor);
+export const loadGameData = (f: GameDataFile): GameData => {
+	// Each migration's `before` ("2.1") as [major, minor], parsed once: migrate runs per entity and tile.
+	const befores = f.migrations.map((m) => m.before.split('.').map(Number) as [number, number]);
+	/** Whether a name saved in `[major, minor]` predates migration `i`. */
+	const savedBefore = ([major, minor]: readonly [number, number], i: number) =>
+		major < befores[i][0] || (major === befores[i][0] && minor < befores[i][1]);
+	// Pure, so remembered per kind, name and saved version (a few thousand names at most).
+	const memo = new Map<string, string>();
+	return {
+		...f,
+		known: (n) => n in f.names || n in f.items || n in f.recipes || n in f.entities || n in f.tiles,
+		modOf: (n) => f.entities[n]?.mod ?? f.tiles[n] ?? f.names[n],
+		// Recipes and placeable entities share their item's name, and the migration files often
+		// list a rename only under `item`.
+		migrate: (kind, name, saved) => {
+			const key = `${kind}\0${name}\0${saved[0]}.${saved[1]}`;
+			let out = memo.get(key);
+			if (out === undefined) {
+				out = f.migrations.reduce(
+					(n, m, i) => (savedBefore(saved, i) ? (m[kind][n] ?? (kind === 'tile' ? undefined : m.item[n]) ?? n) : n),
+					name
+				);
+				if (memo.size < 100_000) memo.set(key, out);
+			}
+			return out;
+		}
+	};
 };
-
-export const loadGameData = (f: GameDataFile): GameData => ({
-	...f,
-	known: (n) => n in f.names || n in f.items || n in f.recipes || n in f.entities || n in f.tiles,
-	modOf: (n) => f.entities[n]?.mod ?? f.tiles[n] ?? f.names[n],
-	// Recipes and placeable entities share their item's name, and the migration files often
-	// list a rename only under `item`.
-	migrate: (kind, name, saved) =>
-		f.migrations.reduce((n, m) => (savedBefore(saved, m.before) ? (m[kind][n] ?? (kind === 'tile' ? undefined : m.item[n]) ?? n) : n), name)
-});
 
 // The generator writes this file from a typed `GameDataFile`; JSON inference widens its tuples.
 export const gameData: GameData = loadGameData(file as unknown as GameDataFile);

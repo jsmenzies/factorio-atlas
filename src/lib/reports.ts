@@ -4,6 +4,8 @@
  * Browser-safe; the server side is src/lib/server/reports.ts.
  */
 
+import { isPrintId } from './print-id';
+
 /** 'removal' (the print page's form); other kinds come later, so the column is open text. */
 export type ReportKind = 'removal' | (string & {});
 /** What a report is about: a print id, a screenshot's image id or a user id. */
@@ -11,10 +13,10 @@ export type SubjectKind = 'print' | 'image' | 'account';
 export type ReportStatus = 'open' | 'approved' | 'rejected';
 
 /**
- * A print id as any source makes them (factorioprints' 20 characters, `up-…`, `<site>-<id>`): letters,
- * digits, `-` and `_`. Checked before an admin action touches anything.
+ * A print id as any source makes them (factorioprints' 20 characters, `up-…`, `<site>-<id>`: print-id.ts).
+ * Checked before an admin action touches anything.
  */
-export const isPrintIdLike = (s: string) => /^[A-Za-z0-9_-]{1,64}$/.test(s);
+export const isPrintIdLike = (s: string) => isPrintId(s);
 
 /** A removal request's reasons, in the form's order. */
 export const REMOVAL_REASONS = {

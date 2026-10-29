@@ -48,7 +48,11 @@
 							{:else}
 								<span class="font-mono text-stone-300" title="Not in the local database">{job.print_id}</span>
 							{/if}
-							<a href={sourceUrl(job.print_id)} rel="external noopener" target="_blank" class="text-xs text-stone-500 hover:text-amber-300">original ↗</a>
+							{#if sourceUrl(job.print_id)}
+								<a href={sourceUrl(job.print_id)} rel="external noopener" target="_blank" class="text-xs text-stone-500 hover:text-amber-300"
+									>original ↗</a
+								>
+							{/if}
 						</span>
 						<span class="block truncate text-xs text-stone-400" title={title ?? ''}>
 							{pageName(job)}{#if title}<span class="text-stone-600">{' · '}</span>{title}{/if}

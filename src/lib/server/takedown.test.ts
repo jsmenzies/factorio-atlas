@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { Effect, Layer } from 'effect';
 import { fixtureRecord } from '#lib/server/fixtures.js';
 import { d1FromSqlite } from './pipeline/d1-sqlite';
+import { encodeExchangeString } from './pipeline/decode';
 import { applyPlan, ingestText, planIngest } from './pipeline/pipeline';
 import { RawStore } from './pipeline/raw-store';
 import { PrintRepositoryD1 } from './pipeline/repository';
@@ -131,7 +132,8 @@ describe('takedownPrint', () => {
 		expect(again.renderObjects).toBe(1);
 		// The image comes from the block, as the prints row is gone.
 		expect(again.screenshot).toBe('removed');
-		expect(h.count('SELECT count(*) AS n FROM removal_blocks WHERE print_id = ?')).toBe(3);
+		// print, source, image, and the print's content hash (it has one page: whole print = page).
+		expect(h.count('SELECT count(*) AS n FROM removal_blocks WHERE print_id = ?')).toBe(4);
 	});
 
 	test('a RAW delete that fails: blocked and 410 already, the page cache bumped, and running it again finishes', async () => {
@@ -255,5 +257,53 @@ describe('deletePrefix', () => {
 		const b = bucket(new Map(Array.from({ length: 2345 }, (_, i) => [`p/${i}`, ''] as [string, string])));
 		expect(await deletePrefix(b, 'p/', (k) => k === 'p/7')).toBe(2344);
 		expect([...b.objects.keys()]).toEqual(['p/7']);
+	});
+});
+
+describe('a big book', () => {
+	test('a 700-page book’s takedown blocks every page hash in a handful of statements', async () => {
+		const h = await setup();
+		// 700 pages of 50 solar panels each, every page spaced differently: 700 page hashes of 50 entities.
+		const pages = Array.from({ length: 700 }, (_, i) => ({
+			index: i,
+			blueprint: {
+				item: 'blueprint',
+				version: 562949954076672,
+				entities: Array.from({ length: 50 }, (_, j) => ({
+					entity_number: j + 1,
+					name: 'solar-panel',
+					position: { x: j * (3 + i) + 1.5, y: 1.5 }
+				}))
+			}
+		}));
+		const BIG = '-ZZbigBookOf700Pages';
+		const record = JSON.parse(FIXTURE) as Record<string, unknown>;
+		record.blueprintString = await encodeExchangeString({ blueprint_book: { item: 'blueprint-book', blueprints: pages } });
+		const layer = Layer.mergeAll(
+			PrintRepositoryD1(h.db),
+			Layer.succeed(RawStore, {
+				put: (k, v) => Effect.sync(() => void h.raw.objects.set(k, v)),
+				get: (k) => Effect.succeed(h.raw.objects.get(k) ?? null),
+				delete: (k) => Effect.sync(() => void h.raw.objects.delete(k))
+			})
+		);
+		expect((await Effect.runPromise(Effect.provide(ingestText(BIG, JSON.stringify(record), 'test'), layer))).status).toBe('analysed');
+		// Count what reaches D1.
+		const statements: number[] = [];
+		const counted = new Proxy(h.db, {
+			get: (target, key) =>
+				key === 'batch'
+					? (stmts: D1PreparedStatement[]) => (statements.push(stmts.length), target.batch(stmts))
+					: (target[key as keyof D1Database] as (...a: unknown[]) => unknown).bind(target)
+		});
+		await takedownPrint({ ...h.env, DB: counted }, BIG, null);
+		const blocks = h.sqlite.query(`SELECT count(*) AS n FROM removal_blocks WHERE print_id = ? AND kind = 'sha256'`).get(BIG) as {
+			n: number;
+		};
+		// Every page and the whole book.
+		expect(blocks.n).toBe(701);
+		// The first batch: the blocks (701 sha256 + print + source, 500 a statement) and the tombstone.
+		expect(statements[0]).toBe(3);
+		expect(Math.max(...statements)).toBeLessThan(20);
 	});
 });

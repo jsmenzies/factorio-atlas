@@ -44,6 +44,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ANALYZER_VERSION } from '#lib/server/pipeline/analyze.js';
+import { IDENTITY_VERSION } from '#lib/server/pipeline/identity.js';
 import { INDEX_VERSION } from '#lib/server/pipeline/repository.js';
 import { newRunId } from '#lib/server/pipeline/runs.js';
 import { VIEWER_VERSION } from '#lib/server/pipeline/viewer-files.js';
@@ -324,7 +325,12 @@ const steps: StepDef[] = [
 	{
 		id: 'ingest',
 		async run(): Promise<Outcome> {
-			const key = ingestKey(sourceDigest(run.sources), { analyzer: ANALYZER_VERSION, index: INDEX_VERSION, viewer: VIEWER_VERSION });
+			const key = ingestKey(sourceDigest(run.sources), {
+				analyzer: ANALYZER_VERSION,
+				index: INDEX_VERSION,
+				viewer: VIEWER_VERSION,
+				identity: IDENTITY_VERSION
+			});
 			const recent = await db
 				.prepare('SELECT * FROM sync_runs WHERE stage = ? AND id != ? ORDER BY started_at DESC LIMIT 50')
 				.bind(stage, run.id)

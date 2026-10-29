@@ -1,4 +1,5 @@
 import { Context, Effect, Layer, Schema } from 'effect';
+import { isFactorioprintsId } from '#lib/print-id.js';
 import { FetchError, NotFoundError } from './errors';
 
 export interface SourceConfig {
@@ -24,8 +25,6 @@ export class PrintSource extends Context.Service<
 	}
 >()('PrintSource') {}
 
-const ID = /^[-_0-9A-Za-z]{20}$/;
-
 /** The mirror shards by the lowercased first three characters of the key. */
 export const mirrorPath = (id: string) => `${id.slice(0, 3).toLowerCase()}/${id}.json`;
 
@@ -47,7 +46,7 @@ export const PrintSourceLive = (config: SourceConfig) =>
 	Layer.succeed(PrintSource, {
 		fetchRecord: (id) =>
 			Effect.gen(function* () {
-				if (!ID.test(id)) return yield* new NotFoundError({ id });
+				if (!isFactorioprintsId(id)) return yield* new NotFoundError({ id });
 				const mirrorUrl = `${config.mirrorBaseUrl}/${mirrorPath(id)}`;
 				const fromMirror = yield* getText(mirrorUrl).pipe(
 					Effect.map((text) => ({ text, url: mirrorUrl })),

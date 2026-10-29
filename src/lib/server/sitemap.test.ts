@@ -37,10 +37,10 @@ describe('sitemap', () => {
 		]);
 	});
 
-	test('reads every print and the makes/uses values with enough prints from D1', async () => {
+	test('reads every print but folded copies, and the makes/uses values with enough prints from D1', async () => {
 		const sqlite = new Database(':memory:');
-		sqlite.run('CREATE TABLE prints (id TEXT PRIMARY KEY, updated_at INTEGER)');
-		sqlite.run("INSERT INTO prints VALUES ('b', 2), ('a', NULL)");
+		sqlite.run('CREATE TABLE prints (id TEXT PRIMARY KEY, updated_at INTEGER, duplicate_of TEXT)');
+		sqlite.run("INSERT INTO prints VALUES ('b', 2, NULL), ('a', NULL, NULL), ('c', 3, 'a')");
 		sqlite.run('CREATE TABLE facet_counts (kind TEXT, value TEXT, n INTEGER)');
 		sqlite.run(
 			"INSERT INTO facet_counts VALUES ('makes', 'item:rail', 3), ('makes', 'item:pipe', 2), ('uses', 'entity:foundry', 9), ('version', '2.0', 50)"

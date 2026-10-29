@@ -9,6 +9,7 @@
 import { spawnSync } from 'node:child_process';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { FACTORIOPRINTS_ID_PATTERN } from '#lib/print-id.js';
 import { mirrorPath } from './source';
 
 export interface CloneEntry {
@@ -21,7 +22,8 @@ export interface CloneEntry {
 
 export class CloneError extends Error {}
 
-const FILE = /^([-_0-9A-Za-z]{20})\.json$/;
+/** `<factorioprints id>.json`. */
+const FILE = new RegExp(`^(${FACTORIOPRINTS_ID_PATTERN})\\.json$`);
 
 /**
  * Every print in the clone, sorted by path (the order of the GitHub tree listing). Only shard

@@ -53,9 +53,25 @@ export const loadBlocks = async (db: D1Database): Promise<BlockRow[]> =>
 	(await db.prepare('SELECT kind, value, print_id, report_id, created_at FROM removal_blocks ORDER BY kind, value').all<BlockRow>())
 		.results;
 
-export const insertBlocks = (db: D1Database, rows: readonly BlockRow[]) =>
-	rows.map((r) =>
-		db
-			.prepare('INSERT OR IGNORE INTO removal_blocks (kind, value, print_id, report_id, created_at) VALUES (?, ?, ?, ?, ?)')
-			.bind(r.kind, r.value, r.print_id, r.report_id, r.created_at)
-	);
+/** Block rows per statement: a big book's page hashes (≈ 150 bytes a row) stay well under D1's limits. */
+export const BLOCKS_PER_STATEMENT = 500;
+
+/**
+ * Statements inserting `rows` (existing ones kept): one per BLOCKS_PER_STATEMENT rows, the rows as JSON, so a
+ * takedown of a 700-page book is two statements, not 700, and stays within D1's queries per invocation.
+ */
+export const insertBlocks = (db: D1Database, rows: readonly BlockRow[]) => {
+	const out: D1PreparedStatement[] = [];
+	for (let i = 0; i < rows.length; i += BLOCKS_PER_STATEMENT) {
+		const chunk = rows.slice(i, i + BLOCKS_PER_STATEMENT).map((r) => [r.kind, r.value, r.print_id, r.report_id, r.created_at]);
+		out.push(
+			db
+				.prepare(
+					`INSERT OR IGNORE INTO removal_blocks (kind, value, print_id, report_id, created_at)
+					SELECT value ->> 0, value ->> 1, value ->> 2, value ->> 3, value ->> 4 FROM json_each(?)`
+				)
+				.bind(JSON.stringify(chunk))
+		);
+	}
+	return out;
+};

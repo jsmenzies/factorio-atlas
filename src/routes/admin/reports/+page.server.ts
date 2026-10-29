@@ -19,7 +19,9 @@ const fields = async (request: Request) => {
 	const form = await request.formData();
 	const printId = String(form.get('print') ?? '');
 	const note = String(form.get('note') ?? '').trim() || null;
-	return { printId: isPrintIdLike(printId) ? printId : null, note, screenshotToo: form.get('screenshot') === 'on' };
+	// The identical copies ticked to go with it (decide checks they really are copies).
+	const copies = form.getAll('copy').map(String).filter(isPrintIdLike);
+	return { printId: isPrintIdLike(printId) ? printId : null, note, screenshotToo: form.get('screenshot') === 'on', copies };
 };
 
 const by = (request: Request) => accessEmail(request, dev ? 'dev' : 'admin');
@@ -30,7 +32,7 @@ const takedownFailed = (printId: string, e: unknown) =>
 
 export const actions: Actions = {
 	approve: async ({ request }) => {
-		const { printId, note, screenshotToo } = await fields(request);
+		const { printId, note, screenshotToo, copies } = await fields(request);
 		if (!printId) return fail(400, { error: 'No print' });
 		try {
 			const { decided, takedown } = await decide(env, {
@@ -39,7 +41,8 @@ export const actions: Actions = {
 				approve: true,
 				note,
 				by: by(request),
-				screenshotToo
+				screenshotToo,
+				copies
 			});
 			return { printId, decided, takedown };
 		} catch (e) {

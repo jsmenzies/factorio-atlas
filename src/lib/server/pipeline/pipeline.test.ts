@@ -59,6 +59,13 @@ const harness = (id = ID) => {
 		}),
 		Layer.succeed(PrintRepository, {
 			getState: (id) => Effect.succeed(states.get(id) ?? null),
+			identify: () => Effect.void,
+			planFold: () => Effect.succeed([]),
+			planAllFolds: () => Effect.succeed([]),
+			applyFold: () => Effect.void,
+			foldState: () => Effect.succeed({ duplicateOf: null, identicalTo: null }),
+			sources: () => Effect.succeed([]),
+			blocked: () => Effect.succeed(null),
 			rebuildFacets: () => Effect.void,
 			authorName: () => Effect.succeed(null),
 			isRemoved: (id) => Effect.succeed(removed.has(id)),

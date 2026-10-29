@@ -151,6 +151,15 @@ The account is taken from `CLOUDFLARE_ACCOUNT_ID`, or the only account `wrangler
 `--stage prod` asks for confirmation unless `--yes` is given. While it runs, the terminal and
 `/admin/pipeline` show progress, failures and D1/R2 usage, and both can pause, resume or stop it.
 
+Each run ends by recomputing which prints are exact copies of others (the soft fold: the same
+author's later copies are left out of search and point at the earlier print). To check it, or to
+finish it after a run was quit, `bun run fold` rebuilds it from scratch and writes only differences:
+
+```sh
+bun run fold --stage prod --dry-run   # after a backfill: reports 0 rows to change
+bun run fold --stage prod             # writes what differs, then bumps the page cache once
+```
+
 ## Icons
 
 Game icons are static files in one R2 bucket, `factorio-prints-sprites`. Prod's deploy creates

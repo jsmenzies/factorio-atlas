@@ -18,6 +18,7 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Effect, Layer } from 'effect';
 import { getPlatformProxy } from 'wrangler';
+import { isPrintId } from '#lib/print-id.js';
 import { pipelineLayer } from '#lib/server/pipeline/layers.js';
 import { OFFLINE_MAX_INFLATED_BYTES } from '#lib/server/pipeline/decode.js';
 import { ingestPrint, ingestText, reanalyzePrint, type IngestOptions, type IngestOutcome } from '#lib/server/pipeline/pipeline.js';
@@ -59,8 +60,6 @@ const usage = (problem?: string): never => {
 	console.error(USAGE);
 	process.exit(1);
 };
-/** A factorioprints id (a Firebase push id): ids may start with "-", even "--", so this tells them from flags. */
-const PRINT_ID = /^[-_0-9A-Za-z]{20}$/;
 
 const argv = process.argv.slice(2);
 if (argv.includes('--help') || argv.includes('-h')) {
@@ -76,7 +75,7 @@ const args = argv.filter((a) => a !== '--force' && a !== '--retry-failed');
 // Checked before the platform proxy starts: a mode flag comes first, and nothing else may look like one.
 const mode = ['--top', '--reanalyze', '--from-disk'].includes(args[0]) ? args[0] : null;
 const rest = mode ? args.slice(1) : args;
-const stray = rest.find((a) => a.startsWith('--') && !PRINT_ID.test(a));
+const stray = rest.find((a) => a.startsWith('--') && !isPrintId(a));
 if (stray) usage(`unknown argument: ${stray}`);
 if (!mode && !rest.length) usage();
 if (mode === '--reanalyze' && !rest.length) usage('--reanalyze needs at least one id');
@@ -89,6 +88,8 @@ const counts: Record<IngestOutcome['status'], number> = {
 	'skipped-failed': 0,
 	unchanged: 0,
 	removed: 0,
+	identified: 0,
+	blocked: 0,
 	favorites: 0,
 	viewer: 0,
 	reindexed: 0
@@ -118,6 +119,9 @@ const report = (o: IngestOutcome) =>
 		} else if (o.status === 'failed') yield* Effect.logWarning(`failed ${o.id}: ${o.reason} (tracked; skipped until it changes)`);
 		else if (o.status === 'favorites') yield* Effect.logInfo(`favourites only ${o.id}: ${o.favorites}`);
 		else if (o.status === 'removed') yield* Effect.logWarning(`removed ${o.id}: blocked by an approved removal, nothing stored`);
+		else if (o.status === 'identified') yield* Effect.logInfo(`identity rows only ${o.id}`);
+		else if (o.status === 'blocked')
+			yield* Effect.logWarning(`blocked ${o.id}: the same blueprint as removed print ${o.by}, nothing stored`);
 		else if (o.status === 'viewer') {
 			viewerFiles += o.viewerFiles;
 			yield* Effect.logInfo(`viewer files only ${o.id}: ${o.viewerFiles} objects`);

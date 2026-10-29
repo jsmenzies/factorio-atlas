@@ -35,6 +35,7 @@
 		"render:thumbs": "bun scripts/render-thumbs.ts",
 		"views:sync": "bun scripts/views-sync.ts",
 		"sync": "bun scripts/sync.ts",
+		"fold": "bun scripts/fold.ts",
 		"authors": "bun scripts/authors.ts",
 		"screenshots": "bun scripts/screenshots.ts",
 		"screenshots:flags": "bun scripts/screenshots-flags.ts",

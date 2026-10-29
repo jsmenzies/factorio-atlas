@@ -23,7 +23,8 @@ import { manifestKey } from '#lib/screenshots.js';
 import { removalStatements } from '#lib/server/screenshot-flags.js';
 import { screenshotsDir } from './screenshots/args.js';
 import { formatLine, ledgerFile, readLedger, type LedgerLine } from './screenshots/ledger.js';
-import { IMGUR_ID, PRINT_ID } from './screenshots/records.js';
+import { isPrintId } from '#lib/print-id.js';
+import { IMGUR_ID } from './screenshots/records.js';
 import { formatEntry, parseState, STATE_FILE, type StateEntry } from './screenshots/state.js';
 import { openShotStore } from './screenshots/store.js';
 import { syncImage } from './screenshots/upload.js';
@@ -38,7 +39,7 @@ const ids = (flags.ids ?? '')
 	.map((s) => s.trim())
 	.filter(Boolean);
 if (!ids.length) fail(`--ids is required\n${USAGE}`);
-const bad = ids.filter((id) => !PRINT_ID.test(id) && !IMGUR_ID.test(id));
+const bad = ids.filter((id) => !isPrintId(id) && !IMGUR_ID.test(id));
 if (bad.length) fail(`not a print or Imgur id: ${bad.join(', ')}`);
 const reason = flags.reason?.trim() || null;
 

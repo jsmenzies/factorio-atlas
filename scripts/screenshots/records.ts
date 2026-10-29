@@ -5,13 +5,12 @@
  */
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { isFactorioprintsId } from '#lib/print-id.js';
 import { listClone } from '#lib/server/pipeline/mirror-clone.js';
 import type { Wanted } from './state.js';
 
 /** Imgur ids seen in the mirror are 7 or 8 letters and digits. */
 export const IMGUR_ID = /^[A-Za-z0-9]{5,10}$/;
-/** A factorioprints id (a Firebase push id). */
-export const PRINT_ID = /^[-_0-9A-Za-z]{20}$/;
 
 /** A record's image, or null when it has none (or an id that isn't an Imgur id). */
 export const imageOf = (record: unknown): { id: string; type: string | null } | null => {
@@ -65,7 +64,7 @@ export const readClone = async (dir: string) => readAll((await listClone(dir)).m
 export const readDisk = async (dir: string, skip: ReadonlySet<string>) =>
 	readAll(
 		(await readdir(dir))
-			.filter((f) => f.endsWith('.json') && PRINT_ID.test(f.slice(0, -5)) && !skip.has(f.slice(0, -5)))
+			.filter((f) => f.endsWith('.json') && isFactorioprintsId(f.slice(0, -5)) && !skip.has(f.slice(0, -5)))
 			.sort()
 			.map((f) => ({ print: f.slice(0, -5), file: join(dir, f) }))
 	);

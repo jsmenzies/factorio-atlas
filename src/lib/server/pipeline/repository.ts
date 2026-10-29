@@ -6,8 +6,21 @@ import type { PrintAnalysis } from './analyze';
 import { buildingsIn } from './buildings';
 import { gameData } from './game-data';
 import { StorageError } from './errors';
+import type { PrintFingerprint } from './identity';
+import { blockedBy, identityStatements, sourcesOf, type PrintSourceRow } from './identity-db';
+import {
+	FOLDED_PREFIX_SQL,
+	FOLDED_TOKEN,
+	foldStateOf,
+	foldStatements,
+	planAllFolds,
+	planFold,
+	type FoldMember,
+	type FoldState
+} from './fold';
 import type { FirebaseRecord } from './record';
 import { toEpochMs } from './record';
+import type { SourceMeta } from './source-record';
 
 /**
  * Version of what `upsert` writes to D1 for a print: the search index (`facetTokens`, FTS columns,
@@ -19,6 +32,12 @@ import { toEpochMs } from './record';
  * itself, so they needed no bump.)
  */
 export const INDEX_VERSION = 1;
+
+/** A print's identity rows (migration 0022): where the record came from and its content fingerprints. */
+export interface Identity {
+	readonly source: SourceMeta;
+	readonly fingerprint: PrintFingerprint;
+}
 
 export interface StoredPrint {
 	readonly id: string;
@@ -33,6 +52,8 @@ export interface StoredPrint {
 	readonly viewerVersion: number;
 	/** The record's own author name, else the `authors` table's (`resolveAuthorName`). */
 	readonly authorName: string | null;
+	/** Written in the same batch; null leaves the identity rows as they are (a re-index). */
+	readonly identity: Identity | null;
 }
 
 /** What the pipeline last did with a record (`ingest_state`). */
@@ -47,6 +68,11 @@ export interface IngestState {
 	/** INDEX_VERSION of the print's D1 rows; null for failed records and rows from before migration 0009. */
 	readonly indexVersion: number | null;
 	readonly favorites: number;
+	/**
+	 * Whether the print has its identity rows (a `print_sources` row, migration 0022). Only the D1
+	 * loaders say; undefined counts as yes.
+	 */
+	readonly identified?: boolean;
 }
 
 export interface FailedPrint {
@@ -59,8 +85,28 @@ export interface FailedPrint {
 export class PrintRepository extends Context.Service<
 	PrintRepository,
 	{
-		/** Store an analysed print and mark it 'ok' in `ingest_state`, in one batch. Returns D1 rows written. */
-		readonly upsert: (p: StoredPrint) => Effect.Effect<number, StorageError>;
+		/**
+		 * Store an analysed print and mark it 'ok' in `ingest_state`, in one batch with its identity rows
+		 * and any `extra` statements. Returns D1 rows written.
+		 */
+		readonly upsert: (p: StoredPrint, extra?: readonly D1PreparedStatement[]) => Effect.Effect<number, StorageError>;
+		/**
+		 * Write only a print's identity rows (one ingested before migration 0022, or a later source of a
+		 * print another source is credited for), with any `extra` statements in the same batch.
+		 */
+		readonly identify: (id: string, identity: Identity, extra?: readonly D1PreparedStatement[]) => Effect.Effect<void, StorageError>;
+		/** The soft-fold groups a print touches, as they should be (fold.ts); reads only. */
+		readonly planFold: (id: string) => Effect.Effect<FoldMember[], StorageError>;
+		/** Every soft-fold group in the stage, as it should be (fold.ts); reads only. */
+		readonly planAllFolds: () => Effect.Effect<FoldMember[], StorageError>;
+		/** Write the members whose fold changed, and with `bump` bump the page cache when any did. */
+		readonly applyFold: (members: readonly FoldMember[], bump: boolean) => Effect.Effect<void, StorageError>;
+		/** A print's fold as its D1 row has it now (both null for a print not stored yet). */
+		readonly foldState: (id: string) => Effect.Effect<FoldState, StorageError>;
+		/** Every source of a print, live and gone (identity-db.ts `sourcesOf`). */
+		readonly sources: (id: string) => Effect.Effect<PrintSourceRow[], StorageError>;
+		/** The removed print whose block refuses the source or any of the hashes (identity-db.ts `blockedBy`), or null. */
+		readonly blocked: (source: SourceMeta, hashes: readonly string[]) => Effect.Effect<string | null, StorageError>;
 		readonly getState: (id: string) => Effect.Effect<IngestState | null, StorageError>;
 		/** Track a record that couldn't be parsed or decoded, so it's skipped until it changes. */
 		readonly recordFailure: (f: FailedPrint) => Effect.Effect<void, StorageError>;
@@ -78,6 +124,8 @@ export class PrintRepository extends Context.Service<
 >()('PrintRepository') {}
 
 const json = (v: unknown) => JSON.stringify(v);
+/** Folded copies' ids (fold.ts), by the partial index on `duplicate_of`. */
+const FOLDED_IDS = 'SELECT id FROM prints WHERE duplicate_of IS NOT NULL';
 const flag = (b: boolean) => (b ? 1 : 0);
 
 /** FTS columns are capped so one huge description can't bloat the index or break a SQL import. */
@@ -243,6 +291,8 @@ const rowsWritten = (results: D1Result[]) => results.reduce((n, r) => n + (r.met
 
 const STATE_COLUMNS =
 	'print_id, content_sha256, status, reason, analyzer_version, game_data_version, viewer_version, index_version, favorites';
+/** STATE_COLUMNS plus whether the print has identity rows (one index lookup per row). */
+const STATE_SELECT = `${STATE_COLUMNS}, EXISTS (SELECT 1 FROM print_sources s WHERE s.print_id = ingest_state.print_id) AS identified`;
 
 interface StateRow {
 	print_id: string;
@@ -254,6 +304,7 @@ interface StateRow {
 	viewer_version: number | null;
 	index_version: number | null;
 	favorites: number;
+	identified?: number;
 }
 
 const toState = (row: StateRow): IngestState => ({
@@ -264,7 +315,8 @@ const toState = (row: StateRow): IngestState => ({
 	gameDataVersion: row.game_data_version,
 	viewerVersion: row.viewer_version,
 	indexVersion: row.index_version,
-	favorites: row.favorites
+	favorites: row.favorites,
+	...(row.identified === undefined ? {} : { identified: row.identified === 1 })
 });
 
 /**
@@ -276,7 +328,7 @@ export const loadIngestStates = async (db: D1Database, pageSize = 5000): Promise
 	let after = '';
 	for (;;) {
 		const { results } = await db
-			.prepare(`SELECT ${STATE_COLUMNS} FROM ingest_state WHERE print_id > ? ORDER BY print_id LIMIT ?`)
+			.prepare(`SELECT ${STATE_SELECT} FROM ingest_state WHERE print_id > ? ORDER BY print_id LIMIT ?`)
 			.bind(after, pageSize)
 			.all<StateRow>();
 		for (const row of results) states.set(row.print_id, toState(row));
@@ -301,7 +353,10 @@ export const loadAuthorNames = async (db: D1Database, pageSize = 5000): Promise<
 
 export interface PrintRepositoryHooks {
 	/** Called with D1's `meta.rows_written` after every write, e.g. to total a run's writes. */
-	readonly onWrite?: (op: 'upsert' | 'recordFailure' | 'updateFavorites' | 'setViewerVersion' | 'rebuildFacets', rows: number) => void;
+	readonly onWrite?: (
+		op: 'upsert' | 'recordFailure' | 'updateFavorites' | 'setViewerVersion' | 'rebuildFacets' | 'identify' | 'fold',
+		rows: number
+	) => void;
 }
 
 export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = {}) => {
@@ -318,9 +373,25 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 		authorName: (authorId) =>
 			tryD1(`d1.authorName ${authorId}`, async () => (await (authors ??= loadAuthorNames(db))).get(authorId) ?? null),
 		isRemoved: (id) => tryD1(`d1.isRemoved ${id}`, () => isPrintRemoved(db, id)),
+		identify: (id, { source, fingerprint }, extra = []) =>
+			tryD1(`d1.identify ${id}`, () => db.batch([...identityStatements(db, id, source, fingerprint), ...extra])).pipe(
+				Effect.map(counted('identify')),
+				Effect.asVoid
+			),
+		planFold: (id) => tryD1(`d1.planFold ${id}`, () => planFold(db, id)),
+		planAllFolds: () => tryD1('d1.planAllFolds', () => planAllFolds(db)),
+		foldState: (id) => tryD1(`d1.foldState ${id}`, () => foldStateOf(db, id)),
+		sources: (id) => tryD1(`d1.sources ${id}`, () => sourcesOf(db, id)),
+		applyFold: (members, bump) =>
+			tryD1('d1.applyFold', async () => {
+				const stmts = foldStatements(db, members, { bump });
+				return stmts.length ? db.batch(stmts) : [];
+			}).pipe(Effect.map(counted('fold')), Effect.asVoid),
+		blocked: (source, hashes) =>
+			tryD1(`d1.blocked ${source.site}:${source.siteId}`, async () => (await blockedBy(db, source, hashes))?.printId ?? null),
 		getState: (id) =>
 			tryD1(`d1.getState ${id}`, async () => {
-				const row = await db.prepare(`SELECT ${STATE_COLUMNS} FROM ingest_state WHERE print_id = ?`).bind(id).first<StateRow>();
+				const row = await db.prepare(`SELECT ${STATE_SELECT} FROM ingest_state WHERE print_id = ?`).bind(id).first<StateRow>();
 				return row ? toState(row) : null;
 			}),
 		recordFailure: ({ id, contentSha256, reason, favorites }) =>
@@ -358,17 +429,21 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 			).pipe(Effect.map(counted('setViewerVersion')), Effect.asVoid),
 		rebuildFacets: () =>
 			tryD1('d1.rebuildFacets', () =>
+				// Folded copies (fold.ts) count nowhere, as they show nowhere in search.
 				db.batch([
 					db.prepare('DELETE FROM facet_counts'),
 					db.prepare(
 						`INSERT INTO facet_counts (kind, value, n)
-						SELECT 'makes', item, COUNT(*) FROM print_items WHERE role = 'output' GROUP BY item`
+						SELECT 'makes', item, COUNT(*) FROM print_items WHERE role = 'output' AND print_id NOT IN (${FOLDED_IDS}) GROUP BY item`
 					),
 					db.prepare(
 						`INSERT INTO facet_counts (kind, value, n)
-						SELECT 'version', v.value, COUNT(*) FROM prints p, json_each(p.claimed_versions) v GROUP BY v.value`
+						SELECT 'version', v.value, COUNT(*) FROM prints p, json_each(p.claimed_versions) v WHERE p.duplicate_of IS NULL GROUP BY v.value`
 					),
-					db.prepare(`INSERT INTO facet_counts (kind, value, n) SELECT 'uses', entity, COUNT(*) FROM print_uses GROUP BY entity`),
+					db.prepare(
+						`INSERT INTO facet_counts (kind, value, n)
+						SELECT 'uses', entity, COUNT(*) FROM print_uses WHERE print_id NOT IN (${FOLDED_IDS}) GROUP BY entity`
+					),
 					// The Modules and "Quality in the print" lists: FTS counts of their tokens, once here rather than on every search.
 					...[...MODULES.map((m) => ['module', m, moduleToken(m)]), ...QUALITY_LEVELS.map((q) => ['quality', q, qualityToken(q)])].map(
 						([kind, value, token]) =>
@@ -377,7 +452,7 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 									`INSERT INTO facet_counts (kind, value, n)
 									VALUES (?1, ?2, (SELECT COUNT(*) FROM print_search WHERE print_search MATCH ?3))`
 								)
-								.bind(kind, value, `facets : "${token}"`)
+								.bind(kind, value, `facets : "${token}" NOT facets : "${FOLDED_TOKEN}"`)
 					),
 					db
 						.prepare(
@@ -387,7 +462,10 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 						.bind(String(Date.now()))
 				])
 			).pipe(Effect.map(counted('rebuildFacets')), Effect.asVoid),
-		upsert: ({ id, sourceUrl, rawKey, rawSha256, contentSha256, record: r, analysis: a, viewerVersion, authorName }) =>
+		upsert: (
+			{ id, sourceUrl, rawKey, rawSha256, contentSha256, record: r, analysis: a, viewerVersion, authorName, identity },
+			extra = []
+		) =>
 			tryD1(`d1.upsert ${id}`, async () => {
 				const now = Date.now();
 				const authorId = authorIdOf(r);
@@ -408,8 +486,8 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 							`INSERT INTO prints (id, source, source_url, title, author_id, author_name, favorites, image_id, image_type,
 								created_at, updated_at, raw_key, raw_sha256, ingested_at, analyzer_version, root_kind, game_version, game_major,
 								blueprint_count, entity_count, requires_space_age, uses_circuits, uses_trains, outputs, claimed_versions, planets, mods)
-							VALUES (?, 'factorioprints', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-							ON CONFLICT (id) DO UPDATE SET source_url = excluded.source_url, title = excluded.title,
+							VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+							ON CONFLICT (id) DO UPDATE SET source = excluded.source, source_url = excluded.source_url, title = excluded.title,
 								author_id = excluded.author_id, author_name = excluded.author_name, favorites = excluded.favorites,
 								image_id = excluded.image_id, image_type = excluded.image_type, created_at = excluded.created_at,
 								updated_at = excluded.updated_at, raw_key = excluded.raw_key, raw_sha256 = excluded.raw_sha256,
@@ -421,6 +499,7 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 						)
 						.bind(
 							id,
+							r.source?.site ?? 'factorioprints',
 							sourceUrl,
 							r.title,
 							authorId,
@@ -469,7 +548,7 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 						.prepare(
 							`INSERT INTO print_search (print_id, title, description, labels, entities, recipes, nicknames, author, facets)
 							VALUES (?, ?, ?, ?, ?, ?, ?, ?,
-								CASE WHEN EXISTS (SELECT 1 FROM print_renders WHERE print_id = ?) THEN '${RENDER_TOKEN} ' ELSE '' END || ?)`
+								CASE WHEN EXISTS (SELECT 1 FROM print_renders WHERE print_id = ?) THEN '${RENDER_TOKEN} ' ELSE '' END || ${FOLDED_PREFIX_SQL} || ?)`
 						)
 						.bind(
 							id,
@@ -480,6 +559,7 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 							cap([...Object.keys(a.recipes), ...a.outputs.map((o) => o.split(':')[1])].join(' ').replaceAll('-', ' ')),
 							cap(nicknameText(a)),
 							authorName ?? '',
+							id,
 							id,
 							facetText(facetTokens(r, a))
 						),
@@ -493,7 +573,9 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 						viewerVersion,
 						indexVersion: INDEX_VERSION,
 						favorites: r.numberOfFavorites ?? 0
-					})
+					}),
+					...(identity ? identityStatements(db, id, identity.source, identity.fingerprint, now) : []),
+					...extra
 				];
 				const rows = counted('upsert')(await db.batch(stmts));
 				if (authorId && ownName) void authors?.then((m) => m.has(authorId) || m.set(authorId, ownName));

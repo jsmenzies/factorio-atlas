@@ -43,7 +43,9 @@
 						{:else}
 							<span class="font-mono text-stone-300">{f.id}</span>
 						{/if}
-						<a href={sourceUrl(f.id)} rel="external noopener" target="_blank" class="text-xs text-stone-500 hover:text-amber-300">original ↗</a>
+						{#if sourceUrl(f.id)}
+							<a href={sourceUrl(f.id)} rel="external noopener" target="_blank" class="text-xs text-stone-500 hover:text-amber-300">original ↗</a>
+						{/if}
 					</span>
 					<span class="line-clamp-2 break-words text-rose-200/90" title={f.reason ?? ''}>{f.reason ?? 'no reason recorded'}</span>
 					<span class="text-xs text-stone-500 tabular-nums">{clock(f.checkedAt, now, timeZone)}</span>

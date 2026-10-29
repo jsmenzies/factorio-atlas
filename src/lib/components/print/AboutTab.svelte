@@ -84,10 +84,12 @@
 		<section class="space-y-3">
 			<h3 class="border-b border-stone-800 pb-2 font-semibold text-stone-100">Source</h3>
 			<p class="text-sm text-stone-300">
-				Mirrored from <a class="text-amber-400 underline" href={sourceUrl(print.id)} rel="external">factorioprints.com/view/{print.id}</a>, by
+				{#if sourceUrl(print.id)}Mirrored from <a class="text-amber-400 underline" href={sourceUrl(print.id)} rel="external"
+						>factorioprints.com/view/{print.id}</a
+					>, by{:else}Posted by{/if}
 				{#if print.author_id}<a class="text-stone-100 underline decoration-stone-500 hover:text-amber-300" href="/?author={print.author_id}" rel={searchRel(`/?author=${print.author_id}`)}
 						>{print.author_name ?? 'unknown author'}</a
-					>{:else}an unknown author{/if}.
+					>{:else if print.author_name}{print.author_name}{:else}an unknown author{/if}.
 			</p>
 			<p class="text-sm text-stone-400">
 				Made it, or shouldn't it be here? <a class="text-amber-400 underline" href="/prints/{print.id}/remove" rel="nofollow">Request removal</a>

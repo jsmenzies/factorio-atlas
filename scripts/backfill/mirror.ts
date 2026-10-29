@@ -16,6 +16,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { FACTORIOPRINTS_ID_PATTERN } from '#lib/print-id.js';
 import { mirrorPath } from '#lib/server/pipeline/source.js';
 
 export const MIRROR_REPO = 'motlin/factorio-blueprint-firebase-cdn';
@@ -72,7 +73,8 @@ const api = async (path: string, token: string | null, accept = 'application/vnd
 /** The mirror's current commit sha (default branch). */
 export const resolveCommit = async () => (await (await api('commits/HEAD', null, 'application/vnd.github.sha')).text()).trim();
 
-const ENTRY = /^[^/]+\/([-_0-9A-Za-z]{20})\.json$/;
+/** `<shard>/<factorioprints id>.json`. */
+const ENTRY = new RegExp(`^[^/]+/(${FACTORIOPRINTS_ID_PATTERN})\\.json$`);
 
 /** Every print at `sha`, in tree (path) order. One API call: the tree is ≈5.8 MB and 18k entries, under its 100k-entry limit. */
 export const listMirror = async (sha: string): Promise<MirrorEntry[]> => {

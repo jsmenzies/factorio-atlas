@@ -21,8 +21,16 @@ import { parseArgs } from 'node:util';
 import { Effect, Layer } from 'effect';
 import { fmtBytes, fmtDuration, RateWindow, etaSeconds, sampleBySize, statusLine, statusLines } from '#lib/server/pipeline/backfill.js';
 import { OFFLINE_MAX_INFLATED_BYTES } from '#lib/server/pipeline/decode.js';
-import { applyPlan, planFailure, type IngestOptions, type IngestOutcome, type IngestPlan } from '#lib/server/pipeline/pipeline.js';
+import {
+	applyPlan,
+	planFailure,
+	refoldAll,
+	type IngestOptions,
+	type IngestOutcome,
+	type IngestPlan
+} from '#lib/server/pipeline/pipeline.js';
 import { RawStore, RawStoreR2 } from '#lib/server/pipeline/raw-store.js';
+import { clearFoldDirty, isFoldDirty, markFoldDirty } from '#lib/server/pipeline/fold.js';
 import { loadIngestStates, PrintRepository, PrintRepositoryD1 } from '#lib/server/pipeline/repository.js';
 import { loadRemovedPrintIds } from '#lib/server/removal-blocks.js';
 import {
@@ -391,9 +399,17 @@ const logFailure = (id: string, reason: string, tracked: boolean) =>
 const recordOutcome = (o: IngestOutcome) => {
 	run.done++;
 	if (o.status === 'skipped-failed') run.skipped_failed++;
-	// Removed while this run was going (the listing left out those removed before it started).
+	// Removed while this run was going (the listing left out those removed before it started), or new
+	// content an approved removal blocks: nothing written.
 	else if (o.status === 'removed') run.unchanged++;
-	else run[o.status]++;
+	// Identity rows only (migration 0022), D1 rows like a re-index: counted with them.
+	else if (o.status === 'identified') run.reindexed++;
+	// Refused for a removed print's content: a failure that isn't transient, tracked in ingest_state.
+	else if (o.status === 'blocked') {
+		run.failed++;
+		run.failures.blocked = (run.failures.blocked ?? 0) + 1;
+		term.log(`⊘ ${o.id} blocked: the same blueprint as removed print ${o.by}`);
+	} else run[o.status]++;
 	if (o.status === 'failed') {
 		run.failures[failureBucket(o.reason)] = (run.failures[failureBucket(o.reason)] ?? 0) + 1;
 		logFailure(o.id, o.reason, true);
@@ -436,21 +452,54 @@ const processOne = async (entry: SourceEntry) => {
 		if (quitting) return;
 		if (!(e instanceof ComputeTimeout)) return recordError(id, `worker: ${message(e)}`);
 		if (!slowest || e.ms > slowest.ms) slowest = { id, ms: e.ms, bytes: entry.size };
+		// A live print is never taken off the site for being slow (a busy machine, a refresh that only adds its
+		// identity rows): a transient failure, left as it is and tried again next run. A new or failed one is tracked.
+		if (state?.status === 'ok') return recordError(id, `worker: timed out after ${e.ms / 1000} s on a live print; left as it is`);
 		const failed = await Effect.runPromise(Effect.result(planFailure(id, text, state, `timeout: analysis took over ${e.ms / 1000} s`)));
 		if (failed._tag === 'Failure') return recordError(id, `parse: ${message(failed.failure)}`);
 		plan = failed.success;
 	}
 	// Every write is idempotent, so a transient D1/R2 error is retried a couple of times.
 	for (let attempt = 0; ; attempt++) {
-		const result = await write(applyPlan(plan));
+		const result = await write(applyPlan(plan, { foldLater }));
 		if (quitting) return;
 		if (result._tag === 'Success') {
 			// Mirror bytes behind prints that wrote something, for scaling R2 projections (fullRunEstimate).
-			if (['analysed', 'failed', 'viewer', 'reindexed', 'favorites'].includes(result.success.status)) run.source_bytes += entry.size;
+			if (['analysed', 'failed', 'viewer', 'reindexed', 'favorites', 'identified'].includes(result.success.status)) {
+				run.source_bytes += entry.size;
+			}
 			return recordOutcome(result.success);
 		}
 		if (attempt >= 2) return recordError(id, `storage: ${message(result.failure)}`);
 		await sleep(1000 * 2 ** attempt);
+	}
+};
+
+// The soft fold (fold.ts): recomputed once, after every write, from scratch, rather than per print while
+// several writers are in flight; rebuildFacets then bumps the page cache. `meta.fold_dirty` is set from the
+// first print handed over until the refold succeeds, so a run that is quit or whose refold fails leaves it
+// for the next run (or `bun run fold`), and the run's failures say so ('storage': transient).
+let touchedFolds = false;
+let marking: Promise<unknown> = Promise.resolve();
+const foldLater = () => {
+	if (touchedFolds) return;
+	touchedFolds = true;
+	marking = markFoldDirty(db).catch((e: unknown) => term.log(`! couldn't mark the folds dirty: ${message(e)}`));
+};
+const refold = async () => {
+	const dirty = await isFoldDirty(db).catch(() => true);
+	if (!touchedFolds && !dirty) return;
+	await marking;
+	const result = await write(refoldAll({ bump: false }));
+	if (result._tag === 'Failure') {
+		run.failures.storage = (run.failures.storage ?? 0) + 1;
+		return term.log(`! refolding failed: ${message(result.failure)} (the next run or \`bun run fold --stage ${stage}\` finishes it)`);
+	}
+	await clearFoldDirty(db).catch((e: unknown) => term.log(`! couldn't clear the fold flag: ${message(e)}`));
+	const changed = result.success.members.filter((m) => m.changed);
+	if (changed.length) {
+		const folded = changed.filter((m) => m.duplicateOf).length;
+		term.log(`folds: ${changed.length} prints changed (${folded} now folded into an earlier print by the same author)`);
 	}
 };
 
@@ -574,6 +623,7 @@ try {
 	await Promise.all(inFlight);
 	if (quitting) await new Promise(() => {});
 	pool?.close();
+	await refold();
 	await facets;
 	await rebuildFacets();
 	await finish(ctl.mode === 'stopping' ? 'stopped' : 'finished');

@@ -3,6 +3,7 @@
  * never queries D1.
  */
 import type { PrintAnalysis } from './analyze';
+import type { FoldState } from './fold';
 import type { FirebaseRecord } from './record';
 import { toEpochMs } from './record';
 
@@ -26,6 +27,10 @@ export interface PrintDoc {
 		created_at: number | null;
 		updated_at: number | null;
 		source_url: string;
+		/** Only on a later exact copy by the same author (the soft fold, fold.ts): their earlier print. */
+		copy_of?: { id: string };
+		/** Only on an exact copy by someone else (fold.ts): the earliest print of that content. */
+		identical_to?: { id: string };
 	};
 	analysis: PrintAnalysis;
 }
@@ -39,7 +44,7 @@ export const toPrintDoc = (id: string, sourceUrl: string, r: FirebaseRecord, ana
 		id,
 		title: r.title,
 		author_id: r.author?.userId ?? r.authorId ?? null,
-		author_name: r.author?.displayName ?? null,
+		author_name: r.author?.displayName ?? r.source?.author?.name ?? null,
 		favorites: r.numberOfFavorites ?? 0,
 		image_id: r.image?.id ?? null,
 		image_type: r.image?.type ?? null,
@@ -57,6 +62,26 @@ export const withAuthorName = (text: string, name: string | null): string => {
 	if (name === null) return text;
 	const doc = JSON.parse(text) as PrintDoc;
 	return doc.print.author_name === name ? text : JSON.stringify({ ...doc, print: { ...doc.print, author_name: name } });
+};
+
+/**
+ * A serialised document with a fold (fold.ts) as its `copy_of` and `identical_to`; the same string when
+ * it already has it. Only the ids: the page reads the other print's title and author from its document.
+ */
+export const withFold = (text: string, fold: FoldState): string => {
+	const doc = JSON.parse(text) as PrintDoc;
+	if ((doc.print.copy_of?.id ?? null) === fold.duplicateOf && (doc.print.identical_to?.id ?? null) === fold.identicalTo) return text;
+	const print = { ...doc.print };
+	delete print.copy_of;
+	delete print.identical_to;
+	return JSON.stringify({
+		...doc,
+		print: {
+			...print,
+			...(fold.duplicateOf ? { copy_of: { id: fold.duplicateOf } } : {}),
+			...(fold.identicalTo ? { identical_to: { id: fold.identicalTo } } : {})
+		}
+	});
 };
 
 export const parsePrintDoc = (text: string | null): PrintDoc | null => {

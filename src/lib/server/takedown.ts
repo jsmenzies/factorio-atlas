@@ -12,8 +12,9 @@
  * 2. RAW: the analysis document first (the print, render and string pages read only R2), then the
  *    archived record and the viewer files.
  * 3. One D1 batch: the print's rows (prints, print_search, print_items, print_uses, print_renders,
- *    ingest_state), the screenshot's row when it goes, the tombstone again (an
- *    ingest that raced a 'gone' purge deletes it). From here search and the sitemap drop it.
+ *    ingest_state), its fingerprints (its `print_sources` rows stay, marked gone: identity-db.ts), the
+ *    screenshot's row when it goes, the tombstone again (an ingest that raced a 'gone' purge deletes it).
+ *    From here search and the sitemap drop it.
  * 4. RENDERS: every key under `<id>/` (overviews, tiles, sidecars, page data, thumbnails, indexes).
  * 5. SCREENSHOTS: the image's files and a 'removed' manifest, when the image goes: a takedown's image goes
  *    when no other print uses it, or with `screenshotToo` (the request was about it), or when an earlier
@@ -31,8 +32,10 @@
  */
 import { manifestKey, type ShotManifest } from '#lib/screenshots.js';
 import { bumpPageVersion } from './page-cache';
+import { fingerprintBlockValues, identityPurgeStatements, sourcesOf } from './pipeline/identity-db';
 import { analysisKey } from './pipeline/print-doc';
-import { insertBlocks, printBlocks, type Block, type BlockRow } from './removal-blocks';
+import { rawKeyFor } from './pipeline/source-record';
+import { insertBlocks, printBlocks, sourceBlock, type Block, type BlockRow } from './removal-blocks';
 import { removalRecordStatements, removedRowStatement } from './screenshot-flags';
 
 export interface TakedownEnv {
@@ -192,9 +195,12 @@ async function purge(
 		// 1. Blocks and tombstone.
 		await db.batch([...insertBlocks(db, blocks), tombstone(db, printId, options.kind, now)]);
 
-		// 2. RAW, the analysis document first.
+		// 2. RAW, the analysis document first. The archived record is at the print's own `raw_key` (another
+		// site's record is at `<site>/<siteId>.json`), and at factorioprints' key for its prints (a retry, after
+		// step 3 deleted the row, still finds that one).
 		await env.RAW.delete(analysisKey(printId));
-		const rawKeys = [`factorioprints/${printId}.json`];
+		const row = await db.prepare('SELECT raw_key FROM prints WHERE id = ?').bind(printId).first<{ raw_key: string | null }>();
+		const rawKeys = unique([rawKeyFor('factorioprints', printId), ...(row?.raw_key ? [row.raw_key] : [])]);
 		await env.RAW.delete(rawKeys);
 		const rawObjects = 1 + rawKeys.length + (await deletePrefix(env.RAW, `viewer/${printId}/`));
 
@@ -213,7 +219,7 @@ async function purge(
 			db.prepare('DELETE FROM prints WHERE id = ?').bind(printId),
 			db.prepare('DELETE FROM ingest_state WHERE print_id = ?').bind(printId),
 			...shotRows,
-			// Other per-print rows go here, before the tombstone (dedup: its identity rows).
+			...identityPurgeStatements(db, printId, now),
 			tombstone(db, printId, options.kind, now)
 		]);
 		const d1Rows = results.reduce((sum, r) => sum + (r.meta.changes ?? 0), 0);
@@ -278,11 +284,14 @@ export async function takedownPrint(
 ): Promise<TakedownResult> {
 	const now = options.now ?? Date.now();
 	const fate = await screenshotFate(env.DB, printId, 'takedown', options.screenshotToo ?? false);
+	// Read before the purge deletes what they come from (a retry finds them as blocks already written).
+	const [sources, hashes] = await Promise.all([sourcesOf(env.DB, printId), fingerprintBlockValues(env.DB, printId)]);
 	const blocks: Block[] = [
 		...printBlocks(printId),
-		...(fate.fate === 'removed' && fate.image ? [{ kind: 'image' as const, value: fate.image }] : [])
-		// More blocks go here, read before the purge deletes what they come from (dedup: the print's other
-		// `source` rows, and its page and book hashes as 'sha256').
+		...(fate.fate === 'removed' && fate.image ? [{ kind: 'image' as const, value: fate.image }] : []),
+		// Every other site the print came from, and its content (whole print and pages, from 50 entities and tiles).
+		...sources.filter((s) => s.site !== 'factorioprints' || s.site_id !== printId).map((s) => sourceBlock(s.site, s.site_id)),
+		...hashes.map((value) => ({ kind: 'sha256' as const, value }))
 	];
 	const rows: BlockRow[] = blocks.map((b) => ({ ...b, print_id: printId, report_id: reportId, created_at: now }));
 	return purge(env, printId, { ...options, kind: 'takedown', now }, rows, fate);

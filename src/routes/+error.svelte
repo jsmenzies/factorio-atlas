@@ -2,13 +2,18 @@
 	import { page } from '$app/state';
 	import PageMeta from '#lib/components/PageMeta.svelte';
 	import { sourceUrl } from '#lib/format.js';
+	import { isFactorioprintsId } from '#lib/print-id.js';
 
 	/**
 	 * Every error, in the site's look and with its real status code. A print we don't have may be
-	 * newer than our last import, so it links to the same print on factorioprints.com; one taken down
-	 * on request answers 410 and links only back to search, as does anything else.
+	 * newer than our last import, so it links to the same print on factorioprints.com (only a
+	 * factorioprints id can be there); one taken down on request answers 410 and links only back to
+	 * search, as does anything else.
 	 */
-	const printId = $derived(page.status === 404 ? /^\/prints\/([^/]+)\/?$/.exec(page.url.pathname)?.[1] : undefined);
+	const printId = $derived.by(() => {
+		const id = page.status === 404 ? /^\/prints\/([^/]+)\/?$/.exec(page.url.pathname)?.[1] : undefined;
+		return id && isFactorioprintsId(id) ? id : undefined;
+	});
 	const removed = $derived(page.status === 410);
 	const serverError = $derived(page.status >= 500);
 	// Over the rate limit (lib/server/rate-limit.ts); seen here when it hits an in-app navigation.
@@ -50,7 +55,7 @@
 	{/if}
 	<div class="flex flex-wrap justify-center gap-3 pt-2 text-sm">
 		{#if printId}
-			<a class="rounded bg-amber-500/15 px-3 py-1.5 text-amber-300 hover:bg-amber-500/25" href={sourceUrl(printId)} rel="external"
+			<a class="rounded bg-amber-500/15 px-3 py-1.5 text-amber-300 hover:bg-amber-500/25" href={sourceUrl(printId) ?? undefined} rel="external"
 				>View it on factorioprints.com</a
 			>
 		{:else if serverError || tooMany}
