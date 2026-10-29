@@ -56,10 +56,11 @@
 	const coverIndex = $derived(!single && data.cover ? pages.findIndex((n) => n.path === data.cover?.path) + 1 || null : null);
 	// Each book page has its own URL, for links and search engines; the first page's is the print's.
 	const pageHref = (path: string) => (path === pages[0]?.path ? `/prints/${p.id}` : `/prints/${p.id}?page=${encodeURIComponent(path)}`);
-	// A book page's URL opens on its render; the first page's is the print's own, so it says so. Every pick
-	// and tab switch is a history entry, as following the link it stands in for would be, so Back steps back
-	// through them before leaving the print.
-	const select = (path: string) => goto(path === pages[0]?.path ? `${pageHref(path)}?tab=pages` : pageHref(path), { shallow: true });
+	// A book page's URL opens on its render; the first page's is the print's own, so it says so. Picking a page
+	// is a history entry, as following its link would be (each book page is a page of its own), so Back steps back
+	// through the pages picked; switching tabs isn't (`replace`): tabs are views of one print, and Back leaves it.
+	const select = (path: string, replace = false) =>
+		goto(path === pages[0]?.path ? `${pageHref(path)}?tab=pages` : pageHref(path), { shallow: true, replace });
 	// In a book, the counting tabs show the whole book or the selected page (BookScope).
 	// A page picked on the render tab (or named in the URL) is the one the other tabs show.
 	let scope = $state<'book' | 'page'>(untrack(() => (query.has('page') ? 'page' : 'book')));
@@ -107,7 +108,7 @@
 		const url = new URL((route.shallow?.url ?? route.url).href);
 		if (id === defaultTab) url.searchParams.delete('tab');
 		else url.searchParams.set('tab', id);
-		goto(url.pathname + url.search, { shallow: true });
+		goto(url.pathname + url.search, { shallow: true, replace: true });
 	};
 
 	// The Overview's picture: the selected page's render, else the biggest rendered page's (its
@@ -118,8 +119,8 @@
 		const fullScreen = `/prints/${p.id}/render?page=${encodeURIComponent(page.path)}&from=overview`;
 		return { url: data.previews[page.path], thumb: data.thumbs[page.path], page, index: pages.indexOf(page), total: pages.length, fullScreen };
 	});
-	// From the Overview, the render tab opens on the page it showed.
-	const openTab = (id: TabId) => (id === 'pages' && preview && preview.page !== selected ? select(preview.page.path) : showTab(id));
+	// From the Overview, the render tab opens on the page it showed: a tab switch, so it replaces the entry too.
+	const openTab = (id: TabId) => (id === 'pages' && preview && preview.page !== selected ? select(preview.page.path, true) : showTab(id));
 
 	// A book's page bar (BookScope): the page picker's groups (stages or sub-books) and what its
 	// search matches. Clicking an item on Produces or Inputs opens it searching for that item.
