@@ -182,7 +182,7 @@
 					description: metaDescription(a, p.author_name, { page: { node: bookPage, index: selectedIndex }, rendered: rendered.has(bookPage.path) }),
 					canonical: pageHref(bookPage.path)
 				}
-			: { title: `${plainText(title)} · ${what} · Blueprint Atlas`, description: metaDescription(a, p.author_name, { rendered: rendered.size > 0 }), canonical: `/prints/${p.id}` }
+			: { title: `${plainText(title)} · ${what} · Blueprint Atlas`, description: metaDescription(a, p.author_name, { rendered: rendered.size > 0, makes: [...products.main, ...products.groups.flatMap((g) => g.items)].map((m) => m.signal) }), canonical: `/prints/${p.id}` }
 	);
 	// Link previews show the author's screenshot, for the print and each of its book pages: our copy's
 	// preview JPEG, else Imgur's while ours isn't there yet, else (gone or removed) the site's card.

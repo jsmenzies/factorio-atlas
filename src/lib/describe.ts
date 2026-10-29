@@ -189,23 +189,60 @@ export const describePrint = (a: PrintAnalysis): string => {
 /** Search engines show about this many characters of a description. */
 const META_DESCRIPTION_MAX = 160;
 
+/** "a, b and c". */
+const sentenceList = (xs: string[]) => (xs.length < 2 ? (xs[0] ?? '') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+/** An item's English name mid-sentence: "transport belt", "power armor MK2". */
+const midSentence = (signal: string) => {
+	const name = signalName(signal);
+	return name.charAt(0).toLowerCase() + name.slice(1);
+};
+
 /**
- * The print page's `<meta name="description">`: `describePrint`, then what it is and who made it
- * ("Factorio 2.0 blueprint book by Nilaus."). For a book page (`?page=`, its own URL), that page's
- * summary and where it sits ("Page 3 of 45 in a Factorio 0.16 blueprint book by Nilaus."). With
- * `rendered` (the print, or that page, has a game render) it says so, a reason to pick the result.
- * Too long, the summary is cut at a word, never the sentences after it.
+ * What a book is about in a few words, at most `k` things: what it crafts (`ranked`, in the page's order; science
+ * packs counted together, "6 science packs"), else the roles of its pages ("rail, belts and fluids").
+ */
+const bookTopics = (a: PrintAnalysis, ranked: string[], k: number): string => {
+	// Only what a recipe in it crafts: an item that is only a page's icon (a train station's cargo wagon) isn't made.
+	const makes = ranked.filter((s) => a.products.includes(s));
+	const science = makes.filter((s) => s.endsWith('-science-pack'));
+	const things = [
+		...(science.length > 1 ? [`${science.length} science packs`] : []),
+		...makes.filter((s) => science.length < 2 || !science.includes(s)).map(midSentence)
+	];
+	if (things.length) return `making ${sentenceList(things.slice(0, k))}`;
+	const roles = (Object.entries(a.roles) as [Role, number][]).filter(([r]) => r !== 'empty').sort((x, y) => y[1] - x[1]);
+	return roles.length ? `of ${sentenceList(roles.slice(0, k).map(([r]) => ROLE_LABEL[r].toLowerCase()))}` : '';
+};
+
+/**
+ * The print page's `<meta name="description">`, also its link previews' text. A book: what it is and who made
+ * it, then its pages and what they make in plain words ("Factorio 0.16 blueprint book by knoted: 45 pages making
+ * 6 science packs, transport belt and electronic circuit."), from `makes` (what the page lists it makes, ranked), else
+ * what its pages are ("137 pages of rail, belts and fluids"), dropping things until it fits. A single blueprint:
+ * `describePrint`, then what it is ("Factorio 2.0 blueprint by Nilaus."). A book page (`?page=`, its own URL): that
+ * page's summary and where it sits ("Page 3 of 45 in a Factorio 0.16 blueprint book by Nilaus."). With `rendered`
+ * (the print, or that page, has a game render) it says so, a reason to pick the result. A summary that is still
+ * too long is cut at a word, never the sentences after it.
  */
 export const metaDescription = (
 	a: PrintAnalysis,
 	author: string | null,
-	{ page, rendered = false }: { page?: { node: NodeAnalysis; index: number }; rendered?: boolean } = {}
+	{ page, rendered = false, makes = [] }: { page?: { node: NodeAnalysis; index: number }; rendered?: boolean; makes?: string[] } = {}
 ): string => {
 	const version = /^\d+\.\d+/.exec(a.gameVersion ?? '')?.[0];
 	const total = a.nodes.filter((n) => n.kind === 'blueprint').length;
 	const by = author?.trim() ? ` by ${author.trim()}` : '';
-	const kind = `Factorio${version ? ` ${version}` : ''}${a.requiresSpaceAge ? ' Space Age' : ''} blueprint${total > 1 ? ' book' : ''}${by}.`;
-	const what = `${page ? `Page ${page.index + 1} of ${total} in a ${kind}` : kind}${rendered ? ' With a zoomable in-game render.' : ''}`;
+	const kindOf = `Factorio${version ? ` ${version}` : ''}${a.requiresSpaceAge ? ' Space Age' : ''} blueprint${total > 1 ? ' book' : ''}${by}`;
+	const render = rendered ? ' With a zoomable in-game render.' : '';
+	if (total > 1 && !page) {
+		for (let k = 4; k >= 1; k--) {
+			const topics = bookTopics(a, makes, k);
+			const text = `${kindOf}: ${total} pages${topics ? ` ${topics}` : ''}.${render}`;
+			if (text.length <= META_DESCRIPTION_MAX || k === 1) return text;
+		}
+	}
+	const kind = `${kindOf}.`;
+	const what = `${page ? `Page ${page.index + 1} of ${total} in a ${kind}` : kind}${render}`;
 	let summary = (page ? describeNode(page.node, { withRate: true }) : describePrint(a)).trim();
 	if (summary && !/[.!?]$/.test(summary)) summary += '.';
 	const room = META_DESCRIPTION_MAX - what.length - 1;
