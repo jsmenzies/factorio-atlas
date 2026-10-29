@@ -16,10 +16,14 @@ const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
  */
 export async function openStore(
 	target: UploadTarget | null,
-	local: R2Bucket,
+	/** The miniflare RENDERS binding; only `local` needs it. */
+	local: R2Bucket | null,
 	env: Record<string, string | undefined> = process.env
 ): Promise<RenderStore | null> {
-	if (target === 'local') return bindingStore(local, 'local RENDERS bucket (.wrangler/state)');
+	if (target === 'local') {
+		if (!local) throw new Error('the local RENDERS binding is needed for --upload local');
+		return bindingStore(local, 'local RENDERS bucket (.wrangler/state)');
+	}
 	if (target !== 'prod') return null;
 	const accessKeyId = env.R2_ACCESS_KEY_ID?.trim();
 	const secretAccessKey = env.R2_SECRET_ACCESS_KEY?.trim();

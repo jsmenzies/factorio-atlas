@@ -143,15 +143,15 @@ export const checkBucket = (stage: DeployedStage, name: string) => {
 const checkSchema = async (stage: Stage, db: D1Database) => {
 	const { results } = await db
 		.prepare(
-			`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('pipeline_runs', 'ingest_state', 'prints', 'print_renders', 'authors')`
+			`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('pipeline_runs', 'ingest_state', 'prints', 'print_renders', 'authors', 'removal_blocks')`
 		)
 		.all<{ name: string }>();
-	if (results.length < 5) {
-		// authors (0017) is the newest table a print's write reads.
+	if (results.length < 6) {
+		// removal_blocks (0021) is the newest table a print's write reads.
 		throw new TargetError(
 			stage === 'local'
-				? 'the local D1 database lacks the latest tables (pipeline_runs, ingest_state, print_renders, authors): run `bun run db:migrate`'
-				: `the ${stage} D1 database lacks the latest tables (pipeline_runs, ingest_state, print_renders, authors): deploy applies migrations (\`bun run deploy:${stage}\`)`
+				? 'the local D1 database lacks the latest tables (pipeline_runs, ingest_state, print_renders, authors, removal_blocks): run `bun run db:migrate`'
+				: `the ${stage} D1 database lacks the latest tables (pipeline_runs, ingest_state, print_renders, authors, removal_blocks): deploy applies migrations (\`bun run deploy:${stage}\`)`
 		);
 	}
 };

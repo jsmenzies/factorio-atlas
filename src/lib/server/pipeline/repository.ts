@@ -1,6 +1,7 @@
 import { Context, Effect, Layer } from 'effect';
 import { nicknamesFor } from '#lib/aliases.js';
 import { QUALITY_LEVELS } from '#lib/quality.js';
+import { isPrintRemoved } from '#lib/server/removal-blocks.js';
 import type { PrintAnalysis } from './analyze';
 import { buildingsIn } from './buildings';
 import { gameData } from './game-data';
@@ -71,6 +72,8 @@ export class PrintRepository extends Context.Service<
 		readonly rebuildFacets: () => Effect.Effect<void, StorageError>;
 		/** The `authors` table's name for an author id (migration 0017), or null. */
 		readonly authorName: (authorId: string) => Effect.Effect<string | null, StorageError>;
+		/** Whether an approved removal blocks the print (`removal_blocks`, migration 0021). */
+		readonly isRemoved: (id: string) => Effect.Effect<boolean, StorageError>;
 	}
 >()('PrintRepository') {}
 
@@ -314,6 +317,7 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 	return Layer.succeed(PrintRepository, {
 		authorName: (authorId) =>
 			tryD1(`d1.authorName ${authorId}`, async () => (await (authors ??= loadAuthorNames(db))).get(authorId) ?? null),
+		isRemoved: (id) => tryD1(`d1.isRemoved ${id}`, () => isPrintRemoved(db, id)),
 		getState: (id) =>
 			tryD1(`d1.getState ${id}`, async () => {
 				const row = await db.prepare(`SELECT ${STATE_COLUMNS} FROM ingest_state WHERE print_id = ?`).bind(id).first<StateRow>();
@@ -393,6 +397,9 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 					...new Set(a.inputs.map((item) => `input\u0000${item}`))
 				].map((k) => [id, ...k.split('\u0000')]);
 				const stmts: D1PreparedStatement[] = [
+					// A print deleted as gone that is back (migration 0021). A takedown's tombstone stays: its blocks make
+					// the `prints_not_removed` trigger refuse this whole batch anyway.
+					db.prepare(`DELETE FROM print_tombstones WHERE print_id = ? AND kind = 'gone'`).bind(id),
 					db.prepare('DELETE FROM print_items WHERE print_id = ?').bind(id),
 					db.prepare('DELETE FROM print_uses WHERE print_id = ?').bind(id),
 					db.prepare('DELETE FROM print_search WHERE print_id = ?').bind(id),

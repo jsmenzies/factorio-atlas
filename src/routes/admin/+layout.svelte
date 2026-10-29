@@ -31,6 +31,11 @@
 		class={page.url.pathname.startsWith('/admin/render') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
 		aria-current={page.url.pathname === '/admin/render' ? 'page' : undefined}>Render</a
 	>
+	<a
+		href="/admin/reports"
+		class={page.url.pathname.startsWith('/admin/reports') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
+		aria-current={page.url.pathname === '/admin/reports' ? 'page' : undefined}>Reports</a
+	>
 	{#if dev}
 		<a
 			href="/admin/settings"

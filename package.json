@@ -39,6 +39,7 @@
 		"screenshots": "bun scripts/screenshots.ts",
 		"screenshots:flags": "bun scripts/screenshots-flags.ts",
 		"screenshots:remove": "bun scripts/screenshots-remove.ts",
+		"removals": "bun scripts/removals.ts",
 		"game-data": "bun scripts/build-game-data.ts",
 		"icons": "bun scripts/icons.ts",
 		"lint": "oxlint",

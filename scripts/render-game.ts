@@ -140,6 +140,7 @@ import { getPlatformProxy } from 'wrangler';
 import { gameCatalog } from '#lib/viewer/catalog.server.js';
 import { overviewFile, PAGE_DATA_VERSION, pageBase } from '#lib/viewer/game-render.js';
 import { newRunId, type RunControl } from '#lib/server/pipeline/runs.js';
+import { loadRemovedPrintIds } from '#lib/server/removal-blocks.js';
 import { RENDER_HEARTBEAT_MS, type RenderJobRow } from '#lib/server/render-queue.js';
 import type { PageJob, PageResult } from './render/draw.js';
 import {
@@ -1209,8 +1210,15 @@ try {
 		await uploader.processDeletes();
 		await thumbUploader?.processDue();
 	}
-	// --top: its prints first (by rank), then the selection without them.
-	const ids = withTopFirst(topPicked, wanted ?? (await source.ids()));
+	// --top: its prints first (by rank), then the selection without them; never a print removed on request
+	// (`removal_blocks`, copied from the stage by `bun run removals`). Their renders stay as they are here
+	// until that command sweeps them.
+	const removed = await loadRemovedPrintIds(proxy.env.DB).catch((e: unknown) => {
+		throw new Error(`can't read removal_blocks (run \`bun run db:migrate\`): ${e instanceof Error ? e.message : String(e)}`);
+	});
+	const selected = withTopFirst(topPicked, wanted ?? (await source.ids()));
+	const ids = selected.filter((id) => !removed.has(id));
+	if (ids.length < selected.length) log(`removed on request: ${selected.length - ids.length} prints left out`);
 	const enqueueStart = Date.now();
 	let taken = 0;
 	if (batch) taken = await pickBatch(ids, batch);

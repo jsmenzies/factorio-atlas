@@ -44,7 +44,7 @@ const local: LocalConfig = unstable_readConfig({ config: 'wrangler.jsonc' }, { h
 const expected = {
 	d1: ['DB'],
 	r2: ['RAW', 'RENDERS', 'SPRITES', 'SCREENSHOTS'],
-	ratelimits: ['PAGE_LIMIT', 'SEARCH_LIMIT'],
+	ratelimits: ['PAGE_LIMIT', 'SEARCH_LIMIT', 'REPORT_LIMIT'],
 	analytics: ['VIEWS']
 };
 const actual = {
@@ -184,6 +184,8 @@ export default Alchemy.Stack(
 		const cachedHosts = [stage === 'prod' ? spritesDomain : undefined, rendersDomain, screenshotsDomain].filter(
 			(h): h is string => h !== undefined
 		);
+		// The zone a takedown purges (src/lib/server/takedown.ts), set below when there is a cache rule.
+		let cacheZoneId: string | undefined;
 		if (stage === 'prod' && cachedHosts.length > 0) {
 			const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
 			const zoneIds = yield* Effect.forEach(cachedHosts, (hostname) =>
@@ -193,6 +195,7 @@ export default Alchemy.Stack(
 			if (zoneIds.some((z) => z !== zoneId)) {
 				return yield* Effect.die(new Error(`${cachedHosts.join(' and ')} must be in one zone for the cache rule`));
 			}
+			cacheZoneId = zoneId;
 			yield* ownPhase(zoneId, 'http_request_cache_settings', CACHE_RULE);
 			yield* Cloudflare.Ruleset.Ruleset('CacheRules', {
 				zone: { zoneId } as unknown as Cloudflare.Zone.Zone,
@@ -264,6 +267,25 @@ export default Alchemy.Stack(
 			);
 		}
 
+		// Removal requests (docs/deploy.md, "Removal requests"): Turnstile on the form needs
+		// TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY (without them the form is off, never left unguarded);
+		// a takedown purges the renders and screenshots domains' edge cache with CACHE_PURGE_TOKEN (Zone →
+		// Cache Purge on that zone; without it the admin page lists what to purge by hand).
+		const turnstileSiteKey = yield* optional('TURNSTILE_SITE_KEY');
+		const turnstileSecret = Option.getOrUndefined(yield* Config.option(Config.Redacted('TURNSTILE_SECRET_KEY')));
+		const turnstile = turnstileSiteKey !== undefined && turnstileSecret !== undefined;
+		if (!turnstile) {
+			yield* Effect.logWarning(
+				`removal requests are off on ${stage}: they need TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY (docs/deploy.md, "Removal requests")`
+			);
+		}
+		const purgeToken = Option.getOrUndefined(yield* Config.option(Config.Redacted('CACHE_PURGE_TOKEN')));
+		if (cacheZoneId !== undefined && purgeToken === undefined) {
+			yield* Effect.logWarning(
+				`takedowns won't purge the edge cache on ${stage}: it needs CACHE_PURGE_TOKEN (docs/deploy.md, "Removal requests")`
+			);
+		}
+
 		const worker = yield* Cloudflare.Worker('Site', {
 			name,
 			// Built by `vite build` (adapter-cloudflare), then bundled by Alchemy as wrangler would.
@@ -291,7 +313,12 @@ export default Alchemy.Stack(
 				SCREENSHOTS_URL: screenshotsDomain === undefined ? '' : `https://${screenshotsDomain}`,
 				// Empty (in wrangler.jsonc) means /admin is a 404 on this stage.
 				ACCESS_TEAM_DOMAIN: admin ? (teamDomain ?? '') : '',
-				ACCESS_AUD: admin ? admin.aud : ''
+				ACCESS_AUD: admin ? admin.aud : '',
+				// Never wrangler.jsonc's test key in a deployed stage.
+				TURNSTILE_SITE_KEY: turnstile ? turnstileSiteKey : '',
+				...(turnstile ? { TURNSTILE_SECRET_KEY: turnstileSecret } : {}),
+				CACHE_ZONE_ID: purgeToken !== undefined && cacheZoneId !== undefined ? cacheZoneId : '',
+				...(purgeToken !== undefined && cacheZoneId !== undefined ? { CACHE_PURGE_TOKEN: purgeToken } : {})
 			}
 		});
 

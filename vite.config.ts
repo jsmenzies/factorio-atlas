@@ -35,7 +35,9 @@ export default defineConfig({
 				directives: {
 					'default-src': ['self'],
 					// Web Analytics' automatic setup loads beacon.min.js from here and reports to /cdn-cgi/rum (connect-src 'self').
-					'script-src': ['self', 'https://static.cloudflareinsights.com'],
+					// Turnstile (src/lib/server/turnstile.ts) on the removal-request form: its script, and its widget's frame.
+					'script-src': ['self', 'https://static.cloudflareinsights.com', 'https://challenges.cloudflare.com'],
+					'frame-src': ['https://challenges.cloudflare.com'],
 					// Svelte's server output puts onload/onerror="this.__e=event" on <img> tags with handlers (Icon's
 					// fallback), so events before hydration are replayed. Only that exact string may run; any other
 					// inline handler stays blocked. If Svelte ever changes the string, icons that fail before

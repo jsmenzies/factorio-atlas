@@ -5,7 +5,12 @@
  * alchemy.run.ts deploys it as a Worker of its own (the site's adapter-cloudflare Worker has no
  * scheduled handler). A failed run throws, so it shows as an error in the Worker's logs, and the
  * next day's run puts everything right: the sync writes the whole difference.
+ *
+ * It also clears the contact and details of reports decided over 30 days ago (lib/server/reports.ts), the
+ * one other daily chore, first, so a failed views sync doesn't hold it up; its own failure is logged and
+ * doesn't hold up the views sync either (the next day's run clears what this one missed).
  */
+import { clearOldReportText } from '#lib/server/reports.js';
 import { fetchViews, syncViews } from '#lib/server/views.js';
 
 export interface ViewsCronEnv {
@@ -19,6 +24,12 @@ export interface ViewsCronEnv {
 
 export default {
 	async scheduled(_controller, env) {
+		try {
+			const cleared = await clearOldReportText(env.DB);
+			console.log(`reports: contact and details cleared from ${cleared.meta.changes ?? 0} old reports`);
+		} catch (e) {
+			console.error(`reports: clearing old contacts failed: ${e instanceof Error ? e.message : String(e)}`);
+		}
 		const wanted = await fetchViews({ accountId: env.ACCOUNT_ID, token: env.ANALYTICS_API_TOKEN, dataset: env.VIEWS_DATASET });
 		const { plan, known, rowsWritten } = await syncViews(env.DB, wanted);
 		console.log(

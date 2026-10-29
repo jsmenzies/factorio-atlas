@@ -134,3 +134,19 @@ export const verifyAccessRequest = async (request: Request, config: AccessConfig
 		return { ok: false, reason: `verify failed: ${e instanceof Error ? e.message : String(e)}` };
 	}
 };
+
+/**
+ * Who is signed in to /admin, for the record of a decision: the email in the request's Access JWT,
+ * read without checking it again (the guard in hooks.server.ts verified this request's token before
+ * any admin route ran), or `fallback` (under vite dev, where there is no token).
+ */
+export const accessEmail = (request: Request, fallback: string) => {
+	const payload = request.headers.get(ACCESS_JWT_HEADER)?.split('.')[1];
+	if (!payload) return fallback;
+	try {
+		const claims = json(payload);
+		return isRecord(claims) && typeof claims.email === 'string' ? claims.email : fallback;
+	} catch {
+		return fallback;
+	}
+};

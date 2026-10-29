@@ -9,6 +9,7 @@
  */
 import { bumpPageVersion } from '#lib/server/page-cache.js';
 import { planSize, syncRenderFlags, type RenderCover } from '#lib/server/pipeline/render-flags.js';
+import { loadRemovedPrintIds } from '#lib/server/removal-blocks.js';
 import { openTarget, type Stage } from '../backfill/stage.js';
 import { n, requireSchema } from '../stage-command.js';
 import {
@@ -90,6 +91,11 @@ export async function runStageFlags(stage: Stage, opts: StageFlagsOptions): Prom
 	try {
 		const db = target.env.DB;
 		await requireSchema(db, stage, 'SELECT cover_stamp FROM print_renders LIMIT 0', "print_renders' cover columns", '0018');
+		// A print removed on request is never flagged, even while this machine still has its render rows.
+		for (const id of await loadRemovedPrintIds(db)) {
+			wanted.delete(id);
+			covers.delete(id);
+		}
 		const preview = await syncRenderFlags(db, wanted, { dryRun: true, covers });
 		const p = preview.plan;
 		opts.log(

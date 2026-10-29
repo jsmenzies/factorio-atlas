@@ -187,6 +187,7 @@ this repository.
 | `bun run views:sync --stage local\|prod`                       | total prod's page views over the last 30 days into that stage's D1 for the Popular sort (`--dry-run`, `--db N`, `--yes`; needs `ANALYTICS_API_TOKEN`; see docs/deploy.md, "Page views")                                                              |
 | `bun run sync [--stage prod\|local]`                           | one update with the saved settings: fetch the mirror, ingest, authors, screenshots, renders, counts (docs/deploy.md)                                                                                                                                 |
 | `bun run sync --plan`                                          | fetch the mirror and say what an update would do, changing nothing                                                                                                                                                                                   |
+| `bun run removals --stage local\|prod`                         | after approving removal requests: copy the stage's blocks into the local D1 and delete the removed prints' local renders, thumbnails, queue rows and screenshot copies (`--dry-run`, `--yes`, `--json`; see docs/deploy.md, "Removal requests")      |
 | `bun run game-data <script-output dir> <factorio data dir>`    | regenerate `data/game/game-data-*.json` from the game's `--dump-data` and `--dump-prototype-locale` output (steps in `scripts/build-game-data.ts`)                                                                                                   |
 | `bun run icons <script-output dir>`                            | WebP icons from the game's `--dump-icon-sprites` output into `data/sprites/` and the local SPRITES bucket; writes `data/game/icons.json`                                                                                                             |
 | `bun run icons --upload local\|remote`                         | upload that icon set again, to the local bucket or to the deployed sprites bucket every stage shares                                                                                                                                                 |
@@ -218,7 +219,9 @@ full runbook is in [docs/deploy.md](docs/deploy.md).
 
 - Prints: [factorioprints.com](https://factorioprints.com), read from the GitHub mirror
   [motlin/factorio-blueprint-firebase-cdn](https://github.com/motlin/factorio-blueprint-firebase-cdn).
-  Each print belongs to its author; none are included in this repository.
+  Each print belongs to its author; none are included in this repository. Every print page has a
+  "Request removal" link; an approved request deletes the print and everything made from it, and keeps
+  it from being copied again.
 - Game data: Factorio's own data dump (`--dump-data`, `--dump-prototype-locale`) and its rename
   migrations; the viewer's extra prototype facts (for hover details) come from
   [wube/factorio-data](https://github.com/wube/factorio-data).

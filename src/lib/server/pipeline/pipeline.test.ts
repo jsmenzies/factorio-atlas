@@ -5,7 +5,7 @@ import { listPages, nodeAt } from '#lib/viewer/extract.js';
 import { ANALYZER_VERSION } from './analyze';
 import { decodeExchangeString, encodeExchangeString } from './decode';
 import { gameData } from './game-data';
-import { ingestText, type IngestOptions } from './pipeline';
+import { applyPlan, ingestText, planIngest, type IngestOptions } from './pipeline';
 import { RawStore } from './raw-store';
 import { INDEX_VERSION, PrintRepository, type IngestState, type StoredPrint } from './repository';
 import { legacyPageKey, pageStringKey, parseViewerIndex, VIEWER_VERSION, viewerIndexKey } from './viewer-files';
@@ -29,6 +29,8 @@ const decodeRecord = (text: string) =>
 /** In-memory D1 and R2 stand-ins that count every write. */
 const harness = (id = ID) => {
 	const states = new Map<string, IngestState>();
+	/** Ids an approved removal blocks. */
+	const removed = new Set<string>();
 	const writes = { rawPuts: 0, upserts: 0, failures: 0, favorites: 0 };
 	/** Writes under `viewer/`, and `ingest_state.viewer_version`-only updates. */
 	const viewer = { puts: 0, deletes: 0, versions: 0 };
@@ -59,6 +61,7 @@ const harness = (id = ID) => {
 			getState: (id) => Effect.succeed(states.get(id) ?? null),
 			rebuildFacets: () => Effect.void,
 			authorName: () => Effect.succeed(null),
+			isRemoved: (id) => Effect.succeed(removed.has(id)),
 			upsert: (p) =>
 				Effect.sync(() => {
 					writes.upserts++;
@@ -106,9 +109,26 @@ const harness = (id = ID) => {
 	const doc = () => JSON.parse(r2.get(`analysis/${id}.json`) ?? 'null') as { print: { favorites: number } } | null;
 	const run = (text: string, options: IngestOptions = {}) =>
 		Effect.runPromise(ingestText(id, text, 'test', options).pipe(Effect.provide(layer)));
+	/** A backfill's two halves: plan (from the current state), then store. */
+	const plan = (text: string) => Effect.runPromise(planIngest(id, text, 'test', states.get(id) ?? null, {}).pipe(Effect.provide(layer)));
+	const apply = (p: Awaited<ReturnType<typeof plan>>) => Effect.runPromise(applyPlan(p).pipe(Effect.provide(layer)));
 	/** Every viewer object stored for the print. */
 	const viewerKeys = () => [...r2.keys()].filter((k) => k.startsWith(`viewer/${id}/`)).sort();
-	return { run, writes, viewer, states, doc, r2, deleted, viewerKeys, analysisPuts: () => analysisPuts, lastUpsert: () => lastUpsert };
+	return {
+		run,
+		plan,
+		apply,
+		writes,
+		viewer,
+		states,
+		removed,
+		doc,
+		r2,
+		deleted,
+		viewerKeys,
+		analysisPuts: () => analysisPuts,
+		lastUpsert: () => lastUpsert
+	};
 };
 
 describe('ingestText change detection', () => {
@@ -162,6 +182,49 @@ describe('ingestText change detection', () => {
 		const h = harness();
 		await h.run(FIXTURE);
 		expect((await h.run(FIXTURE, { force: true })).status).toBe('analysed');
+	});
+});
+
+describe('removed prints', () => {
+	test('a print an approved removal blocks is never stored, even forced or changed', async () => {
+		const h = harness();
+		h.removed.add(ID);
+		expect(await h.run(FIXTURE)).toEqual({ status: 'removed', id: ID });
+		expect(
+			await h.run(
+				withRecord((r) => (r.title = 'Renamed')),
+				{ force: true }
+			)
+		).toEqual({ status: 'removed', id: ID });
+		expect(h.writes).toEqual({ rawPuts: 0, upserts: 0, failures: 0, favorites: 0 });
+		expect(h.viewer.puts).toBe(0);
+		expect(h.analysisPuts()).toBe(0);
+	});
+
+	test('a removal while a run holds an old plan: the refresh writes nothing either', async () => {
+		const h = harness();
+		await h.run(FIXTURE);
+		h.removed.add(ID);
+		expect((await h.run(withRecord((r) => (r.numberOfFavorites = 99999)))).status).toBe('removed');
+		expect(h.writes.favorites).toBe(0);
+	});
+
+	test('a favourites refresh planned before the approval and stored after leaves no analysis document', async () => {
+		const h = harness();
+		await h.run(FIXTURE);
+		const planned = await h.plan(withRecord((r) => (r.numberOfFavorites = 99999)));
+		expect(planned.kind).toBe('refresh');
+		// The takedown lands while the run reads the document (so it reads it, then puts it back).
+		h.removed.add(ID);
+		expect(await h.apply(planned)).toEqual({ status: 'removed', id: ID });
+		expect(h.r2.has(`analysis/${ID}.json`)).toBe(false);
+	});
+
+	test('an undecodable removed print is not tracked as failed', async () => {
+		const h = harness();
+		h.removed.add(ID);
+		expect((await h.run(withRecord((r) => (r.blueprintString = '0garbage')))).status).toBe('removed');
+		expect(h.writes.failures).toBe(0);
 	});
 });
 

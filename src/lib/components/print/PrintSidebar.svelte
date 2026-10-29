@@ -116,4 +116,7 @@
 			{/each}
 		</nav>
 	{/if}
+	<p class="mt-3 text-right text-xs">
+		<a class="text-stone-500 hover:text-amber-300" href="/prints/{print.id}/remove" rel="nofollow">Request removal</a>
+	</p>
 </aside>

@@ -1,6 +1,7 @@
 import { Data, Effect, Schema } from 'effect';
 import { ANALYZER_VERSION, analyzePrint, claimedPlanets, claimedVersions, type PrintAnalysis } from './analyze';
 import { decodeExchangeString } from './decode';
+import { REMOVED_ABORT } from '#lib/server/removal-blocks.js';
 import { BlueprintDecodeError, RecordParseError, StorageError } from './errors';
 import { gameData } from './game-data';
 import { analysisKey, parsePrintDoc, toPrintDoc, withAuthorName } from './print-doc';
@@ -52,6 +53,8 @@ export type IngestOutcome =
 	| { readonly status: 'skipped-failed'; readonly id: string; readonly reason: string }
 	/** Nothing changed since the last run: no writes at all. */
 	| { readonly status: 'unchanged'; readonly id: string }
+	/** Blocked by an approved removal (`removal_blocks`): nothing written. */
+	| { readonly status: 'removed'; readonly id: string }
 	/** Only the favourites count changed: one small update, no re-analysis. */
 	| { readonly status: 'favorites'; readonly id: string; readonly favorites: number }
 	/** Only the viewer files were stale (VIEWER_VERSION bump): rebuilt them, no re-analysis or D1 analysis writes. */
@@ -281,9 +284,41 @@ export const planFailure = Effect.fn('planFailure')(function* (id: string, text:
 	return plan;
 });
 
+/** The `prints_not_removed` trigger (migration 0021) refused the print's row: an approval landed mid-run. */
+const isRemovedAbort = (e: StorageError) => {
+	const cause = e.cause instanceof Error ? e.cause.message : String(e.cause);
+	return cause.includes(REMOVED_ABORT);
+};
+
+/** Undo the R2 writes of a plan whose print turned out to be removed, so no page can read them. */
+const forgetWrites = Effect.fn('forgetWrites')(function* (id: string) {
+	const raw = yield* RawStore;
+	yield* raw.delete(analysisKey(id));
+	yield* raw.delete(rawKey(id));
+	yield* deleteViewerFiles(id);
+	return { status: 'removed', id } satisfies IngestOutcome;
+});
+
+/**
+ * `repo.upsert`, answering 'removed' (and deleting what the plan put in R2) when the database refuses a
+ * print an approved removal blocks. The trigger is the check: it costs no extra query per print, and it
+ * also catches an approval that lands between the plan's R2 writes and its D1 batch. One that lands after
+ * the batch is the takedown's to clean up: it deletes R2 and the rows after writing its blocks.
+ */
+const upsertUnlessRemoved = (print: Parameters<PrintRepository['Service']['upsert']>[0]) =>
+	Effect.gen(function* () {
+		const repo = yield* PrintRepository;
+		return yield* repo.upsert(print).pipe(
+			Effect.map((rows) => ({ removed: false as const, rows })),
+			Effect.catchIf(isRemovedAbort, () => Effect.succeed({ removed: true as const, rows: 0 }))
+		);
+	});
+
 /**
  * Store what `planIngest` computed. Writes go R2 first and D1 last, so `ingest_state` never claims
- * files that weren't written: archive, viewer files, analysis document, then the D1 batch.
+ * files that weren't written: archive, viewer files, analysis document, then the D1 batch. A print an
+ * approved removal blocks is never kept, whichever path planned it: the database refuses its row
+ * (migration 0021's trigger) and the plan's R2 writes are undone ('removed').
  */
 export const applyPlan = Effect.fn('applyPlan')(function* (
 	plan: IngestPlan
@@ -307,7 +342,12 @@ export const applyPlan = Effect.fn('applyPlan')(function* (
 				yield* repo.updateFavorites(id, favorites);
 				// The print page shows favourites from its R2 document, so patch that too.
 				const doc = parsePrintDoc(yield* raw.get(analysisKey(id)));
-				if (doc) yield* raw.put(analysisKey(id), JSON.stringify({ ...doc, print: { ...doc.print, favorites } }));
+				if (doc) {
+					yield* raw.put(analysisKey(id), JSON.stringify({ ...doc, print: { ...doc.print, favorites } }));
+					// No row is inserted here, so the trigger can't refuse it: look again, as a takedown since the
+					// read would have its document back (only prints whose favourites changed pay for this).
+					if (yield* repo.isRemoved(id)) return yield* forgetWrites(id);
+				}
 			}
 			if (plan.viewerFiles) return { status: 'viewer', id, viewerFiles: plan.viewerFiles.size };
 			return { status: 'favorites', id, favorites: plan.favorites ?? 0 };
@@ -324,9 +364,10 @@ export const applyPlan = Effect.fn('applyPlan')(function* (
 			const viewerFiles = plan.viewerFiles ? yield* putViewerFiles(id, plan.viewerFiles) : 0;
 			const authorName = yield* resolveAuthorName(plan.print.record);
 			yield* raw.put(analysisKey(id), withAuthorName(plan.doc, authorName));
-			const rowsWritten = yield* repo.upsert({ ...plan.print, authorName });
+			const stored = yield* upsertUnlessRemoved({ ...plan.print, authorName });
+			if (stored.removed) return yield* forgetWrites(id);
 			const { record, analysis } = plan.print;
-			return { status: 'analysed', id, title: record.title, analysis, rowsWritten, viewerFiles };
+			return { status: 'analysed', id, title: record.title, analysis, rowsWritten: stored.rows, viewerFiles };
 		}
 	}
 });
@@ -355,7 +396,7 @@ const reindex = Effect.fn('reindex')(function* (
 		const print = { ...doc.print, favorites: favorites ?? doc.print.favorites, author_name: authorName };
 		yield* raw.put(analysisKey(id), JSON.stringify({ ...doc, print }));
 	}
-	const rowsWritten = yield* (yield* PrintRepository).upsert({
+	const stored = yield* upsertUnlessRemoved({
 		id,
 		sourceUrl: r.sourceUrl,
 		rawKey: rawKey(id),
@@ -366,7 +407,8 @@ const reindex = Effect.fn('reindex')(function* (
 		viewerVersion: VIEWER_VERSION,
 		authorName
 	});
-	return { status: 'reindexed', id, rowsWritten, viewerFiles };
+	if (stored.removed) return yield* forgetWrites(id);
+	return { status: 'reindexed', id, rowsWritten: stored.rows, viewerFiles };
 });
 
 /**
@@ -395,12 +437,16 @@ export const sanitizeRaw = (id: string, text: string) =>
  * analyzer might help).
  */
 export const ingestText = Effect.fn('ingestText')(function* (id: string, text: string, sourceUrl: string, options: IngestOptions = {}) {
+	// One print at a time (`bun run ingest`): a lookup first saves the work. The backfill leaves blocked
+	// prints out of its listing instead, and the database refuses any that slip through.
+	if (yield* (yield* PrintRepository).isRemoved(id)) return { status: 'removed', id } satisfies IngestOutcome;
 	const state = yield* (yield* PrintRepository).getState(id);
 	return yield* applyPlan(yield* planIngest(id, text, sourceUrl, state, options));
 });
 
-/** download, then `ingestText`. */
+/** download, then `ingestText`. A removed print isn't even fetched. */
 export const ingestPrint = Effect.fn('ingestPrint')(function* (id: string, options: IngestOptions = {}) {
+	if (yield* (yield* PrintRepository).isRemoved(id)) return { status: 'removed', id } satisfies IngestOutcome;
 	const source = yield* PrintSource;
 	const { text, url } = yield* source.fetchRecord(id);
 	yield* Effect.logInfo(`fetched ${id} (${text.length} bytes) from ${url}`);
@@ -409,6 +455,7 @@ export const ingestPrint = Effect.fn('ingestPrint')(function* (id: string, optio
 
 /** Re-run analysis over an already archived record, e.g. after bumping ANALYZER_VERSION. */
 export const reanalyzePrint = Effect.fn('reanalyzePrint')(function* (id: string, options: IngestOptions = {}) {
+	if (yield* (yield* PrintRepository).isRemoved(id)) return { status: 'removed', id } satisfies IngestOutcome;
 	const raw = yield* RawStore;
 	const text = yield* raw.get(rawKey(id));
 	if (text === null) return yield* Effect.fail(new RecordParseError({ id, cause: 'not in raw store' }));

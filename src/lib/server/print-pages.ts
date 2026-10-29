@@ -99,12 +99,20 @@ export const loadViewerPage = async (id: string, requested: string | null) => {
 	return { pages, path, page: data.page, render, tooltip: tooltipData(data.page) };
 };
 
+/** Whether the print was taken down on request (`print_tombstones`, migration 0021): one primary-key read. */
+export const takenDown = async (id: string) =>
+	(await env.DB.prepare(`SELECT 1 AS hit FROM print_tombstones WHERE print_id = ? AND kind = 'takedown'`).bind(id).first()) !== null;
+
 /**
  * The print's document (`analysis/<id>.json`) read together with `alongside`, another R2 read; the
- * 404 page when there is no such print.
+ * 410 page when it was taken down on request, even if R2 still holds the document (a takedown cut short,
+ * or an ingest that raced it), else the 404 page when there is no such print. The tombstone is read
+ * alongside the R2 reads, so it adds one D1 read but no wait; it runs only when the page cache misses
+ * (hooks.server.ts answers hits before any load runs).
  */
 export const loadPrintDoc = async <T>(id: string, alongside: Promise<T>): Promise<[PrintDoc, T]> => {
-	const [doc, other] = await Promise.all([readPrintDoc(env.RAW, id), alongside]);
+	const [doc, other, removed] = await Promise.all([readPrintDoc(env.RAW, id), alongside, takenDown(id)]);
+	if (removed) error(410, 'Removed on request');
 	if (!doc) error(404, 'Print not found');
 	return [doc, other];
 };

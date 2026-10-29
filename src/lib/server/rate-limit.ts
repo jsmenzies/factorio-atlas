@@ -1,8 +1,9 @@
 /**
  * Per-visitor request limits, run from hooks.server.ts after the /admin guard, so they cover pages
- * and their `__data.json` alike. Two Workers Rate Limiting bindings (wrangler.jsonc `ratelimits`,
- * provisioned by alchemy.run.ts): every request counts towards PAGE_LIMIT, and searches (the home
- * route with a query string, and a quality chip's counts) towards SEARCH_LIMIT as well. Counts are kept per Cloudflare location
+ * and their `__data.json` alike. Workers Rate Limiting bindings (wrangler.jsonc `ratelimits`,
+ * provisioned by alchemy.run.ts): every request counts towards PAGE_LIMIT, searches (the home
+ * route with a query string, and a quality chip's counts) towards SEARCH_LIMIT as well, and sent
+ * removal requests towards REPORT_LIMIT. Counts are kept per Cloudflare location
  * and are approximate. The zone's WAF rule (alchemy.run.ts) stops floods before they reach the Worker.
  */
 
@@ -14,6 +15,7 @@ export interface Limiter {
 export interface Limiters {
 	PAGE_LIMIT?: Limiter;
 	SEARCH_LIMIT?: Limiter;
+	REPORT_LIMIT?: Limiter;
 }
 
 /**
@@ -48,12 +50,19 @@ const UNLIMITED_ROUTES = new Set(['/prints/[id]/render/[...file]', '/sprites/[..
  */
 export const isSearch = (routeId: string | null, url: URL) => (routeId === '/' && url.search.length > 1) || routeId === '/quality-levels';
 
+/** Sending a removal request (the form's POST). */
+export const isReport = (routeId: string | null, method: string) => routeId === '/prints/[id]/remove' && method === 'POST';
+
 /** Null when the request may go on, else the 429 to send. No limiter (local dev), no client IP or a file route: never limited. */
 export const rateLimited = async (request: Request, routeId: string | null, url: URL, limiters: Limiters) => {
 	const ip = request.headers.get('cf-connecting-ip');
 	if (!ip || (routeId !== null && UNLIMITED_ROUTES.has(routeId))) return null;
 	const key = visitorKey(ip);
-	const checks = [limiters.PAGE_LIMIT, isSearch(routeId, url) ? limiters.SEARCH_LIMIT : undefined];
+	const checks = [
+		limiters.PAGE_LIMIT,
+		isSearch(routeId, url) ? limiters.SEARCH_LIMIT : undefined,
+		isReport(routeId, request.method) ? limiters.REPORT_LIMIT : undefined
+	];
 	for (const limiter of checks) {
 		if (limiter && !(await limiter.limit({ key })).success) {
 			return new Response('Too many requests. Please wait a minute and try again.\n', {

@@ -24,6 +24,7 @@ import { OFFLINE_MAX_INFLATED_BYTES } from '#lib/server/pipeline/decode.js';
 import { applyPlan, planFailure, type IngestOptions, type IngestOutcome, type IngestPlan } from '#lib/server/pipeline/pipeline.js';
 import { RawStore, RawStoreR2 } from '#lib/server/pipeline/raw-store.js';
 import { loadIngestStates, PrintRepository, PrintRepositoryD1 } from '#lib/server/pipeline/repository.js';
+import { loadRemovedPrintIds } from '#lib/server/removal-blocks.js';
 import {
 	clearControl,
 	failureBucket,
@@ -198,8 +199,14 @@ const listing = await (async () => {
 	await target.dispose();
 	return fail(`✗ ${e instanceof Error ? e.message : String(e)}`);
 });
-const { records, targets } = listing;
+const { records } = listing;
 const { entries, label: source } = records;
+// Prints an approved removal blocks are never read or written (the database refuses any removed mid-run).
+const removed = await loadRemovedPrintIds(target.env.DB);
+const targets = listing.targets.filter((e) => !removed.has(e.id));
+if (targets.length < listing.targets.length) {
+	term.log(`removed on request: ${(listing.targets.length - targets.length).toLocaleString('en-US')} prints left out`);
+}
 
 if (stage === 'prod' && !flags.yes) {
 	if (!term.tty) {
@@ -384,6 +391,8 @@ const logFailure = (id: string, reason: string, tracked: boolean) =>
 const recordOutcome = (o: IngestOutcome) => {
 	run.done++;
 	if (o.status === 'skipped-failed') run.skipped_failed++;
+	// Removed while this run was going (the listing left out those removed before it started).
+	else if (o.status === 'removed') run.unchanged++;
 	else run[o.status]++;
 	if (o.status === 'failed') {
 		run.failures[failureBucket(o.reason)] = (run.failures[failureBucket(o.reason)] ?? 0) + 1;

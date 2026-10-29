@@ -13,22 +13,22 @@ resources as prod, under its own names, and links to prod's sprites bucket.
 
 The stage gets:
 
-| Resource | Name                                  | Binding                      | Notes                                                                 |
-| -------- | ------------------------------------- | ---------------------------- | --------------------------------------------------------------------- |
-| Worker   | `factorio-prints-<stage>`             |                              | the SvelteKit app; preview URLs off                                   |
-| D1       | `factorio-prints-<stage>-db-<n>`      | `DB`                         | migrations from `./migrations` applied on deploy                      |
-| R2       | `factorio-prints-<stage>-raw`         | `RAW`                        | retained on destroy                                                   |
-| R2       | `factorio-prints-<stage>-renders`     | `RENDERS`                    | game renders; optional custom domain; retained on destroy             |
-| R2       | `factorio-prints-<stage>-screenshots` | `SCREENSHOTS`                | copies of the prints' screenshots; optional custom domain; retained   |
-| R2       | `factorio-prints-sprites`             | `SPRITES`                    | game icons, owned by prod; optional custom domain; retained           |
-| Assets   | `.svelte-kit/cloudflare`              | `ASSETS`                     | client files; honours the adapter's `.assetsignore`, `_headers`       |
-| Access   | `factorio-prints-<stage> admin`       |                              | Zero Trust application on `<domain>/admin*`; see "Admin page"         |
-| Cache    | the zone's cache rules                |                              | prod, with a sprites, renders or screenshots domain; see "Edge cache" |
-| Limits   | two Workers rate limits               | `PAGE_LIMIT`, `SEARCH_LIMIT` | per visitor; see "Rate limits"                                        |
-| Views    | `factorio_prints_<stage>_views`       | `VIEWS`                      | Analytics Engine dataset; see "Page views"                            |
-| Worker   | `factorio-prints-<stage>-views-cron`  |                              | daily views rollup into D1, with `ANALYTICS_API_TOKEN`                |
-| WAF      | the zone's rate-limiting rules        |                              | prod, with a site domain; see "Rate limits"                           |
-| Bots     | the zone's Bot Fight Mode             |                              | prod, with a site domain; see "Rate limits"                           |
+| Resource | Name                                  | Binding                                      | Notes                                                                 |
+| -------- | ------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------- |
+| Worker   | `factorio-prints-<stage>`             |                                              | the SvelteKit app; preview URLs off                                   |
+| D1       | `factorio-prints-<stage>-db-<n>`      | `DB`                                         | migrations from `./migrations` applied on deploy                      |
+| R2       | `factorio-prints-<stage>-raw`         | `RAW`                                        | retained on destroy                                                   |
+| R2       | `factorio-prints-<stage>-renders`     | `RENDERS`                                    | game renders; optional custom domain; retained on destroy             |
+| R2       | `factorio-prints-<stage>-screenshots` | `SCREENSHOTS`                                | copies of the prints' screenshots; optional custom domain; retained   |
+| R2       | `factorio-prints-sprites`             | `SPRITES`                                    | game icons, owned by prod; optional custom domain; retained           |
+| Assets   | `.svelte-kit/cloudflare`              | `ASSETS`                                     | client files; honours the adapter's `.assetsignore`, `_headers`       |
+| Access   | `factorio-prints-<stage> admin`       |                                              | Zero Trust application on `<domain>/admin*`; see "Admin page"         |
+| Cache    | the zone's cache rules                |                                              | prod, with a sprites, renders or screenshots domain; see "Edge cache" |
+| Limits   | three Workers rate limits             | `PAGE_LIMIT`, `SEARCH_LIMIT`, `REPORT_LIMIT` | per visitor; see "Rate limits" and "Removal requests"                 |
+| Views    | `factorio_prints_<stage>_views`       | `VIEWS`                                      | Analytics Engine dataset; see "Page views"                            |
+| Worker   | `factorio-prints-<stage>-views-cron`  |                                              | daily views rollup into D1, with `ANALYTICS_API_TOKEN`                |
+| WAF      | the zone's rate-limiting rules        |                                              | prod, with a site domain; see "Rate limits"                           |
+| Bots     | the zone's Bot Fight Mode             |                                              | prod, with a site domain; see "Rate limits"                           |
 
 Prod's D1 database is retained on destroy (a staging stage's would be deleted). `<n>` is the D1
 generation from `infra/databases.ts` (1 by default).
@@ -62,6 +62,9 @@ miniflare database. Never `wrangler deploy` with it.
    SCREENSHOTS_DOMAIN_PROD=screenshots.example.com
    ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com
    ADMIN_EMAIL=you@example.com
+   TURNSTILE_SITE_KEY=0x…
+   TURNSTILE_SECRET_KEY=0x…
+   CACHE_PURGE_TOKEN=…
    ALCHEMY_TELEMETRY_DISABLED=1
    ```
 
@@ -69,7 +72,8 @@ miniflare database. Never `wrangler deploy` with it.
    hostname is attached as a Worker custom domain and the `workers.dev` URL is turned off. Unset
    leaves domains alone (it never detaches one). `SPRITES_DOMAIN`, `RENDERS_DOMAIN_<STAGE>` and
    `SCREENSHOTS_DOMAIN_<STAGE>` are the sprites, renders and screenshots buckets' own hostnames: see
-   "Icons", "Edge cache" and "Screenshots".
+   "Icons", "Edge cache" and "Screenshots". The Turnstile keys and `CACHE_PURGE_TOKEN` are for
+   "Removal requests".
 
 5. **For CI only**, an API token (My Profile → API Tokens → Custom), scoped to the account:
    - Account → Workers Scripts: Edit; D1: Edit; Workers R2 Storage: Edit;
@@ -397,7 +401,7 @@ no request and `screenshots:flags` knows what is up. Images deleted on Imgur sin
 (`--recheck`) get a 'removed' manifest at the next upload, and their files are deleted a day later
 (cached pages may still name them); `screenshots:flags` then marks their rows 'removed'.
 
-### Removal requests
+### Screenshot removal requests
 
 The site footer links to a GitHub issue form ("Remove a screenshot"). To act on one:
 
@@ -411,6 +415,65 @@ writes a 'removed' manifest, records it in the stage's `screenshot_removals` tab
 row 'removed' (also for a print whose screenshot was never copied) and purges cached pages. Nothing shows it any more, nor Imgur's copy. Cloudflare's edge may
 still serve a deleted file at its old address: purge the addresses the script prints (Caching →
 Configuration → Custom Purge).
+
+## Removal requests
+
+Every print page links to a form (`/prints/<id>/remove`, noindex and disallowed in robots.txt) where
+anyone can ask for the print to be removed, with a reason, optional details and optional contact
+details. Requests wait in `/admin/reports` ("Admin page"); nothing happens to a print until an admin
+approves one. The form is guarded by Cloudflare Turnstile and the `REPORT_LIMIT` rate limit (5 sends
+per minute per visitor), and keeps at most 20 open requests per print. The daily cron Worker clears
+contact details and free text 30 days after a decision.
+
+**Approve** takes the print down at once, in the site Worker (`src/lib/server/takedown.ts`), in an
+order that never lets a page be cached as live again:
+
+1. `removal_blocks` (migration 0021) gets the print's id, its factorioprints id and, when it goes,
+   its screenshot's Imgur id, and a tombstone in `print_tombstones` makes its pages answer **410 Gone**
+   from then on, whatever R2 still holds. Every ingest checks the blocks: the backfill leaves blocked
+   prints out of its listing, and the database itself refuses a blocked print's `prints` row (a
+   trigger), so an ingest that was already running can't bring it back.
+2. RAW (analysis document first, then the archived record and viewer files) is deleted.
+3. Its D1 rows go (`prints`, the search index, `ingest_state`, `print_renders`).
+4. Everything under `<id>/` in RENDERS (renders and thumbnails) is deleted.
+5. The screenshot's files are deleted and its manifest says 'removed', unless another print uses the
+   same image (tick "Screenshot even if shared" to remove it anyway).
+6. The renders folder and the screenshot's files are purged from the edge cache, given
+   `CACHE_PURGE_TOKEN`.
+7. A page-cache bump, last.
+
+The request counts as done only when every step, the purge included, worked. Otherwise the decided list
+shows "Not finished" with the error and what is still to purge; "Run takedown again" finishes it and
+purges what earlier runs couldn't (the Free plan allows 5 purge requests a minute, so several approvals
+in a row can be refused for a minute). Without a purge token, purge the listed prefix and addresses by
+hand (Caching → Configuration → Custom Purge), then press "I purged these by hand".
+**Reject** only records the decision.
+
+The machine that renders keeps its own copies (render queue rows, renders and thumbnails on disk,
+screenshot copies). After approving, run there:
+
+```sh
+bun run removals --stage prod --dry-run
+bun run removals --stage prod          # asks before writing; --yes skips that
+```
+
+It copies prod's blocks into the local D1 (the backfill, render runs, `render:top`, `render:thumbs
+--upload` and `render:flags` skip blocked prints), deletes the deleted prints' local rows, folders and
+archived records, deletes any render a running upload put back in prod's bucket (once per deleted
+print: it remembers what it swept, so a run with nothing new says "nothing to do"), and takes the
+screenshots down in the screenshot run state and the upload ledger. It refuses while a render run is
+live, and needs the R2 API token ("Uploading renders"). `--json` puts the result on stdout as JSON
+(the last line) and everything else on stderr. The deployed database must have migration 0021.
+
+**Setup:**
+
+- **Turnstile:** in the dashboard, Turnstile → Add widget, for the site's hostname, mode Managed. Put
+  its keys in `.env` as `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY`; the deploy binds the secret.
+  Without both, the deploy warns and the form says requests aren't available (it is never left
+  unguarded). Locally, `wrangler.jsonc` has Cloudflare's always-passing test key.
+- **Edge purge:** an API token (My Profile → API Tokens → Custom) with **Zone → Cache Purge →
+  Purge**, limited to the zone of the renders and screenshots domains, as `CACHE_PURGE_TOKEN` in
+  `.env`. The deploy binds it with the zone's id (`CACHE_ZONE_ID`) when the stage has those domains.
 
 ## Page views
 
@@ -523,10 +586,11 @@ screenshots, Imgur rechecks, author lookups and the 5% guard) are saved in the l
 `/admin/settings` under `bun run dev`; without them the defaults apply. `/admin` under `bun run dev`
 is the Overview: what the next update would do, Update everything, the figures and past updates.
 
-## Admin page (`/admin`, `/admin/pipeline`, `/admin/render`)
+## Admin page (`/admin`, `/admin/pipeline`, `/admin/render`, `/admin/reports`)
 
 `/admin` is the only private part of the site: backfill runs (`/admin/pipeline`) and render runs
-(`/admin/render`), with pause, resume and stop. Render runs and updates happen on the machine that
+(`/admin/render`), with pause, resume and stop, and removal requests to approve or reject
+(`/admin/reports`, "Removal requests"). Render runs and updates happen on the machine that
 renders and are recorded in its local D1, so `/admin/render` shows them under `bun run dev`, where
 it can also start a batch, and `/admin` is the Overview and `/admin/settings` the update's settings
 (deployed, `/admin` goes to `/admin/pipeline` and the settings page is a 404). Two locks, both

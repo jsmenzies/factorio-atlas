@@ -11,6 +11,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
+import { loadRemovedPrintIds } from '#lib/server/removal-blocks.js';
 import { fileStamp } from './source.js';
 import { inBatches, retrying } from './queue.js';
 
@@ -188,6 +189,9 @@ export function favoritesDb(db: D1Database) {
 	return {
 		rows: () => retrying('favourites', async () => (await db.prepare('SELECT * FROM render_favorites').all<FavoriteRow>()).results),
 
+		/** Prints removed on request (the local copy of `removal_blocks`, from `bun run removals`). */
+		removed: () => retrying('removal blocks', () => loadRemovedPrintIds(db)),
+
 		meta: <T>(key: string) =>
 			retrying('render meta', async () => {
 				const r = await db.prepare('SELECT value FROM render_meta WHERE key = ?').bind(key).first<{ value: string }>();
@@ -235,7 +239,7 @@ export function favoritesDb(db: D1Database) {
 
 export type FavoritesDb = ReturnType<typeof favoritesDb>;
 
-/** Rank every print in the source and store the top `n` (see planRefresh). */
+/** Rank every print in the source but those removed on request, and store the top `n` (see planRefresh). */
 export async function refreshFavorites(
 	fdb: FavoritesDb,
 	source: { label: string; ids(): Promise<string[]>; file(id: string): string },
@@ -244,7 +248,8 @@ export async function refreshFavorites(
 	now = Date.now()
 ): Promise<FavoritesMeta> {
 	const t0 = Date.now();
-	const ids = await source.ids();
+	const removed = await fdb.removed();
+	const ids = (await source.ids()).filter((id) => !removed.has(id));
 	const { counts, parsed } = await readFavorites(ids, (id) => source.file(id), cacheFile);
 	const ranked = rankFavorites(counts);
 	const rows = planRefresh(await fdb.rows(), ranked, n, now);

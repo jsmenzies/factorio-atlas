@@ -5,17 +5,20 @@
 
 	/**
 	 * Every error, in the site's look and with its real status code. A print we don't have may be
-	 * newer than our last import (or removed on request), so it links to the same print on
-	 * factorioprints.com; anything else gets a way back to search.
+	 * newer than our last import, so it links to the same print on factorioprints.com; one taken down
+	 * on request answers 410 and links only back to search, as does anything else.
 	 */
 	const printId = $derived(page.status === 404 ? /^\/prints\/([^/]+)\/?$/.exec(page.url.pathname)?.[1] : undefined);
+	const removed = $derived(page.status === 410);
 	const serverError = $derived(page.status >= 500);
 	// Over the rate limit (lib/server/rate-limit.ts); seen here when it hits an in-app navigation.
 	const tooMany = $derived(page.status === 429);
 	const heading = $derived(
 		printId
 			? 'This print isn’t on Blueprint Atlas yet'
-			: serverError
+			: removed
+				? 'This print was removed'
+				: serverError
 				? 'Something went wrong on our side'
 				: tooMany
 					? 'Too many requests'
@@ -24,7 +27,7 @@
 </script>
 
 <PageMeta
-	title="{serverError || tooMany ? 'Error' : 'Not found'} · Blueprint Atlas"
+	title="{serverError || tooMany ? 'Error' : removed ? 'Removed' : 'Not found'} · Blueprint Atlas"
 	description="{heading}. Search Factorio blueprints by what they make, with high-res renders."
 	noindex
 />
@@ -36,6 +39,8 @@
 		<p class="text-stone-400">
 			It may be newer than our last copy of factorioprints.com, or it was removed. The original may still be there.
 		</p>
+	{:else if removed}
+		<p class="text-stone-400">It was taken down at the request of its author or owner.</p>
 	{:else if serverError}
 		<p class="text-stone-400">Try again in a moment.</p>
 	{:else if tooMany}

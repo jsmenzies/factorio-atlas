@@ -89,6 +89,9 @@
 						>{print.author_name ?? 'unknown author'}</a
 					>{:else}an unknown author{/if}.
 			</p>
+			<p class="text-sm text-stone-400">
+				Made it, or shouldn't it be here? <a class="text-amber-400 underline" href="/prints/{print.id}/remove" rel="nofollow">Request removal</a>
+			</p>
 			{@render facts(source)}
 		</section>
 	

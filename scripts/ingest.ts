@@ -88,6 +88,7 @@ const counts: Record<IngestOutcome['status'], number> = {
 	failed: 0,
 	'skipped-failed': 0,
 	unchanged: 0,
+	removed: 0,
 	favorites: 0,
 	viewer: 0,
 	reindexed: 0
@@ -116,6 +117,7 @@ const report = (o: IngestOutcome) =>
 			);
 		} else if (o.status === 'failed') yield* Effect.logWarning(`failed ${o.id}: ${o.reason} (tracked; skipped until it changes)`);
 		else if (o.status === 'favorites') yield* Effect.logInfo(`favourites only ${o.id}: ${o.favorites}`);
+		else if (o.status === 'removed') yield* Effect.logWarning(`removed ${o.id}: blocked by an approved removal, nothing stored`);
 		else if (o.status === 'viewer') {
 			viewerFiles += o.viewerFiles;
 			yield* Effect.logInfo(`viewer files only ${o.id}: ${o.viewerFiles} objects`);

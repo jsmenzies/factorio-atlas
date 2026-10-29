@@ -171,11 +171,16 @@ async function runUpload(target: 'local' | 'prod') {
 	const { getPlatformProxy } = await import('wrangler');
 	const { openStore, deleteGraceMs } = await import('./render/target.js');
 	const { thumbUploadDb, uploadThumbs } = await import('./render/thumbs-upload.js');
-	const list = ids ?? (await subdirs(THUMBS));
 	const proxy = await getPlatformProxy<Env>({ persist: true });
 	let code = 0;
 	let thumbDeletes = 0;
 	try {
+		// Never a print removed on request (the local copy of `removal_blocks`, from `bun run removals`).
+		const { loadRemovedPrintIds } = await import('#lib/server/removal-blocks.js');
+		const removed = await loadRemovedPrintIds(proxy.env.DB);
+		const wanted = ids ?? (await subdirs(THUMBS));
+		const list = wanted.filter((id) => !removed.has(id));
+		if (list.length < wanted.length) console.log(`removed on request: ${wanted.length - list.length} prints left out`);
 		const graceMs = deleteGraceMs(process.env.RENDER_DELETE_GRACE_S, target);
 		const store = (await openStore(target, proxy.env.RENDERS))!;
 		const started = performance.now();

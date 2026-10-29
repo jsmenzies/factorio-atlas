@@ -105,6 +105,7 @@ describe('sitemap', () => {
 			'/?render=1&makes=item%3Arocket-fuel',
 			'/prints/-LI0gc-a-2_VLWR-tx1d/render?page=0',
 			'/prints/-LI0gc-a-2_VLWR-tx1d/render?page=0&from=overview',
+			'/prints/-LI0gc-a-2_VLWR-tx1d/remove',
 			'/prints/-LI0gc-a-2_VLWR-tx1d/string?page=1',
 			'/prints/-LI0gc-a-2_VLWR-tx1d/viewer',
 			'/quality-levels?uses=entity%3Abeacon'

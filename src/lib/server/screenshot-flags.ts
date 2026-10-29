@@ -81,20 +81,30 @@ export function shotFlagStatements(db: D1Database, plan: ShotFlagPlan, now = Dat
 	];
 }
 
+/** An image's `screenshots` row set to 'removed' (inserted when it has none, so cards stop showing Imgur's copy). */
+export const removedRowStatement = (db: D1Database, image: string, now = Date.now()) =>
+	db
+		.prepare(`INSERT INTO screenshots (image_id, state, v, ext, w, h, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ${UPSERT}`)
+		.bind(...values(image, { state: 'removed' }, now));
+
 /**
- * One removal on request: the `screenshot_removals` record and a 'removed' row (also for an image
- * with no row yet, so cards stop showing Imgur's copy), then a new page-cache version.
+ * One removal on request, without the page-cache bump: the `screenshot_removals` record (so no later
+ * fetch, upload or flags run brings it back) and a 'removed' row. A takedown runs these and bumps once
+ * at its very end (takedown.ts).
  */
-export const removalStatements = (db: D1Database, image: string, print: string | null, reason: string | null, now = Date.now()) => [
+export const removalRecordStatements = (db: D1Database, image: string, print: string | null, reason: string | null, now = Date.now()) => [
 	db
 		.prepare(
 			`INSERT INTO screenshot_removals (image_id, print_id, reason, removed_at) VALUES (?, ?, ?, ?)
 			ON CONFLICT (image_id) DO UPDATE SET reason = excluded.reason, removed_at = excluded.removed_at`
 		)
 		.bind(image, print, reason, now),
-	db
-		.prepare(`INSERT INTO screenshots (image_id, state, v, ext, w, h, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ${UPSERT}`)
-		.bind(...values(image, { state: 'removed' }, now)),
+	removedRowStatement(db, image, now)
+];
+
+/** `removalRecordStatements`, then a new page-cache version (`bun run screenshots:remove`). */
+export const removalStatements = (db: D1Database, image: string, print: string | null, reason: string | null, now = Date.now()) => [
+	...removalRecordStatements(db, image, print, reason, now),
 	bumpPageVersion(db, now)
 ];
 
