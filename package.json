@@ -77,6 +77,9 @@
 	"engines": {
 		"bun": ">=1.4.3"
 	},
+	"patchedDependencies": {
+		"@rickyzhangca/fpsr@0.0.3": "patches/@rickyzhangca%2Ffpsr@0.0.3.patch"
+	},
 	"trustedDependencies": [
 		"skia-canvas"
 	]

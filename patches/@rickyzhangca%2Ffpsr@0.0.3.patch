@@ -1,0 +1,40 @@
+diff --git a/dist/tiled-draw-list-F3g0ljEC.js b/dist/tiled-draw-list-F3g0ljEC.js
+index 5faefda78b08ef604549e482847ca38f9ecf38e5..6a4c9c678380baffe629402e59639082dec82e67 100644
+--- a/dist/tiled-draw-list-F3g0ljEC.js
++++ b/dist/tiled-draw-list-F3g0ljEC.js
+@@ -2479,8 +2479,16 @@ function hashTile(x, y) {
+ 	h = Math.imul(h ^ h >>> 13, 1274126177);
+ 	return (h ^ h >>> 16) >>> 0;
+ }
++/**
++* Factorio 2.1's landing-pad unloading bay is a cargo bay whose collision box adds a chute tile; it joins
++* the connection grid with its `connectable_box`, a centred 4x4 square (so the same in every direction).
++*/
++const CONNECTABLE_BOXES = { "landing-pad-unloading-bay": [[-1.9, -1.9], [1.9, 1.9]] };
++function connectableBox(entity, def) {
++	return CONNECTABLE_BOXES[entity.name] ?? def.collisionBox;
++}
+ function footprintCells(entity, def) {
+-	const [[x1, y1], [x2, y2]] = def.collisionBox;
++	const [[x1, y1], [x2, y2]] = connectableBox(entity, def);
+ 	const minX = Math.floor(entity.position.x + x1 + 1e-6);
+ 	const maxX = Math.ceil(entity.position.x + x2 - 1e-6) - 1;
+ 	const minY = Math.floor(entity.position.y + y1 + 1e-6);
+@@ -2557,7 +2565,7 @@ function buildConnectables(bp, db, preferPlatform) {
+ 	for (const entity of bp.entities ?? []) {
+ 		const def = db.entities[entity.name];
+ 		if (!def || !CONNECTABLE_PROTOS.has(def.protoType) && !CONNECTABLE_PROTOS.has(entity.name)) continue;
+-		if (entity.name !== "space-platform-hub" && entity.name !== "cargo-bay" && entity.name !== "cargo-landing-pad") continue;
++		if (entity.name !== "space-platform-hub" && entity.name !== "cargo-bay" && entity.name !== "cargo-landing-pad" && entity.name !== "landing-pad-unloading-bay") continue;
+ 		const connections = pickConnections(def, preferPlatform);
+ 		if (!connections) continue;
+ 		const cells = footprintCells(entity, def);
+@@ -2566,7 +2574,7 @@ function buildConnectables(bp, db, preferPlatform) {
+ 		let maxX = -Infinity;
+ 		let minY = Infinity;
+ 		let maxY = -Infinity;
+-		const [[x1, y1], [x2, y2]] = def.collisionBox;
++		const [[x1, y1], [x2, y2]] = connectableBox(entity, def);
+ 		minX = Math.floor(entity.position.x + x1 + 1e-6);
+ 		maxX = Math.ceil(entity.position.x + x2 - 1e-6) - 1;
+ 		minY = Math.floor(entity.position.y + y1 + 1e-6);
