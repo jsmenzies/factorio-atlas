@@ -38,9 +38,6 @@
 	<footer class="mx-auto max-w-7xl px-4 py-8 text-xs text-stone-500">
 		Factorio is a trademark of Wube Software Ltd. Not affiliated with Wube Software or factorioprints.com. Prints are mirrored from
 		<a class="underline" href="https://factorioprints.com">factorioprints.com</a> and credited to their authors. Screenshots are copies
-		of the authors' Imgur uploads:
-		<a class="underline" href="https://github.com/jsmenzies/factorio-atlas/issues/new?template=remove-screenshot.yml" rel="nofollow"
-			>ask for one to be removed</a
-		>.
+		of the authors' Imgur uploads. <a class="whitespace-nowrap underline" href="/privacy">Privacy</a>
 	</footer>
 </div>
