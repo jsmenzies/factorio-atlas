@@ -5,11 +5,11 @@ import { DLC_MODS, gameData as defaultGameData, type GameData, type SurfaceCondi
  * Bump when the analyzer's output changes so stored prints can be re-analyzed
  * from the raw store without re-downloading.
  */
-export const ANALYZER_VERSION = 9;
+export const ANALYZER_VERSION = 10;
 
 // Game facts (names, sizes, recipes, surface conditions) come from `game-data.ts`, pinned to
-// one game version. Older prints are renamed to 2.0 names first; newer ones may have names
-// the data doesn't know yet, which is why "unknown" only implies "modded" for 2.0 prints.
+// one game version. Older prints are renamed to its names first; 1.x and newer prints may have
+// names the data doesn't know, which is why "unknown" only implies "modded" from 2.0 up to it.
 
 /** Machines that strongly suggest which planet a design is for, though they can be placed elsewhere. */
 const PLANET_HINTS: Record<string, string> = {
@@ -161,7 +161,7 @@ export interface NodeAnalysis {
 	/** Bounding box of entity collision boxes and tiles. Unknown (modded) entities count as 1×1. */
 	width: number | null;
 	height: number | null;
-	/** Entity, recipe, module and tile names, renamed to 2.0 names for pre-2.0 prints. */
+	/** Entity, recipe, module and tile names, renamed to the game data's names for older prints. */
 	entities: Counts;
 	/** `entities` split by quality: `name@quality` above normal, plain `name` for normal (as `modules`). */
 	entitiesByQuality: Counts;
@@ -441,11 +441,11 @@ const nameplateRates = (machines: Machine[], beacons: Beacon[], major: number, g
 	);
 };
 
-/** Renames pre-2.0 names to their 2.0 names; 2.0+ names pass through. */
+/** Renames names from the version a page was saved in (no version: 2.0) to the game data's names. */
 const renamer = (v: Version | null, game: GameData) => (kind: 'entity' | 'item' | 'recipe' | 'tile') => (n: string) =>
-	(v?.[0] ?? 2) < 2 ? game.migrate(kind, n) : n;
+	game.migrate(kind, n, v ? [v[0], v[1]] : [2, 0]);
 
-/** A blueprint's, book's or planner's icons as `type:name`, item names renamed for pre-2.0 prints. */
+/** A blueprint's, book's or planner's icons as `type:name`, item names renamed for older prints. */
 const iconSignals = (icons: unknown, renameItem: (n: string) => string) =>
 	asArray(icons).map((ic) => {
 		const sig = (ic.signal ?? {}) as Json;
@@ -800,11 +800,27 @@ export const analyzePrint = (decoded: unknown, game: GameData = defaultGameData)
 
 	const versions = nodes.map((n) => n.gameVersion).filter((v): v is string => !!v);
 	const gameVersion = nodes[0]?.gameVersion ?? versions[0] ?? null;
-	const [gameMajor, gameMinor] = gameVersion ? gameVersion.split('.').map(Number) : [null, null];
+	const gameMajor = gameVersion ? Number(gameVersion.split('.')[0]) : null;
 	const is2x = (gameMajor ?? 0) >= 2;
-	// "Unknown means modded" only holds when the print matches the game data's version.
+	// "Unknown means modded" only holds for versions whose names the game data covers: 2.0 (renamed by
+	// the migrations to the data's names) up to the data's own version. 1.x and newer pages may use
+	// names that changed, so a name counts only when a covered page uses it.
 	const [dataMajor, dataMinor] = game.gameVersion.split('.').map(Number);
-	const sameVersionAsData = gameMajor === dataMajor && gameMinor === dataMinor;
+	const covers = (v: string | null) => {
+		if (!v) return false;
+		const [major, minor] = v.split('.').map(Number);
+		return major >= 2 && (major < dataMajor || (major === dataMajor && minor <= dataMinor));
+	};
+	const coveredNames = new Set(
+		nodes
+			.filter((n) => covers(n.gameVersion ?? gameVersion))
+			.flatMap((n) => [
+				...Object.keys(n.entities),
+				...Object.keys(n.recipes),
+				...Object.keys(n.modules).map((m) => m.split('@')[0]),
+				...Object.keys(n.tiles)
+			])
+	);
 
 	const names = Object.keys(entities);
 	const moduleNames = [...new Set(Object.keys(modules).map((m) => m.split('@')[0]))];
@@ -859,7 +875,7 @@ export const analyzePrint = (decoded: unknown, game: GameData = defaultGameData)
 	for (const n of unknownNames) {
 		const mod = MOD_PREFIXES.find(([re]) => re.test(n))?.[1];
 		if (mod) mods.add(mod);
-		else if (sameVersionAsData) mods.add('unknown-mod');
+		else if (coveredNames.has(n)) mods.add('unknown-mod');
 	}
 
 	const belts = Object.fromEntries(Object.entries(entities).filter(([n]) => isBelt(n)));
@@ -873,12 +889,12 @@ export const analyzePrint = (decoded: unknown, game: GameData = defaultGameData)
 	};
 
 	const limits = [
-		`game data is ${game.gameVersion} + Space Age; pre-2.0 prints are renamed to 2.0 names and use 2.0 recipes`,
+		`game data is ${game.gameVersion} + Space Age; older prints are renamed to its names and use its recipes`,
 		'rates are nameplate: full input supply, no research productivity; mining drills are not counted',
 		'unknown names are matched to mods by name prefix only'
 	];
 	if (furnacesWithoutRecipe > 0) limits.push(`${furnacesWithoutRecipe} furnaces store no recipe, so their smelting is not counted`);
-	if (unknownNames.length > 0 && !sameVersionAsData)
+	if (unknownNames.some((n) => !coveredNames.has(n)))
 		limits.push(`print is from ${gameVersion}, so some unknown names may be version changes rather than mods`);
 
 	return {

@@ -53,10 +53,10 @@ const MIGRATES: Partial<Record<IconKind, 'entity' | 'item' | 'recipe' | 'tile'>>
 	tile: 'tile'
 };
 
-/** The file for an icon, `<type>/<name>`; pre-2.0 names are tried under their 2.0 name too. */
+/** The file for an icon, `<type>/<name>`; old names are tried under their current name too. */
 export const resolveIcon = (kind: IconKind, name: string): string | undefined => {
 	const migrates = MIGRATES[kind];
-	const renamed = migrates ? gameData.migrate(migrates, name) : name;
+	const renamed = migrates ? gameData.migrate(migrates, name, [0, 0]) : name;
 	for (const n of renamed === name ? [name] : [name, renamed]) {
 		for (const [type, file] of candidates(kind, n)) if (have.get(type)?.has(file)) return `${type}/${file}`;
 	}

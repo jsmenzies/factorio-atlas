@@ -29,7 +29,7 @@ export type Kind =
 export interface NameInfo {
 	/** As written in the blueprint. */
 	name: string;
-	/** 2.0 prototype name the size and category came from (differs for renamed 1.x names). */
+	/** Current prototype name the size and category came from (differs for renamed older names). */
 	proto: string;
 	/** Prototype type, e.g. `assembling-machine`; null when unknown. */
 	type: string | null;

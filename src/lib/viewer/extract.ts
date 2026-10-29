@@ -10,17 +10,17 @@ type Json = Record<string, unknown>;
 type Version = [number, number, number, number];
 
 export interface ProtoInfo {
-	/** Prototype name after 1.x → 2.0 renames. */
+	/** Prototype name after renames to the game data's names. */
 	proto: string;
 	type: string | null;
 	size: [number, number];
 }
 
 export interface Catalog {
-	/** Look up an entity; `major` < 2 applies the 1.x → 2.0 renames first. Null when unknown. */
-	entity: (name: string, major: number) => ProtoInfo | null;
+	/** Look up an entity, renamed from the version it was saved in (`[major, minor]`) first. Null when unknown. */
+	entity: (name: string, saved: readonly [number, number]) => ProtoInfo | null;
 	/** Whether a recipe has a fluid ingredient or product. */
-	recipeUsesFluid: (recipe: string, major: number) => boolean;
+	recipeUsesFluid: (recipe: string, saved: readonly [number, number]) => boolean;
 }
 
 const asArray = (v: unknown): Json[] => (Array.isArray(v) ? (v as Json[]) : []);
@@ -231,13 +231,14 @@ export const extractPage = (decoded: unknown, path: string, catalog: Catalog): C
 	if (!node || node.kind !== 'blueprint') return null;
 	const bp = node.body;
 	const major = node.version?.[0] ?? 2;
+	const saved = [major, node.version?.[1] ?? 0] as const;
 
 	const names: NameInfo[] = [];
 	const nameIndex = new Map<string, number>();
 	const intern = (name: string): number => {
 		const known = nameIndex.get(name);
 		if (known !== undefined) return known;
-		const p = catalog.entity(name, major);
+		const p = catalog.entity(name, saved);
 		const type = p?.type ?? null;
 		const kind = (type && KIND_BY_TYPE[type]) || (p ? 'box' : kindFromName(name));
 		const [w, h] = kind === 'vehicle' ? ROLLING_STOCK_SIZE : (p?.size ?? [1, 1]);
@@ -259,7 +260,7 @@ export const extractPage = (decoded: unknown, path: string, catalog: Catalog): C
 		const recipe = str(e.recipe);
 		if (recipe) {
 			extra.recipe = recipe;
-			if (catalog.recipeUsesFluid(recipe, major)) extra.fluid = 1;
+			if (catalog.recipeUsesFluid(recipe, saved)) extra.fluid = 1;
 		}
 		const q = str(e.quality);
 		if (q && q !== 'normal') extra.quality = q;

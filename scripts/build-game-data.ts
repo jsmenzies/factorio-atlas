@@ -3,22 +3,24 @@
  * own data dump. Nothing is parsed from Lua: the game runs the data stage and dumps the result.
  *
  * Into one folder (by default the user data dir's `script-output/`), with only the official mods
- * enabled (base, elevated-rails, quality, space-age):
+ * enabled (base, elevated-rails, recycler, quality, space-age; recycler is 2.1's, split from quality):
  *
  *   factorio --dump-data                 # data-raw-dump.json
  *   factorio --dump-prototype-locale     # <type>-locale.json: English names
  *
- * The dump doesn't say which mod adds a prototype, so run `factorio --dump-data` three more times,
- * with only base enabled, base + elevated-rails and base + quality, and save each result next to
- * the first as data-raw-dump-base.json, data-raw-dump-elevated-rails.json and
+ * The dump doesn't say which mod adds a prototype, so run `factorio --dump-data` four more times,
+ * with only base enabled, base + elevated-rails, base + recycler and base + recycler + quality
+ * (quality needs recycler), and save each result next to the first as data-raw-dump-base.json,
+ * data-raw-dump-elevated-rails.json, data-raw-dump-recycler.json and
  * data-raw-dump-quality.json. (A `--config` whose `write-data` is a scratch folder and a
  * `--mod-directory` holding just a mod-list.json keep these runs away from your saves and mods.)
  * Then:
  *
  *   bun run game-data <script-output dir> <factorio data dir>
  *
- * The data dir is the game's own `data/` folder: `base/info.json` gives the game version and
- * `base/migrations/` the 1.x→2.0 renames. Writes data/game/game-data-<version>.json.
+ * The data dir is the game's own `data/` folder: `base/info.json` gives the game version,
+ * `base/migrations/` the 1.x→2.0 renames and `space-age/migrations/` the 2.0→2.1 ones. Writes
+ * data/game/game-data-<version>.json.
  */
 import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -90,10 +92,11 @@ const byKey = <T>(o: Record<string, T>) => Object.fromEntries(Object.entries(o).
 
 // ---- Mod of origin -------------------------------------------------------------------------------
 // A prototype comes from the first mod, in load order, whose partial dump has it, even when a later
-// mod changed it; space-age, which needs the other three, adds the rest.
+// mod changed it; space-age, which needs the other four, adds the rest. The quality dump holds
+// recycler's prototypes too (quality needs it), so recycler is looked up first.
 
 const partial = await Promise.all(
-	(['base', 'elevated-rails', 'quality'] as const).map(async (mod) => ({
+	(['base', 'elevated-rails', 'recycler', 'quality'] as const).map(async (mod) => ({
 		mod,
 		raw: await readJson<Raw>(join(outputDir, `data-raw-dump-${mod}.json`))
 	}))
@@ -120,7 +123,11 @@ for (const p of protos(...ENTITY_TYPES)) {
 	const box = p.collision_box as [[number, number], [number, number]] | undefined;
 	if (box) {
 		const [[x1, y1], [x2, y2]] = box;
-		const size: [number, number] = [Math.max(1, Math.ceil(x2 - x1)), Math.max(1, Math.ceil(y2 - y1))];
+		// The landing pad's unloading bay (a cargo bay) has its chute in its collision box; it stands on 4×4 tiles.
+		const onTiles = p.type === 'cargo-bay' && p.tile_width !== undefined && p.tile_height !== undefined;
+		const size: [number, number] = onTiles
+			? [Number(p.tile_width), Number(p.tile_height)]
+			: [Math.max(1, Math.ceil(x2 - x1)), Math.max(1, Math.ceil(y2 - y1))];
 		if (size[0] > 1 || size[1] > 1) e.size = size;
 	}
 	const surface = conditions(p);
@@ -140,7 +147,7 @@ for (const p of protos(...ENTITY_TYPES)) {
 const tiles = Object.fromEntries(protos('tile').map((p) => [p.name, modOf(p)]));
 
 // A name can be several prototypes (an item, its entity and its recipe); the earliest mod wins.
-const MOD_ORDER = ['base', 'elevated-rails', 'quality', 'space-age'];
+const MOD_ORDER = ['base', 'elevated-rails', 'recycler', 'quality', 'space-age'];
 const names: Record<string, string> = {};
 for (const p of protos(...ENTITY_TYPES, ...ITEM_TYPES, 'fluid', ...OTHER_NAMED_TYPES)) {
 	const mod = modOf(p);
@@ -166,21 +173,28 @@ interface Product {
 	amount?: number;
 	amount_min?: number;
 	amount_max?: number;
+	/** 2.0's chance; 2.1 calls it `independent_probability`. */
 	probability?: number;
+	independent_probability?: number;
+	/** 2.1: one roll shared by the recipe's results, each getting its own slice of it (uranium-235, -238). */
+	shared_probability?: { min: number; max: number };
 	extra_count_fraction?: number;
 }
+const chance = (r: Product) =>
+	r.probability ?? r.independent_probability ?? (r.shared_probability ? r.shared_probability.max - r.shared_probability.min : 1);
 /** Expected amount per craft: item amounts are whole (the game drops the fraction) plus `extra_count_fraction`. */
 const expected = (r: Product) => {
 	const base = r.amount ?? ((r.amount_min ?? 0) + (r.amount_max ?? 0)) / 2;
 	const whole = r.type === 'item' && r.amount !== undefined ? Math.floor(base) : base;
-	return num((whole + (r.extra_count_fraction ?? 0)) * (r.probability ?? 1));
+	return num((whole + (r.extra_count_fraction ?? 0)) * chance(r));
 };
 
 const recipes: GameDataFile['recipes'] = {};
 for (const p of protos('recipe')) {
 	const surface = conditions(p);
 	recipes[p.name] = {
-		category: (p.category as string | undefined) ?? 'crafting',
+		// 2.1 lists every category a recipe can be made in; 2.0 had one. The game's default is crafting.
+		categories: list<string>(p.categories).length ? list<string>(p.categories) : [(p.category as string | undefined) ?? 'crafting'],
 		time: num(p.energy_required ?? 0.5),
 		productivity: p.allow_productivity === true,
 		ingredients: list<Product>(p.ingredients).map((i) => [i.name, num(i.amount)]),
@@ -282,7 +296,7 @@ const native = Object.fromEntries(
 // does (Gleba's iron bacteria spoil into iron ore).
 const crafted = new Set([
 	...Object.values(recipes)
-		.filter((r) => r.category !== 'recycling' && r.category !== 'crushing')
+		.filter((r) => !r.categories.some((c) => c === 'recycling' || c === 'crushing'))
 		.flatMap((r) => r.results.map(([n]) => n)),
 	...items.flatMap((p) => (typeof p.spoil_result === 'string' ? [p.spoil_result] : []))
 ]);
@@ -295,8 +309,9 @@ for (const [planet, found] of Object.entries(native)) {
 for (const s of Object.keys(surfaces)) planetResources[s] ??= [];
 
 // ---- Rename migrations ---------------------------------------------------------------------------
-// Applied in the game's order (migrations.txt) to pre-2.0 prints only. 0.17 renamed the science
-// packs, but its migration files no longer ship with 2.0, so that step is written out here.
+// Applied in order, each to names saved before its `before` version. Base's files, in the game's
+// order (migrations.txt), rename 1.x names for pre-2.0 prints. 0.17 renamed the science packs, but
+// its migration files no longer ship with 2.0, so that step is written out here.
 
 const science017 = {
 	'science-pack-1': 'automation-science-pack',
@@ -305,30 +320,38 @@ const science017 = {
 	'high-tech-science-pack': 'utility-science-pack'
 };
 const migrations: GameDataFile['migrations'] = [
-	{ file: '0.17.0 (science pack renames)', entity: {}, item: science017, recipe: science017, tile: {} }
+	{ file: '0.17.0 (science pack renames)', before: '2.0', entity: {}, item: science017, recipe: science017, tile: {} }
 ];
+const migrationFile = async (dir: string, f: string, before: string) => {
+	const m = await readJson<Record<string, [string, string][]>>(join(dir, f));
+	const pick = (k: string) => Object.fromEntries(m[k] ?? []);
+	migrations.push({ file: f, before, entity: pick('entity'), item: pick('item'), recipe: pick('recipe'), tile: pick('tile') });
+};
 const migDir = join(dataDir, 'base', 'migrations');
 const migOrder = (await readFile(join(migDir, 'migrations.txt'), 'utf8')).split(/\r?\n/).map((l) => l.trim());
-for (const f of migOrder.filter((f) => f.endsWith('.json') && existsSync(join(migDir, f)))) {
-	const m = await readJson<Record<string, [string, string][]>>(join(migDir, f));
-	const pick = (k: string) => Object.fromEntries(m[k] ?? []);
-	migrations.push({ file: f, entity: pick('entity'), item: pick('item'), recipe: pick('recipe'), tile: pick('tile') });
-}
+for (const f of migOrder.filter((f) => f.endsWith('.json') && existsSync(join(migDir, f)))) await migrationFile(migDir, f, '2.0');
 // 1.1 rails load as 2.0's legacy rails; the game does that itself, with no migration file.
 migrations.push({
 	file: '2.0 legacy rails',
+	before: '2.0',
 	entity: { 'straight-rail': 'legacy-straight-rail', 'curved-rail': 'legacy-curved-rail' },
 	item: {},
 	recipe: {},
 	tile: {}
 });
+// Space Age's 2.1 renames, for prints saved before 2.1 (many 2.0 prints use molten-iron, now
+// iron-ore-melting). Its other files rename names from before Space Age's release, which no released
+// print uses, so they're left out.
+const SPACE_AGE_2_1 = ['ore-melting.json', 'tree-seed.json', 'cargo-bay-that-allows-inserters-to-remove-items.json'];
+const saDir = join(dataDir, 'space-age', 'migrations');
+for (const f of SPACE_AGE_2_1.filter((f) => existsSync(join(saDir, f)))) await migrationFile(saDir, f, '2.1');
 
 // ---- Write ---------------------------------------------------------------------------------------
 
 const out: GameDataFile = {
 	gameVersion,
 	sources: {
-		factorio: `Factorio ${gameVersion} --dump-data and --dump-prototype-locale, official mods (base, elevated-rails, quality, space-age)`
+		factorio: `Factorio ${gameVersion} --dump-data and --dump-prototype-locale, official mods (base, elevated-rails, recycler, quality, space-age)`
 	},
 	surfaceDefaults: byKey(surfaceDefaults),
 	surfaces: byKey(surfaces),

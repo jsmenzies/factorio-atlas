@@ -1,4 +1,4 @@
-import file from '../../../../data/game/game-data-2.0.77.json';
+import file from '../../../../data/game/game-data-2.1.23.json';
 
 /** A surface property bound, e.g. `{property: 'pressure', min: 10}`. */
 export interface SurfaceCondition {
@@ -19,7 +19,8 @@ export interface GameDataFile {
 	recipes: Record<
 		string,
 		{
-			category: string;
+			/** Crafting categories it can be made in (2.1 allows several). */
+			categories: string[];
 			/** Seconds per craft at crafting speed 1. */
 			time: number;
 			productivity: boolean;
@@ -65,6 +66,8 @@ export interface GameDataFile {
 	entityItem: Record<string, string>;
 	migrations: {
 		file: string;
+		/** Applies to names saved in a game version before this one, `major.minor`. */
+		before: string;
 		entity: Record<string, string>;
 		item: Record<string, string>;
 		recipe: Record<string, string>;
@@ -73,16 +76,22 @@ export interface GameDataFile {
 }
 
 /** Mods that ship with the Space Age DLC. */
-export const DLC_MODS = new Set(['space-age', 'quality', 'elevated-rails']);
+export const DLC_MODS = new Set(['space-age', 'quality', 'recycler', 'elevated-rails']);
 
 export interface GameData extends GameDataFile {
 	/** Whether a name exists in vanilla + Space Age as any prototype. */
 	known: (name: string) => boolean;
 	/** Which mod defines a name, if any. */
 	modOf: (name: string) => string | undefined;
-	/** Rename a pre-2.0 name to its 2.0 equivalent. */
-	migrate: (kind: 'entity' | 'item' | 'recipe' | 'tile', name: string) => string;
+	/** Rename a name saved in game version `saved` ([major, minor]) to its current name. */
+	migrate: (kind: 'entity' | 'item' | 'recipe' | 'tile', name: string, saved: readonly [number, number]) => string;
 }
+
+/** Whether a name saved in `[major, minor]` predates `before` ("2.1"). */
+const savedBefore = ([major, minor]: readonly [number, number], before: string) => {
+	const [bMajor, bMinor] = before.split('.').map(Number);
+	return major < bMajor || (major === bMajor && minor < bMinor);
+};
 
 export const loadGameData = (f: GameDataFile): GameData => ({
 	...f,
@@ -90,7 +99,8 @@ export const loadGameData = (f: GameDataFile): GameData => ({
 	modOf: (n) => f.entities[n]?.mod ?? f.tiles[n] ?? f.names[n],
 	// Recipes and placeable entities share their item's name, and the migration files often
 	// list a rename only under `item`.
-	migrate: (kind, name) => f.migrations.reduce((n, m) => m[kind][n] ?? (kind === 'tile' ? undefined : m.item[n]) ?? n, name)
+	migrate: (kind, name, saved) =>
+		f.migrations.reduce((n, m) => (savedBefore(saved, m.before) ? (m[kind][n] ?? (kind === 'tile' ? undefined : m.item[n]) ?? n) : n), name)
 });
 
 // The generator writes this file from a typed `GameDataFile`; JSON inference widens its tuples.

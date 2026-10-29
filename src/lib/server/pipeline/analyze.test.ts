@@ -122,6 +122,43 @@ describe('icons', () => {
 	});
 });
 
+describe('2.1 renames', () => {
+	const foundry = (version: number) => analyzePrint(blueprint([{ name: 'foundry', recipe: 'molten-iron' }], [], version)).nodes[0];
+
+	test("a 2.0 foundry on molten-iron crafts 2.1's iron-ore-melting, with its rates", () => {
+		const n = foundry(V2_0_77);
+		expect(n.recipes).toEqual({ 'iron-ore-melting': 1 });
+		expect(n.products).toEqual(['fluid:molten-iron']);
+		expect(n.rates['fluid:molten-iron']).toBeGreaterThan(0);
+	});
+
+	test('a page saved in 2.1 keeps its names', () => {
+		expect(foundry(2 * 2 ** 48 + 2 ** 32 + 23 * 2 ** 16).recipes).toEqual({ 'molten-iron': 1 });
+	});
+});
+
+describe('unknown names', () => {
+	const V2_1_23 = 2 * 2 ** 48 + 2 ** 32 + 23 * 2 ** 16;
+	const V2_2_0 = 2 * 2 ** 48 + 2 * 2 ** 32;
+	const modded = (version: number) => blueprint([{ name: 'some-unheard-of-machine' }], [], version);
+
+	test('mean a mod from 2.0 up to the game data version, not before or after', () => {
+		expect(analyzePrint(modded(V2_0_77)).mods).toEqual(['unknown-mod']);
+		expect(analyzePrint(modded(V2_1_23)).mods).toEqual(['unknown-mod']);
+		expect(analyzePrint(modded(V1_1_0)).mods).toEqual([]);
+		const newer = analyzePrint(modded(V2_2_0));
+		expect(newer.mods).toEqual([]);
+		expect(newer.limits.some((l) => l.includes('version changes'))).toBe(true);
+	});
+
+	test("count by the version of the page that uses them, not the book's", () => {
+		const book = (root: number, page: number) =>
+			analyzePrint({ blueprint_book: { version: root, blueprints: [{ index: 0, ...modded(page) }] } });
+		expect(book(V2_1_23, V1_1_0).mods).toEqual([]);
+		expect(book(V1_1_0, V2_0_77).mods).toEqual(['unknown-mod']);
+	});
+});
+
 describe('a real space platform', () => {
 	// "Calcite collector platform (protected)": quality entities on 2,029 platform foundations.
 	test('counts its foundations and its quality entities', async () => {

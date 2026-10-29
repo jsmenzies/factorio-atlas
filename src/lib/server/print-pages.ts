@@ -55,9 +55,11 @@ export const tooltipData = (page: CompactPage): TooltipData => {
 		for (const f of x.filters ?? []) items.add(f);
 	}
 	const entities = page.names.map((n) => n.proto);
+	const labelOf = (n: string) => gameData.entities[n]?.label ?? gameData.recipes[n]?.label ?? gameData.itemInfo[n]?.label;
 	const labels: Record<string, string> = {};
 	for (const n of [...entities, ...recipes, ...items]) {
-		const label = gameData.entities[n]?.label ?? gameData.recipes[n]?.label ?? gameData.itemInfo[n]?.label;
+		// The page data keeps recipe and item names as saved; an old one takes its current name's label, as icons do.
+		const label = labelOf(n) ?? labelOf(gameData.migrate('recipe', n, [0, 0]));
 		if (label) labels[n] = label;
 	}
 	const slots: Record<string, number> = {};

@@ -2,7 +2,7 @@
  * Game icons for the site, from the game's own icon dump, as one WebP per icon.
  *
  *   factorio --dump-icon-sprites        # writes <user data>/script-output/<type>/<name>.png
- *   bun run icons <script-output dir> [--game-version 2.0.77] [--no-upload]
+ *   bun run icons <script-output dir> [--game-version 2.1.23] [--no-upload]
  *   bun run icons --upload local|remote # upload the set in data/game/icons.json again
  *
  * Building encodes every icon of the types in ICON_TYPES (#lib/icons.js) with `cwebp` (libwebp,

@@ -59,7 +59,7 @@ GitHub mirror of factorioprints (motlin/factorio-blueprint-firebase-cdn, one JSO
   → sanitize      drop fields the site doesn't use, such as `favorites` (user ids)
   → decode        exchange string: "0" + base64 + zlib, with a cap on inflated size
   → analyse       walk books and pages: outputs, inputs, recipes, entities, rates, versions,
-                  Space Age, planets, mods, circuits, trains (data/game/game-data-2.0.77.json)
+                  Space Age, planets, mods, circuits, trains (data/game/game-data-2.1.23.json)
   → store         D1: a slim search index, about a dozen rows per print
                   R2: the sanitised record, the analysis document, the page list and per-page strings
 ```

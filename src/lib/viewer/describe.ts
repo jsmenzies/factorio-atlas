@@ -42,7 +42,7 @@ export const describe = (
 	rows.push(['position', `${fmt(x)}, ${fmt(y)}`]);
 	const raw = page.sourceDirections === 8 ? dir / 2 : dir;
 	rows.push(['direction', `${directionName(dir)} (${raw} of ${page.sourceDirections})`]);
-	if (info.proto !== info.name) rows.push(['2.0 name', info.proto]);
+	if (info.proto !== info.name) rows.push(['current name', info.proto]);
 	rows.push(['category', info.known ? `${info.category} · ${info.type}` : 'unknown (modded or renamed)']);
 	if (!info.known && e.kind === 'box') rows.push(['size', `${e.w}×${e.h}, guessed from free space`]);
 	else if (info.w * info.h > 1) rows.push(['size', `${info.w}×${info.h}`]);
