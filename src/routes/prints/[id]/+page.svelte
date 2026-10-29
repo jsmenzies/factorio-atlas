@@ -164,14 +164,22 @@
 
 	// A book page past the first is a page of its own for search engines: title, description and canonical URL.
 	const bookPage = $derived(!single && selected && selectedIndex > 0 ? selected : null);
+	// What the print is, in the words people search with ("nilaus base in a book factorio blueprint"); every title says it.
+	const what = $derived.by(() => {
+		const kind = single ? 'blueprint' : a.nodes[0]?.kind;
+		if (kind === 'blueprint_book') return 'Factorio blueprint book';
+		if (kind === 'upgrade_planner') return 'Factorio upgrade planner';
+		if (kind === 'deconstruction_planner') return 'Factorio deconstruction planner';
+		return 'Factorio blueprint';
+	});
 	const meta = $derived(
 		bookPage
 			? {
-					title: `${plainText(pageTitle(bookPage).text)} · ${plainText(title)} · Blueprint Atlas`,
+					title: `${plainText(pageTitle(bookPage).text)} · ${plainText(title)} · Factorio blueprint · Blueprint Atlas`,
 					description: metaDescription(a, p.author_name, { page: { node: bookPage, index: selectedIndex }, rendered: rendered.has(bookPage.path) }),
 					canonical: pageHref(bookPage.path)
 				}
-			: { title: `${plainText(title)} · Blueprint Atlas`, description: metaDescription(a, p.author_name, { rendered: rendered.size > 0 }), canonical: `/prints/${p.id}` }
+			: { title: `${plainText(title)} · ${what} · Blueprint Atlas`, description: metaDescription(a, p.author_name, { rendered: rendered.size > 0 }), canonical: `/prints/${p.id}` }
 	);
 	// Link previews show the author's screenshot, for the print and each of its book pages: our copy's
 	// preview JPEG, else Imgur's while ours isn't there yet, else (gone or removed) the site's card.
