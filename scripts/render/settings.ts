@@ -96,5 +96,13 @@ export const inputKey = (pageJson: string, assets: Pick<AssetInfo, 'id' | 'fpsr'
 		.update(pageJson)
 		.digest('hex');
 
+/**
+ * The key a drawn page must still match to stay as it is: the asset bundle its sidecar names, with
+ * this fpsr and these settings. A page keeps the sprites it was drawn with, so a new bundle (a game
+ * update) draws only pages without a render; a new fpsr or new settings still redraw every page.
+ */
+export const drawnKey = (pageJson: string, drawnWith: string, assets: Pick<AssetInfo, 'id' | 'fpsr'>) =>
+	inputKey(pageJson, { id: drawnWith, fpsr: assets.fpsr });
+
 /** Prefix of every tile hash, so a change of encoder settings never reuses a tile encoded the old way. */
 export const TILE_HASH_SALT = `avif q${AVIF.quality} e${AVIF.effort} ${AVIF.chromaSubsampling}\n`;

@@ -37,7 +37,8 @@
  *   one aborts the pages in flight.
  * - Each page gets an input key: sha256 of its blueprint JSON as rendered (scripts/render/prepare.ts),
  *   the asset bundle, fpsr's version and the render settings (scripts/render/settings.ts). A page whose sidecar on disk has
- *   that key is `unchanged` and never drawn again. Prints with no page saved in 2.0+ get no rows
+ *   that key is `unchanged` and never drawn again. The key is checked with the asset bundle the sidecar names, so a new
+ *   bundle (a game update) draws only pages with no render yet (`drawnKey`). Prints with no page saved in 2.0+ get no rows
  *   (they are only counted in the log), unless they are favourites (below). Other pages are
  *   `skipped` when not saved in 2.0+ ('pre-2.0', a book mixing versions; not for favourites),
  *   when they have nothing to draw ('empty'), or when they
@@ -166,6 +167,7 @@ import { blueprintPages, cloneSource, decode, diskSource, versionString, type Re
 import {
 	AVIF,
 	checkRendersDir,
+	drawnKey,
 	inputKey,
 	LEVELS,
 	loadAssetInfo,
@@ -756,7 +758,9 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		// A resumed --force redraws only what the forced run left pending.
 		const forced = forceAll || (forcePending && (old?.status === 'pending' || old?.status === 'rendering'));
 		let sc = forced ? null : await readSidecar(OUT_DIR, id, page.path);
-		if (sc && sc.inputKey === key && sc.overview.file !== overviewFile(page.path, sc.stamp)) {
+		// A drawn page is measured against the assets that drew it, not the current ones (drawnKey).
+		const kept = sc && sc.assets.id !== assets.id ? drawnKey(prep.json, sc.assets.id, assets) : key;
+		if (sc && sc.inputKey === kept && sc.overview.file !== overviewFile(page.path, sc.stamp)) {
 			// Rendered before overviews carried the stamp: renamed, no redraw. Buckets need the new
 			// name (marked first, so a crash in between only re-sends the page). No overview: drawn again.
 			try {
@@ -768,7 +772,7 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 				sc = null;
 			}
 		}
-		if (sc && sc.inputKey === key) {
+		if (sc && sc.inputKey === kept) {
 			run.done++;
 			run.unchanged++;
 			doneHere++;
@@ -779,11 +783,12 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 				await writePageData(OUT_DIR, id, sc, prep.page);
 				pageDataWritten++;
 			}
-			if (!(old?.status === 'done' && old.input_key === key && old.overview === sc.overview.file)) {
+			if (!(old?.status === 'done' && old.input_key === kept && old.overview === sc.overview.file)) {
 				// Rendered before, but the row didn't say so (a crash after the sidecar, a fresh database).
 				indexStale = true;
 				writes.push({
 					...base,
+					input_key: kept,
 					status: 'done',
 					reason: null,
 					attempts: old?.attempts ?? 1,
