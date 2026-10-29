@@ -376,5 +376,11 @@
 		</div>
 	</div>
 
-	<PrintSidebar print={p} analysis={a} size={single?.width && single.height ? `${single.width}×${single.height} tiles` : null} />
+	<PrintSidebar
+		print={p}
+		analysis={a}
+		size={single?.width && single.height ? `${single.width}×${single.height} tiles` : null}
+		landings={data.landings}
+		icons={data.icons}
+	/>
 </div>

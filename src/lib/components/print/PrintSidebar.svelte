@@ -1,6 +1,9 @@
 <script lang="ts">
+	import Icon from '#lib/components/Icon.svelte';
 	import { formatDate } from '#lib/format.js';
+	import type { IconSet } from '#lib/icons.js';
 	import type { PrintAnalysis } from '#lib/server/pipeline/analyze.js';
+	import type { LandingLink } from '#lib/server/picker-items.js';
 	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
 	import { searchRel } from '#lib/search-seo.js';
 	import { QUALITIES } from './CountSection.svelte';
@@ -8,8 +11,28 @@
 	/**
 	 * The print page's facts, beside every tab: version, what's in it, its size, quality, Space Age,
 	 * where it can be built, stage, mods and dates. Rows with nothing to say are dropped; the About tab has the long form.
+	 * Under them, links to the landing pages of what it makes and is built with (`landingLinks`): followed links, so
+	 * crawlers find those pages from every print.
 	 */
-	let { print, analysis: a, size }: { print: PagePrint; analysis: PrintAnalysis; size: string | null } = $props();
+	let {
+		print,
+		analysis: a,
+		size,
+		landings,
+		icons
+	}: {
+		print: PagePrint;
+		analysis: PrintAnalysis;
+		size: string | null;
+		landings: { makes: LandingLink[]; uses: LandingLink[] };
+		icons: IconSet;
+	} = $props();
+	const more = $derived(
+		[
+			{ heading: 'That make', links: landings.makes, what: (l: string) => `Factorio blueprints that make ${l}` },
+			{ heading: 'Built with', links: landings.uses, what: (l: string) => `Factorio blueprints built with ${l}` }
+		].filter((g) => g.links.length)
+	);
 
 	const modern = $derived((a.gameMajor ?? 0) >= 2);
 	const PLANETS = ['nauvis', 'vulcanus', 'fulgora', 'gleba', 'aquilo'];
@@ -73,4 +96,24 @@
 			</div>
 		{/each}
 	</dl>
+	{#if more.length}
+		<nav aria-labelledby="more-blueprints" class="mt-4 rounded-lg border border-stone-800 bg-stone-900/30 px-3 py-2 text-sm">
+			<h2 id="more-blueprints" class="mb-2 font-medium text-stone-300">Search for more blueprints</h2>
+			{#each more as g (g.heading)}
+				<h3 class="mt-2 mb-1 text-xs text-stone-400">{g.heading}</h3>
+				<ul class="flex flex-wrap gap-1">
+					{#each g.links as l (l.signal)}
+						<li>
+							<a
+								href={l.href}
+								title={g.what(l.label)}
+								class="flex items-center gap-1.5 rounded bg-stone-800 py-0.5 pr-2 pl-1 text-xs text-stone-300 hover:bg-stone-700 hover:text-amber-300"
+								><Icon {icons} signal={l.signal} label="" size={16} />{l.label}</a
+							>
+						</li>
+					{/each}
+				</ul>
+			{/each}
+		</nav>
+	{/if}
 </aside>

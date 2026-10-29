@@ -1,5 +1,7 @@
+import { bookProducts } from '#lib/describe.js';
 import { sectionOf } from '#lib/picker.js';
 import { iconSet } from '#lib/server/icon-set.js';
+import { landingLinks } from '#lib/server/picker-items.js';
 import { renderDescription } from '#lib/server/markdown.js';
 import { gameData } from '#lib/server/pipeline/game-data.js';
 import { loadPrintDoc, printTexts } from '#lib/server/print-pages.js';
@@ -61,6 +63,11 @@ export const load: PageServerLoad = async ({ params }) => {
 			return [signal, section];
 		})
 	);
+	const made = bookProducts(
+		a.nodes.filter((n) => n.kind === 'blueprint'),
+		(signal) => sections[signal] ?? 'Other'
+	);
+	const ranked = [...made.main, ...made.groups.flatMap((g) => g.items)].map((m) => m.signal);
 	// The crafting menu's order (tab|row|item) per item a page makes or uses inside, for the Produces tab.
 	const menuOrder = Object.fromEntries(
 		[...new Set(a.nodes.flatMap((n) => [...n.outputs, ...n.products, ...n.intermediates]))].map((signal) => [
@@ -85,6 +92,9 @@ export const load: PageServerLoad = async ({ params }) => {
 		previews,
 		cover,
 		thumbs: await thumbs,
-		shot
+		shot,
+		// Links to the landing pages of what it makes and is built with (the sidebar's "Search for more blueprints"),
+		// what it makes ranked as the page ranks it.
+		landings: landingLinks(a, ranked)
 	};
 };
