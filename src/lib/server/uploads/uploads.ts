@@ -188,7 +188,7 @@ const putImage = async (raw: R2Bucket, image: ImagePlan) => {
 	if (!(await raw.head(key))) await raw.put(key, image.bytes, { httpMetadata: { contentType: IMAGE_TYPES[image.ext] } });
 };
 
-const putRecord = (raw: R2Bucket, record: SourceRecord) =>
+export const putRecord = (raw: R2Bucket, record: SourceRecord) =>
 	raw.put(recordKey(record.siteId), toPipelineText(record), { httpMetadata: { contentType: 'application/json' } });
 
 /** The record an upload's form makes. */

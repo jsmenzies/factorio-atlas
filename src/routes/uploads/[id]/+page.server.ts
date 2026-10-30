@@ -3,6 +3,7 @@ import { env } from 'cloudflare:workers';
 import { workerGate } from '#lib/server/uploads/gate.js';
 import { uploadDeps } from '#lib/server/uploads/env.js';
 import { formEcho, readUploadForm } from '#lib/server/uploads/form.js';
+import { imageCopied } from '#lib/server/uploads/images.js';
 import {
 	deleteUpload,
 	DESCRIPTION_MAX,
@@ -38,6 +39,8 @@ export const load: PageServerLoad = async ({ locals, params, url }) => {
 			refusedPrintId: row.refused_print_id,
 			failure: row.failure,
 			image: row.image_status,
+			// Sized and on the site (the screenshots step's `screenshots` row), or still waiting for the next update.
+			imageShown: row.image_id !== null && row.image_status === 'approved' && (await imageCopied(env.DB, row.image_id)),
 			createdAt: row.created_at,
 			updatedAt: row.updated_at,
 			live: row.live_at !== null

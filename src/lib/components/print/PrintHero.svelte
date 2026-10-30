@@ -5,8 +5,9 @@
 	import type { IconSet } from '#lib/icons.js';
 	import type { NodeAnalysis, PrintAnalysis } from '#lib/server/pipeline/analyze.js';
 	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
+	import { showsFavourites } from '#lib/print-id.js';
 	import { plainText } from '#lib/richtext.js';
-	import type { ShotView } from '#lib/screenshots.js';
+	import { NO_SHOT, type ShotView } from '#lib/screenshots.js';
 	import { searchRel } from '#lib/search-seo.js';
 
 	/**
@@ -58,7 +59,7 @@
 		if (!failed.includes(url)) failed = [...failed, url];
 	};
 	// Why the author's screenshot isn't shown, when the print has one.
-	const noShot = $derived(print.image_id ? (shot.state === 'removed' ? 'Screenshot removed' : 'Screenshot unavailable') : null);
+	const noShot = $derived(print.image_id ? NO_SHOT[shot.state] ?? 'Screenshot unavailable' : null);
 	const backdrop = $derived(
 		shot.backdrop && !failed.includes(shot.backdrop.src) ? 'screenshot' : cover && !failed.includes(cover.url) ? 'render' : 'grid'
 	);
@@ -106,7 +107,7 @@
 									href="/?author={print.author_id}"
 									rel={searchRel(`/?author=${print.author_id}`)}
 									title="Every print by this author">{print.author_name ?? 'unknown author'}</a
-								>{:else}unknown author{/if} · ★ {print.favorites}
+								>{:else}{print.author_name ?? 'unknown author'}{/if}{#if showsFavourites(print.source, print.id)} · ★ {print.favorites}{/if}
 						</p>
 					</div>
 				</div>

@@ -90,7 +90,7 @@
 							<span class={u.state === 'live' ? 'text-emerald-400' : u.state === 'processing' ? 'text-amber-400' : 'text-red-400'}
 								>{STATE[u.state]}</span
 							>
-							{#if u.image === 'pending'}<span class="text-stone-500" title="Screenshot waiting to be checked">· screenshot pending</span>{/if}
+							{#if u.image === 'pending'}<span class="text-stone-500" title="Screenshot waiting to be checked">· screenshot pending</span>{:else if u.image === 'rejected'}<span class="text-amber-300" title="Screenshot not approved: you can replace it">· screenshot not approved</span>{/if}
 							<span class="text-stone-500">{date(u.createdAt)}</span>
 							{#if u.state === 'live'}<a class="text-stone-400 hover:text-amber-300" href="/prints/{u.id}">View</a>{/if}
 						</li>

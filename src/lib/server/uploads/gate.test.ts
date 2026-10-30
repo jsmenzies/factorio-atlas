@@ -12,7 +12,9 @@ import { ingestRecord } from '../pipeline/pipeline';
 import { fromFactorioprints, fromPipelineText, toPipelineText } from '../pipeline/source-record';
 import { takedownPrint } from '../takedown';
 import { Effect } from 'effect';
+import { showsFavourites } from '#lib/print-id.js';
 import { admitUpload, ingestDue, workerGate } from './gate';
+import { approveImage, rejectImage } from './images';
 import {
 	admitProcessing,
 	createUpload,
@@ -349,6 +351,65 @@ describe('uploads through the real gate', () => {
 				refused_print_id: liveId
 			});
 			expect(s.one('SELECT 1 AS hit FROM prints WHERE id = ?', waitingId)).toBeNull();
+		});
+	});
+});
+
+describe('upload screenshots through the real gate', () => {
+	test('approving puts it on the print: prints.image_id and the analysis document name `upload.<id>`', async () => {
+		const s = await setup();
+		const ada = await s.account('Ada');
+		const r = await createUpload(s.deps(), ada, input({ image: PNG }));
+		const printId = r.ok ? r.printId : '';
+		const image = (await sha256Hex(PNG)).slice(0, 16);
+		expect(s.one('SELECT image_id FROM prints WHERE id = ?', printId)).toEqual({ image_id: null });
+		expect(await approveImage({ db: s.db, raw: s.RAW, gate: s.gate, now: 2_000_000_000_001 }, image)).toEqual({
+			ok: true,
+			status: 'approved',
+			uploads: 1,
+			shown: 1
+		});
+		expect(s.one('SELECT image_id, source FROM prints WHERE id = ?', printId)).toEqual({ image_id: `upload.${image}`, source: 'upload' });
+		const doc = JSON.parse(String(s.RAW.objects.get(analysisKey(printId)))) as { print: { image_id: string; source: string } };
+		expect(doc.print).toMatchObject({ image_id: `upload.${image}`, source: 'upload' });
+		// No favourites to show on an upload's print, and its saved version is listed for the version facet.
+		expect(showsFavourites(doc.print.source, printId)).toBe(false);
+		const row = s.one<{ game_version: string; claimed_versions: string }>(
+			'SELECT game_version, claimed_versions FROM prints WHERE id = ?',
+			printId
+		)!;
+		expect(JSON.parse(row.claimed_versions)).toEqual([row.game_version.split('.').slice(0, 2).join('.')]);
+	});
+
+	test('a takedown of an upload with an approved screenshot blocks the image, and its bytes can’t come back', async () => {
+		const s = await setup();
+		const ada = await s.account('Ada');
+		const r = await createUpload(s.deps(), ada, input({ image: PNG }));
+		const printId = r.ok ? r.printId : '';
+		const image = (await sha256Hex(PNG)).slice(0, 16);
+		await approveImage({ db: s.db, raw: s.RAW, gate: s.gate }, image);
+		const t = await takedownPrint(s.env, printId, null);
+		expect(t.screenshot).toBe('removed');
+		expect(s.one('SELECT 1 AS hit FROM removal_blocks WHERE kind = ? AND value = ?', 'image', `upload.${image}`)).toEqual({ hit: 1 });
+		expect(s.one('SELECT state FROM screenshots WHERE image_id = ?', `upload.${image}`)).toEqual({ state: 'removed' });
+		expect(await createUpload(s.deps(), await s.account('Bob'), input({ blueprintString: BOOK, image: PNG }))).toMatchObject({
+			ok: false,
+			problem: 'That screenshot can’t be used.'
+		});
+	});
+
+	test('a rejected screenshot stays refused after its owner replaced it (the image block)', async () => {
+		const s = await setup();
+		const ada = await s.account('Ada');
+		const r = await createUpload(s.deps(), ada, input({ image: PNG }));
+		const printId = r.ok ? r.printId : '';
+		await rejectImage({ db: s.db, raw: s.RAW }, (await sha256Hex(PNG)).slice(0, 16));
+		const other = new Uint8Array([...PNG, 7]);
+		expect(await editUpload(s.deps(2_000_000_000_100), ada, printId, input({ image: other }))).toMatchObject({ ok: true });
+		expect(s.one<{ n: number }>('SELECT count(*) AS n FROM upload_images')).toEqual({ n: 1 });
+		expect(await editUpload(s.deps(2_000_000_000_200), ada, printId, input({ image: PNG }))).toMatchObject({
+			ok: false,
+			problem: 'That screenshot can’t be used.'
 		});
 	});
 });

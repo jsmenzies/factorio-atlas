@@ -5,8 +5,9 @@
 	import type { IconSet } from '#lib/icons.js';
 	import type { NodeAnalysis, PrintAnalysis } from '#lib/server/pipeline/analyze.js';
 	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
+	import { showsFavourites } from '#lib/print-id.js';
 	import { plainText } from '#lib/richtext.js';
-	import type { ShotView } from '#lib/screenshots.js';
+	import { NO_SHOT, type ShotView } from '#lib/screenshots.js';
 	import { searchRel } from '#lib/search-seo.js';
 
 	/**
@@ -33,7 +34,7 @@
 			[
 				['Posted', print.created_at ? formatDate(print.created_at) : ''],
 				['Updated', print.updated_at ? formatDate(print.updated_at) : ''],
-				['Favourites', `★ ${print.favorites.toLocaleString()}`],
+				['Favourites', showsFavourites(print.source, print.id) ? `★ ${print.favorites.toLocaleString()}` : ''],
 				['Saved in', a.gameVersion ? `Factorio ${a.gameVersion}` : 'unknown version'],
 				['Claims', a.claimedVersions.join(', ')]
 			] as [string, string][]
@@ -139,7 +140,7 @@
 			</figcaption>
 		{:else}
 			<div class="grid aspect-[4/3] place-items-center rounded-lg border border-dashed border-stone-700 text-sm text-stone-500">
-				{print.image_id ? (view.state === 'removed' ? 'Screenshot removed' : 'Screenshot unavailable') : 'No screenshot from the author'}
+				{print.image_id ? (NO_SHOT[view.state] ?? 'Screenshot unavailable') : 'No screenshot from the author'}
 			</div>
 		{/if}
 	</figure>

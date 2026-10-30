@@ -3,12 +3,15 @@ import {
 	capSize,
 	cardImage,
 	cropBox,
+	isUploadImage,
+	NO_SHOT,
 	overCap,
 	parseManifest,
 	SHOT_KEY,
 	shotFiles,
 	shotKeys,
 	shotView,
+	uploadImageId,
 	type CardImageColumns,
 	type Shot
 } from './screenshots.js';
@@ -153,5 +156,60 @@ describe('shotView and parseManifest', () => {
 		expect(parseManifest({ state: 'copied', v: 1, ext: 'png', w: 0, h: 1 })).toBeNull();
 		expect(parseManifest(null)).toBeNull();
 		expect(parseManifest({ state: 'removed', extra: 1 })).toEqual({ state: 'removed' });
+	});
+});
+
+describe('upload screenshots (`upload.<16 hex>`)', () => {
+	const UP = 'upload.0123456789abcdef';
+	const card = (over: Partial<CardImageColumns> = {}): CardImageColumns => ({
+		id: 'up-AbCdEfGhIj',
+		image_id: UP,
+		image_type: null,
+		shot_state: null,
+		shot_v: null,
+		shot_ext: null,
+		shot_w: null,
+		shot_h: null,
+		cover_page: null,
+		cover_stamp: null,
+		cover_w: null,
+		cover_h: null,
+		...over
+	});
+	const bases = { shots: 'https://s.example.com', renderBase: (id: string) => `https://r.example.com/${id}` };
+
+	test('ids and keys', () => {
+		expect(isUploadImage(UP)).toBe(true);
+		expect(uploadImageId('0123456789abcdef')).toBe(UP);
+		for (const id of ['AbCd123', 'upload.0123', 'upload.0123456789ABCDEF', 'x.0123456789abcdef']) expect(isUploadImage(id)).toBe(false);
+		const keys = [...shotKeys({ id: UP, v: 1, ext: 'png', w: 6000, h: 4000 }), `${UP}.png`, `${UP}.json`];
+		for (const k of keys) expect(SHOT_KEY.test(k)).toBe(true);
+		expect(SHOT_KEY.test('upload.0123456789abcdef0.png')).toBe(false);
+	});
+
+	test('approved but not sized yet: never Imgur; the render, else nothing', () => {
+		expect(cardImage(card(), bases)).toBeNull();
+		expect(cardImage(card({ cover_page: '', cover_stamp: '0123456789', cover_w: 4000, cover_h: 2000 }), bases)).toMatchObject({
+			kind: 'render'
+		});
+		expect(shotView(UP, null, null, '/screenshots')).toEqual({
+			state: 'preparing',
+			imgur: false,
+			backdrop: null,
+			large: null,
+			inline: null,
+			full: null,
+			og: null
+		});
+		expect(NO_SHOT.preparing).toBe('Screenshot coming soon');
+	});
+
+	test('sized: our files, as for Imgur images', () => {
+		expect(cardImage(card({ shot_state: 'copied', shot_v: 1, shot_ext: 'png', shot_w: 1920, shot_h: 1080 }), bases)).toMatchObject({
+			kind: 'screenshot',
+			src: `https://s.example.com/${UP}.v1.c320.avif`
+		});
+		const v = shotView(UP, null, { state: 'copied', v: 1, ext: 'png', w: 1920, h: 1080 }, '/screenshots');
+		expect(v).toMatchObject({ state: 'copied', imgur: false, full: { src: `/screenshots/${UP}.png` } });
 	});
 });

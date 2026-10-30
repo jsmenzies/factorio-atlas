@@ -18,7 +18,8 @@
  *                   doesn't count as the end)
  *   4. authors      `authors --stage S --limit <authorLimit>` (Firebase, only authors never asked;
  *                   factorioprints only); needs ingest
- *   5. screenshots  `screenshots` (new ones from Imgur; weekly `--recheck` if set), `--upload S`,
+ *   5. screenshots  `screenshots` (new ones from Imgur; weekly `--recheck` if set), `--from-uploads S`
+ *                   (approved upload screenshots, from the stage's RAW), `--upload S`,
  *                   `screenshots:flags --stage S`; needs removals
  *   6. render       `render:top <top>` (factorioprints only) and `render:check`, then
  *                   `render --next <perUpdate> --top <top> --upload S --flags`; needs ingest and removals
@@ -79,6 +80,7 @@ import { localDbFile, openLocalDb } from './sync/local-db';
 import { MIRROR_SITE, mirrorSource, type SourceAdapter } from './sync/mirror';
 import { failureLine, lastJsonLine, lastLine, lineMatching } from './sync/output';
 import { UPLOADS_SOURCE, uploadsSource } from './sync/uploads';
+import type { FromUploadsResult } from './screenshots/uploads';
 import {
 	backfillComplete,
 	backfillSummary,
@@ -585,6 +587,19 @@ const steps: StepDef[] = [
 				parts.push(lineMatching(r.tail, /^screenshots: /).replace(/^screenshots: /, ''));
 			}
 			if (stopping()) return { status: 'stopped', summary: parts.join(' · '), details };
+			// Approved upload screenshots, copied from the stage's private RAW: an input beside Imgur. A failure here
+			// still lets Imgur's go up.
+			const fromUploads = await script(['scripts/screenshots.ts', '--from-uploads', stage, '--json']);
+			const uploaded = lastJsonLine<FromUploadsResult>(fromUploads.tail);
+			if (fromUploads.code !== 0) {
+				warning = true;
+				if (!uploaded) parts.push(`uploads: ${failureLine(fromUploads.tail)}`);
+			}
+			if (uploaded?.approved || uploaded?.failed)
+				parts.push(
+					`uploads: ${n(uploaded.approved)} approved, copied ${n(uploaded.fetched)}${uploaded.failed ? `, failed ${n(uploaded.failed)}` : ''}`
+				);
+			if (stopping()) return { status: 'stopped', summary: parts.join(' · '), details };
 			const up = await script(['scripts/screenshots.ts', '--upload', stage, '--json']);
 			if (up.code !== 0) return { ...failed(up), details };
 			const bucket = lastJsonLine<{
@@ -595,7 +610,22 @@ const steps: StepDef[] = [
 				deleted: number;
 				alreadyUp: number;
 				failed: number;
+				uploads?: { images: number; made: number; put: number; bytes: number; failed: number };
 			}>(up.tail);
+			if (uploaded)
+				details.push({
+					title: 'From uploads',
+					rows: [
+						...detail('approved', uploaded.approved, { always: true }),
+						...detail('copied from RAW', uploaded.fetched),
+						...detail('sized', bucket?.uploads?.made ?? 0, { always: uploaded.toFetch > 0 }),
+						{
+							label: 'files put',
+							value: bucket?.uploads?.put ? `${n(bucket.uploads.put)} (${(bucket.uploads.bytes / 1e6).toFixed(1)} MB)` : 0
+						},
+						...detail('failed', uploaded.failed + (bucket?.uploads?.failed ?? 0), { always: true, tone: 'bad' })
+					]
+				});
 			if (bucket)
 				details.push({
 					title: `${stage[0].toUpperCase()}${stage.slice(1)} bucket`,

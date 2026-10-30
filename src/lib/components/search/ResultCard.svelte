@@ -4,6 +4,7 @@
 	import RichText from '#lib/components/RichText.svelte';
 	import { signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
+	import { showsFavourites } from '#lib/print-id.js';
 	import type { CardImage } from '#lib/screenshots.js';
 	import type { PrintCard } from '#lib/server/queries.js';
 	import { searchRel } from '#lib/search-seo.js';
@@ -65,7 +66,7 @@
 		<div class="space-y-2 p-3">
 			<h3 class="leading-snug font-medium text-stone-100"><RichText text={p.title} {icons} size={18} /></h3>
 			<p class="text-xs text-stone-500">
-				{p.author_name ?? 'unknown author'} · ★ {p.favorites} · {p.blueprint_count} blueprint{p.blueprint_count === 1 ? '' : 's'} · {p.entity_count} entities
+				{p.author_name ?? 'unknown author'}{#if showsFavourites(p.source, p.id)} · ★ {p.favorites}{/if} · {p.blueprint_count} blueprint{p.blueprint_count === 1 ? '' : 's'} · {p.entity_count} entities
 			</p>
 		</div>
 	</a>

@@ -43,6 +43,13 @@ export const printIdFor = (site: Site, siteId: string): string => {
 	return id;
 };
 
+/**
+ * Whether a print shows a favourites count: only factorioprints records have one. `site` is the site of
+ * the record the print shows (`prints.source`, the document's `source`); documents written before it
+ * carried one fall back to the print id's site.
+ */
+export const showsFavourites = (site: Site | string | null | undefined, id: string) => (site ?? siteOfPrintId(id)) === 'factorioprints';
+
 /** The site whose id space `id` is in: where the print was first seen, not necessarily what it shows. */
 export const siteOfPrintId = (id: string): Site | null => {
 	if (FACTORIOPRINTS_ID.test(id)) return 'factorioprints';

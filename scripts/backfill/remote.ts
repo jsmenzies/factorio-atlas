@@ -1,7 +1,7 @@
 /**
  * Remote D1 and R2 for a deployed stage (prod), through the Node sidecar in remote-bindings.mjs (why: see there).
  * The shims implement only what the pipeline and runs.ts use: `prepare().bind().first/all/run`,
- * `batch`, and R2 `put`/`get().text()`/`delete` with string bodies.
+ * `batch`, and R2 `put` with string bodies, `get().text()`/`get().arrayBuffer()` and `delete`.
  */
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -116,8 +116,8 @@ export const openRemoteBindings = async (configPath: string, log: (line: string)
 		get: async (k: string) => {
 			const res = await call(key(k));
 			if (res.status === 404) return null;
-			const text = await res.text();
-			return { text: async () => text };
+			const bytes = new Uint8Array(await res.arrayBuffer());
+			return { text: async () => new TextDecoder().decode(bytes), arrayBuffer: async () => bytes.buffer };
 		},
 		delete: async (k: string) => {
 			await call(key(k), { method: 'DELETE' });

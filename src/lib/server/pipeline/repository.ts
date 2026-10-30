@@ -29,7 +29,8 @@ import type { SourceMeta } from './source-record';
  * analysis document already in R2, with no re-analysis and no R2 writes (`planIngest`'s 'refresh').
  * 1: `uses_entity_*`, `recipe_*` and `module_*` tokens, and `print_uses` (migration 0009).
  * (The `author` column and `by_*` token came with migration 0017, which wrote them into every row
- * itself, so they needed no bump.)
+ * itself, so they needed no bump. `listedVersions` changed only rows of records from other sites, which
+ * no backfill revisits: uploads take it at their next ingest.)
  */
 export const INDEX_VERSION = 1;
 
@@ -143,6 +144,18 @@ export const slug = (s: string) =>
 export const versionTokens = (version: string) => {
 	const parts = version.split('.').filter((p) => /^\d+$/.test(p));
 	return parts.map((_, i) => `v_${parts.slice(0, i + 1).join('_')}`);
+};
+
+/**
+ * The versions a print lists (`prints.claimed_versions`: the search sidebar's "Game version" counts and the
+ * card's chips): what its labels claim. A record from another site (an upload) that claims none lists the
+ * version its string was saved in, as "2.0", which its `v_` tokens from `gameVersion` already match. Only
+ * factorioprints records go without: their rows stay as INDEX_VERSION 1 wrote them.
+ */
+export const listedVersions = (r: Pick<FirebaseRecord, 'source'>, a: Pick<PrintAnalysis, 'claimedVersions' | 'gameVersion'>): string[] => {
+	if (a.claimedVersions.length || !r.source || r.source.site === 'factorioprints' || !a.gameVersion) return a.claimedVersions;
+	const parts = a.gameVersion.split('.').filter((p) => /^\d+$/.test(p));
+	return parts.length >= 2 ? [`${parts[0]}.${parts[1]}`] : [];
 };
 
 /** The record's author id (factorioprints user id: 28 letters and digits). */
@@ -522,7 +535,7 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 							flag(a.usesCircuits),
 							flag(a.usesTrains),
 							json(a.outputs),
-							json(a.claimedVersions),
+							json(listedVersions(r, a)),
 							json(a.planets),
 							json(a.mods)
 						),

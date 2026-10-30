@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { isFactorioprintsId, isPrintId, printIdFor, siteOfPrintId } from './print-id';
+import { isFactorioprintsId, isPrintId, printIdFor, showsFavourites, siteOfPrintId } from './print-id';
 
 describe('print ids', () => {
 	test('accepts every site’s ids and nothing else', () => {
@@ -29,5 +29,14 @@ describe('print ids', () => {
 		// A site id that would land in factorioprints' 20-character space is refused.
 		expect(() => printIdFor('factoriobin', 'abcdefghijklmno')).toThrow();
 		expect(() => printIdFor('upload', 'short')).toThrow();
+	});
+});
+
+describe('showsFavourites', () => {
+	test('only a factorioprints record has a count; documents without a source go by the id', () => {
+		expect(showsFavourites('factorioprints', 'up-AbCdEfGhIj')).toBe(true);
+		expect(showsFavourites('upload', '-KYpTULTDIvDOsJfgjeS')).toBe(false);
+		expect(showsFavourites(undefined, 'up-AbCdEfGhIj')).toBe(false);
+		expect(showsFavourites(undefined, '-KYpTULTDIvDOsJfgjeS')).toBe(true);
 	});
 });

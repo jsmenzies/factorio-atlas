@@ -14,8 +14,9 @@
 	};
 	const IMAGE: Record<string, string> = {
 		pending: 'Screenshot waiting to be checked.',
-		approved: 'Screenshot approved.',
-		rejected: 'Screenshot not accepted.'
+		approved: 'Screenshot approved. It shows on the print after the next update, usually within a day.',
+		shown: 'Screenshot approved.',
+		rejected: 'Screenshot not approved. You can replace it below with another one.'
 	};
 </script>
 
@@ -54,7 +55,9 @@
 				</p>
 			</div>
 		{/if}
-		{#if u.image}<p class="text-sm text-stone-500">{IMAGE[u.image]}</p>{/if}
+		{#if u.image === 'rejected'}
+			<p class="text-sm text-amber-300" role="status">{IMAGE.rejected}</p>
+		{:else if u.image}<p class="text-sm text-stone-500">{IMAGE[u.image === 'approved' && u.imageShown ? 'shown' : u.image]}</p>{/if}
 	</header>
 
 	<form method="POST" action="?/save" enctype="multipart/form-data" class="space-y-5">

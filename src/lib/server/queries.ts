@@ -201,6 +201,8 @@ export interface PrintCard {
 	author_id: string | null;
 	author_name: string | null;
 	favorites: number;
+	/** The site of the record the print shows: favourites are factorioprints' alone (showsFavourites). */
+	source: string;
 	image_id: string | null;
 	image_type: string | null;
 	updated_at: number | null;
@@ -239,7 +241,7 @@ export interface PrintCard {
 }
 
 /** A card's columns; `r` is print_renders and `s` screenshots, each joined by primary key (CARD_JOIN). */
-const CARD = `p.id, p.title, p.author_id, p.author_name, p.favorites, p.image_id, p.image_type, p.updated_at, p.game_version,
+const CARD = `p.id, p.title, p.author_id, p.author_name, p.favorites, p.source, p.image_id, p.image_type, p.updated_at, p.game_version,
 	p.blueprint_count, p.entity_count, p.requires_space_age, p.uses_circuits, p.uses_trains,
 	p.outputs, p.claimed_versions, p.planets, p.mods,
 	r.print_id IS NOT NULL AS has_render, r.cover_page, r.cover_stamp, r.cover_w, r.cover_h,

@@ -10,7 +10,7 @@
  *
  *   node scripts/backfill/remote-bindings.mjs <wrangler config>   (env BACKFILL_SIDECAR_TOKEN)
  *
- * Prints `READY <port>` once the bindings work, then answers POST /d1 and GET|PUT|DELETE /r2?key=…,
+ * Prints `READY <port>` once the bindings work, then answers POST /d1 and GET (the bytes)|PUT|DELETE /r2?key=…,
  * each with `authorization: Bearer <token>`. Exits when stdin closes (the parent died) or on SIGTERM.
  * Plain JavaScript so Node runs it without a build step.
  */
@@ -69,7 +69,7 @@ const d1 = async ({ op, sql, params, statements }) => {
 /**
  * @param {import('node:http').ServerResponse} res
  * @param {number} status
- * @param {string} body
+ * @param {string | Buffer} body
  */
 const send = (res, status, body, type = 'application/json') => {
 	res.writeHead(status, { 'content-type': type });
@@ -88,7 +88,8 @@ const server = createServer(async (req, res) => {
 			if (!key) return send(res, 400, '{"error":"key required"}');
 			if (req.method === 'GET') {
 				const object = await RAW.get(key);
-				return object ? send(res, 200, await object.text(), 'text/plain; charset=utf-8') : send(res, 404, '');
+				// The object's bytes as they are: text for records, images for the screenshots step.
+				return object ? send(res, 200, Buffer.from(await object.arrayBuffer()), 'application/octet-stream') : send(res, 404, '');
 			}
 			if (req.method === 'PUT') {
 				const contentType = url.searchParams.get('contentType') ?? 'application/json';

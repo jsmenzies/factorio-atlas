@@ -16,6 +16,7 @@ import { backoffMs, pacer, pool, realClock } from './pace.js';
 import { formatEntry, type StateEntry } from './state.js';
 import { openShotStore } from './store.js';
 import { syncImage } from './upload.js';
+import { isUploadImage } from '#lib/screenshots.js';
 
 const mb = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
 const secs = (ms: number) => `${Math.round(ms / 1000)}s`;
@@ -97,6 +98,8 @@ export async function runUpload(dir: string, entries: Map<string, StateEntry>, a
 	let deleted = 0;
 	let unchanged = 0;
 	const failed: string[] = [];
+	// Upload screenshots (`upload.…`) by themselves too: the update shows them as their own group.
+	const uploads = { images: 0, made: 0, put: 0, bytes: 0, failed: 0 };
 	let stop: string | null = null;
 	const ticker = setInterval(
 		() =>
@@ -109,19 +112,29 @@ export async function runUpload(dir: string, entries: Map<string, StateEntry>, a
 		todo,
 		args.jobs,
 		async (e) => {
+			const upload = isUploadImage(e.id);
+			if (upload) uploads.images++;
 			try {
 				const m = fetchedOnly(e) ? await ensureMade(dir, e) : null;
-				if (m?.fresh) made++;
+				if (m?.fresh) {
+					made++;
+					if (upload) uploads.made++;
+				}
 				const r = await syncImage({ dir, store: opened.store, held, append }, e, m?.made ?? null);
 				if (r) {
 					put += r.put;
 					bytes += r.bytes;
 					deleted += r.deleted;
 					if (r.unchanged) unchanged++;
+					if (upload) {
+						uploads.put += r.put;
+						uploads.bytes += r.bytes;
+					}
 				}
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
 				failed.push(`${e.id}: ${msg}`);
+				if (upload) uploads.failed++;
 				// The store refusing us (401/403) won't get better for the next image.
 				if ((err as { fatal?: boolean }).fatal) stop = msg;
 			}
@@ -149,7 +162,8 @@ export async function runUpload(dir: string, entries: Map<string, StateEntry>, a
 				deleted,
 				alreadyUp: unchanged,
 				failed: failed.length,
-				stopped: !!stop
+				stopped: !!stop,
+				uploads
 			})
 		);
 	return stop ? 2 : failed.length ? 1 : 0;
@@ -163,7 +177,8 @@ export const MAX_GONE = { count: 50, share: 0.05 };
 export const tooManyGone = (gone: number, checked: number) => gone > MAX_GONE.count && gone > checked * MAX_GONE.share;
 
 export async function runRecheck(dir: string, stateFile: string, entries: Map<string, StateEntry>, args: ShotArgs): Promise<number> {
-	const todo = selectEntries(entries.values(), args.ids, args.limit, (e) => e.status === 'fetched');
+	// Upload images (`upload.…`) were never on Imgur.
+	const todo = selectEntries(entries.values(), args.ids, args.limit, (e) => e.status === 'fetched' && !isUploadImage(e.id));
 	console.log(`screenshots: rechecking ${todo.length} copied images on Imgur, at most ${args.rate}/s`);
 	const pace = pacer(args.rate);
 	const abort = new AbortController();

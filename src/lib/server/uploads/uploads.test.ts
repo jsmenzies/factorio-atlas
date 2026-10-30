@@ -6,6 +6,7 @@ import { accountChores } from '../auth/sessions';
 import { signInAccount, deleteAccount, markDeleting, type Account } from '../auth/users';
 import { d1FromSqlite } from '../pipeline/d1-sqlite';
 import type { GateOutcome, PurgeExtras, SourceRecord, UploadGate } from './gate';
+import { approveImage, pendingImages, rejectImage } from './images';
 import {
 	checkInput,
 	createUpload,
@@ -15,6 +16,7 @@ import {
 	editUpload,
 	admitProcessing,
 	imageKey,
+	listUploads,
 	PROCESSING_ATTEMPTS,
 	processingUploads,
 	newSiteId,
@@ -489,5 +491,116 @@ describe('the review’s fixes', () => {
 		next = admitted;
 		await editUpload(s.deps, ada, id, input({ title: 'Again' }));
 		expect(s.rows().map((row) => [row.state, row.attempts, row.failure])).toEqual([['live', 0, null]]);
+	});
+});
+
+describe('the admin queue of screenshots', () => {
+	const pngId = async () => (await sha256Hex(PNG)).slice(0, 16);
+	const status = (s: Awaited<ReturnType<typeof setup>>, id: string) =>
+		(s.sqlite.query(`SELECT status, decided_at FROM upload_images WHERE id = ?`).get(id) as {
+			status: string;
+			decided_at: number | null;
+		} | null) ?? null;
+
+	test('pending images are listed oldest first, with their uploads and uploader', async () => {
+		const s = await setup();
+		const ada = await s.account('Ada');
+		const r = await createUpload(s.deps, ada, input({ image: PNG }));
+		await createUpload({ ...s.deps, now: 2_000_000 }, ada, input({ title: 'No screenshot', blueprintString: `${STRING} ` }));
+		const { images, total } = await pendingImages(s.db);
+		expect(total).toBe(1);
+		expect(images).toEqual([
+			{
+				id: await pngId(),
+				ext: 'png',
+				bytes: PNG.byteLength,
+				created_at: 1_000_000,
+				user_id: ada.id,
+				user_name: 'Ada',
+				uploads: [{ print_id: r.ok ? r.printId : '', title: 'Red science', state: 'live', shown_name: 'Ada' }]
+			}
+		]);
+	});
+
+	test('approve: the record names the image, a live upload is ingested again through the gate, then the status and a page-cache bump', async () => {
+		const s = await setup();
+		const ada = await s.account('Ada');
+		const r = await createUpload(s.deps, ada, input({ image: PNG }));
+		const printId = r.ok ? r.printId : '';
+		const id = await pngId();
+		expect((await readRecord(s.raw.bucket, printId))?.image).toBeNull();
+		const before = s.calls.admit.length;
+		expect(await approveImage({ ...s.deps, now: 3_000_000 }, id)).toEqual({ ok: true, status: 'approved', uploads: 1, shown: 1 });
+		expect(s.calls.admit.length).toBe(before + 1);
+		expect(s.calls.admit.at(-1)?.image).toEqual({ key: `upload.${id}`, url: '' });
+		expect((await readRecord(s.raw.bucket, printId))?.image).toEqual({ key: `upload.${id}`, url: '' });
+		expect(status(s, id)).toEqual({ status: 'approved', decided_at: 3_000_000 });
+		expect(s.sqlite.query(`SELECT value FROM meta WHERE key = 'sync_version'`).get()).toEqual({ value: '3000000' });
+		// The original stays in RAW for the screenshots step; approving again changes nothing.
+		expect(s.raw.objects.has(imageKey(id, 'png'))).toBe(true);
+		expect(await approveImage({ ...s.deps, now: 4_000_000 }, id)).toMatchObject({ ok: true });
+		expect(status(s, id)).toEqual({ status: 'approved', decided_at: 3_000_000 });
+		// An edit that keeps it keeps it in the record.
+		await editUpload({ ...s.deps, now: 5_000_000 }, ada, printId, input({ title: 'Kept', image: 'keep' }));
+		expect((await readRecord(s.raw.bucket, printId))?.image).toEqual({ key: `upload.${id}`, url: '' });
+		expect((await pendingImages(s.db)).images).toEqual([]);
+	});
+
+	test('approve: a processing upload gets it in its record for the sync, without an ingest', async () => {
+		const s = await setup(() => ({ status: 'too-big', by: 'string', size: 2, limit: 1 }));
+		const ada = await s.account('Ada');
+		const r = await createUpload(s.deps, ada, input({ image: PNG }));
+		const printId = r.ok ? r.printId : '';
+		expect(r).toMatchObject({ ok: true, state: 'processing' });
+		const before = s.calls.admit.length;
+		expect(await approveImage(s.deps, await pngId())).toEqual({ ok: true, status: 'approved', uploads: 1, shown: 0 });
+		expect(s.calls.admit.length).toBe(before);
+		expect((await readRecord(s.raw.bucket, printId))?.image?.key).toBe(`upload.${await pngId()}`);
+	});
+
+	test('approve that the gate can’t finish stays pending, and approving again finishes it', async () => {
+		let answer: GateOutcome = admitted;
+		const s = await setup(() => answer);
+		const ada = await s.account('Ada');
+		await createUpload(s.deps, ada, input({ image: PNG }));
+		const id = await pngId();
+		answer = { status: 'deferred', reason: 'R2 down' };
+		const stopped = await approveImage(s.deps, id);
+		expect(stopped.ok ? '' : stopped.problem).toContain('deferred (R2 down)');
+		expect(status(s, id)?.status).toBe('pending');
+		answer = admitted;
+		expect(await approveImage(s.deps, id)).toMatchObject({ ok: true, shown: 1 });
+		expect(status(s, id)?.status).toBe('approved');
+	});
+
+	test('reject: rejected, blocked, its original deleted; its owner sees it, can replace it, and can’t send the same bytes again', async () => {
+		const s = await setup();
+		const ada = await s.account('Ada');
+		const r = await createUpload(s.deps, ada, input({ image: PNG }));
+		const printId = r.ok ? r.printId : '';
+		const id = await pngId();
+		const before = s.calls.admit.length;
+		expect(await rejectImage({ ...s.deps, now: 3_000_000 }, id)).toEqual({ ok: true, status: 'rejected', uploads: 1, shown: 0 });
+		expect(s.calls.admit.length).toBe(before);
+		expect(status(s, id)).toEqual({ status: 'rejected', decided_at: 3_000_000 });
+		expect(s.raw.objects.has(imageKey(id, 'png'))).toBe(false);
+		expect(s.sqlite.query(`SELECT kind, value, print_id, report_id FROM removal_blocks`).all()).toEqual([
+			{ kind: 'image', value: `upload.${id}`, print_id: printId, report_id: null }
+		]);
+		expect((await listUploads(s.db, ada.id))[0]).toMatchObject({ image_id: id, image_status: 'rejected' });
+		// Never approved afterwards, and the same bytes are refused.
+		expect(await approveImage(s.deps, id)).toMatchObject({ ok: false });
+		expect(await createUpload(s.deps, ada, input({ title: 'Again', blueprintString: `${STRING} `, image: PNG }))).toMatchObject({
+			ok: false,
+			problem: 'That screenshot can’t be used.'
+		});
+		// Replacing it: a new pending image; the rejected row goes, its block stays.
+		expect(await editUpload({ ...s.deps, now: 4_000_000 }, ada, printId, input({ image: PNG2 }))).toMatchObject({ ok: true });
+		const id2 = (await sha256Hex(PNG2)).slice(0, 16);
+		expect(s.images()).toMatchObject([{ id: id2, status: 'pending' }]);
+		expect(s.sqlite.query(`SELECT count(*) AS n FROM removal_blocks`).get()).toEqual({ n: 1 });
+		// An approved image can't be rejected here.
+		await approveImage(s.deps, id2);
+		expect(await rejectImage(s.deps, id2)).toMatchObject({ ok: false });
 	});
 });

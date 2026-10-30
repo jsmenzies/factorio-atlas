@@ -2,6 +2,7 @@
  * The print page's whole data source: one JSON document per print in R2, so a print page
  * never queries D1.
  */
+import type { Site } from '#lib/print-id.js';
 import type { PrintAnalysis } from './analyze';
 import type { FoldState } from './fold';
 import type { FirebaseRecord } from './record';
@@ -27,6 +28,8 @@ export interface PrintDoc {
 		created_at: number | null;
 		updated_at: number | null;
 		source_url: string;
+		/** The site of the record shown (no favourites but factorioprints'); absent from documents written before it. */
+		source?: Site;
 		/** Only on a later exact copy by the same author (the soft fold, fold.ts): their earlier print. */
 		copy_of?: { id: string };
 		/** Only on an exact copy by someone else (fold.ts): the earliest print of that content. */
@@ -52,7 +55,8 @@ export const toPrintDoc = (id: string, sourceUrl: string, r: FirebaseRecord, ana
 		description_md: r.descriptionMarkdown ?? '',
 		created_at: toEpochMs(r.createdDate),
 		updated_at: toEpochMs(r.lastUpdatedDate),
-		source_url: sourceUrl
+		source_url: sourceUrl,
+		source: r.source?.site ?? 'factorioprints'
 	},
 	analysis
 });
