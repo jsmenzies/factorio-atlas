@@ -3,6 +3,8 @@ import {
 	capSize,
 	cardImage,
 	cropBox,
+	IMGUR_ID,
+	isImgurId,
 	isOwnImage,
 	isSiteImage,
 	isUploadImage,
@@ -112,6 +114,71 @@ describe('cardImage', () => {
 		expect(cardImage(card(cover), bases)).toEqual({ kind: 'imgur', src: 'https://i.imgur.com/AbCd123l.png', width: 640, height: 360 });
 		expect(cardImage(card({ image_id: null, image_type: null, ...cover }), bases)).toMatchObject({ kind: 'render', src: renderSrc });
 		expect(cardImage(card({ image_id: null, image_type: null }), bases)).toBeNull();
+	});
+});
+
+describe('an image id that is no Imgur id (`-P3dZ4tkk0JMjk6H-Zon`: a 20-character id)', () => {
+	const BAD = 'KzJzOBFEmb08rU5qJCV9';
+	const card = (over: Partial<CardImageColumns> = {}): CardImageColumns => ({
+		id: '-P3dZ4tkk0JMjk6H-Zon',
+		image_id: BAD,
+		image_type: 'image/png',
+		shot_state: null,
+		shot_v: null,
+		shot_ext: null,
+		shot_w: null,
+		shot_h: null,
+		cover_page: null,
+		cover_stamp: null,
+		cover_w: null,
+		cover_h: null,
+		...over
+	});
+	const bases = { shots: 'https://s.example.com', renderBase: (id: string) => `https://r.example.com/${id}` };
+	const cover = { cover_page: '', cover_stamp: '0123456789', cover_w: 4000, cover_h: 2000 };
+
+	test('which ids are Imgur ids: 5 to 10 letters and digits, never our own images', () => {
+		for (const id of ['AbCd1', 'AbCd123', 'AbCd1234', 'AbCdEf1234']) expect(isImgurId(id)).toBe(true);
+		for (const id of [
+			BAD,
+			'AbCd',
+			'AbCdEf12345',
+			'AbC-d12',
+			'AbCd123.png',
+			'',
+			uploadImageId('0123456789abcdef'),
+			siteImageId('codex', '0123456789abcdef')
+		])
+			expect(isImgurId(id)).toBe(false);
+		expect(IMGUR_ID.source).toBe('^[A-Za-z0-9]{5,10}$');
+	});
+
+	test('a card never hotlinks Imgur for it: the render thumbnail, else nothing', () => {
+		expect(cardImage(card(cover), bases)).toMatchObject({
+			kind: 'render',
+			src: 'https://r.example.com/-P3dZ4tkk0JMjk6H-Zon/root.0123456789.t320.avif'
+		});
+		expect(cardImage(card(), bases)).toBeNull();
+	});
+
+	test('the print page shows no picture from Imgur for it, no link preview, and says unavailable', () => {
+		const v = shotView(BAD, 'image/png', null, '/screenshots');
+		expect(v).toEqual({ state: 'unknown', imgur: false, backdrop: null, large: null, inline: null, full: null, og: null });
+		expect(NO_SHOT[v.state]).toBeUndefined();
+	});
+
+	test('our own images still resolve to our copies once sized, and an Imgur id still hotlinks while unknown', () => {
+		const site = siteImageId('codex', '0123456789abcdef');
+		const sized = { state: 'copied', v: 1, ext: 'jpg', w: 1920, h: 1080 } as const;
+		expect(shotView(site, null, sized, '/screenshots')).toMatchObject({ state: 'copied', full: { src: `/screenshots/${site}.jpg` } });
+		expect(
+			cardImage(card({ image_id: site, shot_state: 'copied', shot_v: 1, shot_ext: 'jpg', shot_w: 1920, shot_h: 1080 }), bases)
+		).toMatchObject({
+			kind: 'screenshot',
+			src: `https://s.example.com/${site}.v1.c320.avif`
+		});
+		expect(shotView(site, null, null, '/screenshots').state).toBe('preparing');
+		expect(shotView('AbCd123', 'image/png', null, '/screenshots')).toMatchObject({ state: 'unknown', imgur: true });
 	});
 });
 

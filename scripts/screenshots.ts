@@ -58,11 +58,11 @@ import { decodes } from './screenshots/make.js';
 import { runMake, runRecheck, runUpload } from './screenshots/run.js';
 import { runFromUploads } from './screenshots/uploads.js';
 import { runFromSites } from './screenshots/sites.js';
-import { isOwnImage } from '#lib/screenshots.js';
+import { IMGUR_ID, isOwnImage } from '#lib/screenshots.js';
 import { fetchImgur, imgurOriginal } from './screenshots/fetch.js';
 import { EXT, kindOfMime, requestExt } from './screenshots/image.js';
 import { backoffMs, pacer, pool, realClock } from './screenshots/pace.js';
-import { collect, IMGUR_ID, readClone, readDisk, type PrintImage } from './screenshots/records.js';
+import { collect, readClone, readDisk, type PrintImage } from './screenshots/records.js';
 import {
 	duplicateGuard,
 	formatEntry,

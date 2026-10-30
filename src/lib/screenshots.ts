@@ -31,6 +31,15 @@ export const OG_MAX = 1200;
 /** Originals over either limit are scaled down to fit both (3840 × 2160 is 8.3 MP). */
 export const CAP = { pixels: 3840 * 2160, side: 8192 } as const;
 
+/**
+ * An Imgur image id: those seen in the mirror are 7 or 8 letters and digits. Anything else in a record's
+ * `image.id` that isn't one of our own images (isOwnImage), e.g. the 20-character id of
+ * `-P3dZ4tkk0JMjk6H-Zon`, is no Imgur image: the screenshots step never copies it and no page hotlinks Imgur
+ * for it (Imgur answers such a URL with its home page).
+ */
+export const IMGUR_ID = /^[A-Za-z0-9]{5,10}$/;
+export const isImgurId = (id: string) => IMGUR_ID.test(id);
+
 /** An approved upload's screenshot: `upload.` and the first 16 hex digits of the image's SHA-256 (migration 0024). */
 export const UPLOAD_IMAGE = /^upload\.[0-9a-f]{16}$/;
 export const isUploadImage = (id: string) => UPLOAD_IMAGE.test(id);
@@ -204,12 +213,14 @@ const IMGUR_BACKDROP = { width: 1024, height: 576 };
  *   cover page's render thumbnail, else nothing; never Imgur;
  * - unknown (no row: not copied yet): Imgur's 640 px copy as before, else the render thumbnail, else nothing;
  *   an upload's or another site's image (`upload.…`, `codex.…`) is never on Imgur, so until the screenshots
- *   step has sized it the card shows the render thumbnail, else nothing.
+ *   step has sized it the card shows the render thumbnail, else nothing; so does an id that is no Imgur id
+ *   (IMGUR_ID), which never gets a row.
  */
 export function cardImage(c: CardImageColumns, bases: { shots: string; renderBase: (id: string) => string }): CardImage | null {
 	const shot = shotOf(c.image_id, c.shot_state, c.shot_v, c.shot_ext, c.shot_w, c.shot_h);
 	if (shot) return { kind: 'screenshot', ...cropPicture(bases.shots, shot) };
-	if (c.shot_state === null && c.image_id && !isOwnImage(c.image_id))
+	// Own images (isOwnImage) and ids Imgur never had (IMGUR_ID) fail isImgurId: the render thumbnail, else nothing.
+	if (c.shot_state === null && c.image_id && isImgurId(c.image_id))
 		return { kind: 'imgur', src: imgurUrl(c.image_id, c.image_type, 'large'), ...IMGUR_CARD };
 	if (c.cover_page !== null && c.cover_stamp && c.cover_w && c.cover_h) {
 		const base = bases.renderBase(c.id);
@@ -279,6 +290,8 @@ export function shotView(imageId: string | null, imageType: string | null, manif
 	if (!imageId) return { state: 'unknown', ...none };
 	// Never Imgur for an upload's or another site's image: only our sized copies, once they exist.
 	if (isOwnImage(imageId)) return { state: 'preparing', ...none };
+	// Nor for an id Imgur never had: no copy can exist either, so shown as unavailable.
+	if (!isImgurId(imageId)) return { state: 'unknown', ...none };
 	const original = imgurUrl(imageId, imageType, 'original');
 	const preview = imgurUrl(imageId, imageType, 'preview');
 	return {

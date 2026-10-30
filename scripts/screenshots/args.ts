@@ -5,8 +5,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { UPLOAD_TARGETS, type UploadTarget } from './ledger.js';
 import { isPrintId } from '#lib/print-id.js';
-import { isOwnImage } from '#lib/screenshots.js';
-import { IMGUR_ID } from './records.js';
+import { IMGUR_ID, isOwnImage } from '#lib/screenshots.js';
 
 /** Sent with every request; no Referer is ever sent (Imgur refuses some). */
 export const USER_AGENT = 'BlueprintAtlas-screenshots/1.0 (+https://github.com/jsmenzies/factorio-atlas)';

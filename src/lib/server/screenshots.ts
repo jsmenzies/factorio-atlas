@@ -9,7 +9,7 @@
  * 0019).
  */
 import { env } from 'cloudflare:workers';
-import { manifestKey, parseManifest, shotView, type ShotManifest, type ShotView } from '#lib/screenshots.js';
+import { isImgurId, isOwnImage, manifestKey, parseManifest, shotView, type ShotManifest, type ShotView } from '#lib/screenshots.js';
 
 /** URL prefix of the screenshot files: the bucket's custom domain, or this site's `/screenshots` route. */
 export const screenshotsBase = (): string => {
@@ -34,7 +34,8 @@ export async function getShotFile(key: string): Promise<ShotFileBody | null> {
  * read only means the page shows what it would without a copy.
  */
 export async function getShotManifest(imageId: string | null): Promise<ShotManifest | null> {
-	if (!imageId) return null;
+	// Only an Imgur id or one of our own images can have one (SHOT_KEY): no read for anything else.
+	if (!imageId || !(isImgurId(imageId) || isOwnImage(imageId))) return null;
 	try {
 		const file = await getShotFile(manifestKey(imageId));
 		return file ? parseManifest(await new Response(file.body).json()) : null;

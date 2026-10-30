@@ -6,11 +6,9 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isFactorioprintsId } from '#lib/print-id.js';
+import { IMGUR_ID } from '#lib/screenshots.js';
 import { listClone } from '#lib/server/pipeline/mirror-clone.js';
 import type { Wanted } from './state.js';
-
-/** Imgur ids seen in the mirror are 7 or 8 letters and digits. */
-export const IMGUR_ID = /^[A-Za-z0-9]{5,10}$/;
 
 /** A record's image, or null when it has none (or an id that isn't an Imgur id). */
 export const imageOf = (record: unknown): { id: string; type: string | null } | null => {

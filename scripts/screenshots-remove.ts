@@ -19,12 +19,11 @@
 import { appendFileSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { manifestKey } from '#lib/screenshots.js';
+import { IMGUR_ID, manifestKey } from '#lib/screenshots.js';
 import { removalStatements } from '#lib/server/screenshot-flags.js';
 import { screenshotsDir } from './screenshots/args.js';
 import { formatLine, ledgerFile, readLedger, type LedgerLine } from './screenshots/ledger.js';
 import { isPrintId } from '#lib/print-id.js';
-import { IMGUR_ID } from './screenshots/records.js';
 import { formatEntry, parseState, STATE_FILE, type StateEntry } from './screenshots/state.js';
 import { openShotStore } from './screenshots/store.js';
 import { syncImage } from './screenshots/upload.js';
