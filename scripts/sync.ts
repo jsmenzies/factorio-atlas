@@ -11,7 +11,9 @@
  *                   clone's), then fetch it (fast-forward). A source is held back, and only it, when
  *                   adds, deletions and moves are more than `maxChange` of its prints (a layout
  *                   change; `--accept <commit>` lets one through), it would have no prints, or its
- *                   history was rewritten
+ *                   history was rewritten. Then `records --stage S --json`: the record store
+ *                   (RECORDS_DIR, default ~/data/factorio-records) brought in line with every other
+ *                   site's records on the stage (today live uploads), for the render step
  *   3. ingest       `backfill --stage S --from-clone … --json`; skipped when neither the sources'
  *                   digest nor the analyzer, index or viewer version changed since the last update
  *                   that ran it to the end (a backfill with failures that aren't the records' own
@@ -22,7 +24,8 @@
  *                   (approved upload screenshots, from the stage's RAW), `--upload S`,
  *                   `screenshots:flags --stage S`; needs removals
  *   6. render       `render:top <top>` (factorioprints only) and `render:check`, then
- *                   `render --next <perUpdate> --top <top> --upload S --flags`; needs ingest and removals
+ *                   `render --next <perUpdate> --top <top> --upload S --flags`, reading the mirror
+ *                   clone and the record store; needs ingest and removals
  *   7. figures      the stage's counts for the Overview (`--figures`)
  *
  * Each step is the existing command, run as its own process into one log in the run logs folder
@@ -52,6 +55,7 @@ import { IDENTITY_VERSION } from '#lib/server/pipeline/identity.js';
 import { INDEX_VERSION } from '#lib/server/pipeline/repository.js';
 import { newRunId } from '#lib/server/pipeline/runs.js';
 import { VIEWER_VERSION } from '#lib/server/pipeline/viewer-files.js';
+import { siteOfPrintId } from '#lib/print-id.js';
 import { rendersDir } from '#lib/server/renders-dir.js';
 import { LIVE_SYNC_WHERE, liveSyncParams, readMeta, writeMeta } from '#lib/server/sync.js';
 import { PROCESSING_ATTEMPTS } from '#lib/server/uploads/uploads.js';
@@ -74,6 +78,8 @@ import {
 import { STAGES, type Stage } from './backfill/stage';
 import { defaultAssets } from './render/assets-dir';
 import { favoritesCacheFile, rankFavorites, readFavorites } from './render/favorites';
+import type { RecordsResult } from './records';
+import { recordsDir } from './records/store';
 import { cloneSource } from './render/source';
 import { confirmProd, fail, n } from './stage-command';
 import { localDbFile, openLocalDb } from './sync/local-db';
@@ -143,11 +149,16 @@ if (!existsSync(clone)) fail(`no mirror clone at ${clone} (set RENDER_CLONE_DIR)
 /** The print sources an update fetches, in order. Uploads admit their waiting records in their own fetch (scripts/sync/uploads.ts). */
 const SOURCES: SourceAdapter[] = [mirrorSource(clone), uploadsSource(ROOT, stage)];
 
+/** The record store: every other site's records on this machine (scripts/records/store.ts), filled in the fetch step. */
+const records = recordsDir(ROOT);
+
 /**
- * Where the steps read print records: today the mirror clone. Moving the steps to another record
- * source (a record store over every site) changes only this.
+ * Where the steps read print records: the mirror clone, and with `store` the record store too (the
+ * render steps: uploads and later other sites are drawn like the mirror's prints). The backfill and
+ * screenshots read the mirror alone: uploads are ingested by the Worker (or the uploads source), and
+ * their screenshots come from the stage. Moving a step to the store changes only this.
  */
-const recordSourceArgs = () => ['--from-clone', clone];
+const recordSourceArgs = (o: { store?: boolean } = {}) => ['--from-clone', clone, ...(o.store ? ['--records', records] : [])];
 
 const short = (id: string | null | undefined) => id?.slice(0, 7) ?? '?';
 
@@ -308,6 +319,16 @@ const hasSource = (site: string) => run.sources.some((s) => s.site === site);
 /** A failed command's outcome, summarised by its last result line. */
 const failed = (r: ScriptResult) => outcomeOf(r, '', [], `exit ${r.code}: ${failureLine(r.tail)}`);
 
+/** Of a render run's batch (`--next`), the prints from the record store: any site's but factorioprints'. */
+const storePicks = (options: string) => {
+	try {
+		const picked = (JSON.parse(options) as { batch?: { picked?: string[] } }).batch?.picked ?? [];
+		return picked.filter((id) => siteOfPrintId(id) !== 'factorioprints').length;
+	} catch {
+		return 0;
+	}
+};
+
 const steps: StepDef[] = [
 	{
 		id: 'removals',
@@ -405,6 +426,16 @@ const steps: StepDef[] = [
 						);
 				} else if (!sourceMoved(plan)) parts.push(`${plan.site}: already at its latest (${short(plan.to.id)})`);
 			}
+			// Then the record store, after the sources have admitted their waiting records (uploads): the render
+			// step reads it. Read-only on the stage.
+			let store: RecordsResult | null = null;
+			if (!stopping()) {
+				const r = await script(['scripts/records.ts', '--stage', stage, '--dir', records, '--json']);
+				store = lastJsonLine<RecordsResult>(r.tail);
+				const line = store?.summary.replace(/^[✓✗]\s*/, '') ?? failureLine(r.tail);
+				if (r.code === 0 && store?.ok) parts.push(`record store: ${line}`);
+				else errors.push(`record store: ${line}`);
+			}
 			// The Overview compares each plan's two cursors: after the fetch, the fetched ones are level.
 			await writeMeta(db, 'plan', {
 				checkedAt: Date.now(),
@@ -461,6 +492,20 @@ const steps: StepDef[] = [
 					]
 				};
 			});
+			if (store) {
+				const sites = Object.values(store.sites);
+				const sum = (k: 'added' | 'changed' | 'removed' | 'vanished' | 'failed') => sites.reduce((t, c) => t + c[k], 0);
+				details.push({
+					title: 'record store',
+					rows: [
+						...detail('records', store.total, { always: true }),
+						...detail('new', sum('added')),
+						...detail('changed', sum('changed')),
+						...detail('removed', sum('removed') + sum('vanished')),
+						...detail('failed, tried again next update', sum('failed'), { tone: 'bad' })
+					]
+				});
+			}
 			for (const e of errors) details.push({ rows: [{ label: 'failed', value: e, tone: 'bad' }] });
 			return { status: errors.length ? 'failed' : plans.some((p) => p.blocked) ? 'warning' : 'done', summary, details };
 		}
@@ -681,7 +726,7 @@ const steps: StepDef[] = [
 					]
 				});
 			}
-			const r = await script(['scripts/render-scope.ts', 'check', ...recordSourceArgs(), '--json']);
+			const r = await script(['scripts/render-scope.ts', 'check', ...recordSourceArgs({ store: true }), '--json']);
 			const check = lastJsonLine<{ changed: number; gone: number }>(r.tail);
 			if (r.code !== 0 || !check) return failed(r);
 			parts.push(`${n(check.changed)} rendered prints changed, ${n(check.gone)} gone from their source (renders kept)`);
@@ -694,7 +739,7 @@ const steps: StepDef[] = [
 			});
 			if (stopping()) return { status: 'stopped', summary: parts.join(' · '), details };
 
-			const args = ['scripts/render-game.ts', ...recordSourceArgs(), '--next', String(settings.perUpdate ?? 100_000)];
+			const args = ['scripts/render-game.ts', ...recordSourceArgs({ store: true }), '--next', String(settings.perUpdate ?? 100_000)];
 			if (top > 0) args.push('--top', String(top));
 			args.push('--upload', stage, '--flags');
 			if (settings.workers) args.push('--workers', String(settings.workers));
@@ -702,11 +747,12 @@ const steps: StepDef[] = [
 			const rendered = await script(args, { FPSR_ASSETS_DIR: assetsDir });
 			const row = await db
 				.prepare(
-					'SELECT id, prints_total, prints_rendered, rendered, failed, uploaded, uploads_pending FROM render_runs WHERE started_at >= ? ORDER BY started_at DESC LIMIT 1'
+					'SELECT id, options, prints_total, prints_rendered, rendered, failed, uploaded, uploads_pending FROM render_runs WHERE started_at >= ? ORDER BY started_at DESC LIMIT 1'
 				)
 				.bind(since - 1000)
 				.first<{
 					id: string;
+					options: string;
 					prints_total: number;
 					prints_rendered: number;
 					rendered: number;
@@ -730,6 +776,7 @@ const steps: StepDef[] = [
 						{ label: 'prints with work', value: row.prints_total },
 						...detail('pages drawn', row.rendered, { always: row.prints_total > 0 }),
 						...detail('prints drawn', row.prints_rendered),
+						...detail('from the record store', storePicks(row.options)),
 						...detail('files uploaded', row.uploaded, { always: row.prints_total > 0 }),
 						...detail('failed', row.failed, { always: row.prints_total > 0, tone: 'bad' }),
 						...detail('uploads left for the next update', row.uploads_pending, { tone: 'warn' })

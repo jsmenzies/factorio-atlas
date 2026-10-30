@@ -1,7 +1,9 @@
 /**
  * Where the runner reads prints from: a local clone of the factorioprints mirror (one JSON file
  * per print at `<lowercase first 3 chars>/<id>.json`), or a flat folder of raw records such as
- * data/raw/factorioprints. Plus the walk over a decoded print's blueprint pages.
+ * data/raw/factorioprints; and beside either, the record store of every other site (uploads, …:
+ * scripts/records/store.ts), whose prints are resolved by their id's site (`withStore`). Plus the walk
+ * over a decoded print's blueprint pages.
  */
 import { execFileSync } from 'node:child_process';
 import { readdir, readFile, stat } from 'node:fs/promises';
@@ -9,6 +11,8 @@ import { join } from 'node:path';
 import { Effect } from 'effect';
 import { decodeExchangeString, decodeGameVersion, OFFLINE_MAX_INFLATED_BYTES } from '#lib/server/pipeline/decode.js';
 import { mirrorPath } from '#lib/server/pipeline/source.js';
+import { siteOfPrintId } from '#lib/print-id.js';
+import { storeFileOf, storePrintIds } from '../records/store.js';
 
 type Json = Record<string, unknown>;
 
@@ -75,6 +79,37 @@ export function diskSource(dir: string): RecordSource {
 		read: (id) => readRecord(join(dir, `${id}.json`)),
 		stamp: (id) => fileStamp(join(dir, `${id}.json`)),
 		file: (id) => join(dir, `${id}.json`)
+	};
+}
+
+/** The record store's prints alone (scripts/records/store.ts): `up-…` and the other sites' ids. */
+export function storeSource(dir: string): RecordSource {
+	const file = (id: string) => storeFileOf(dir, id) ?? join(dir, 'not-a-store-id', `${id}.json`);
+	return {
+		label: 'records',
+		ids: () => storePrintIds(dir),
+		read: (id) => readRecord(file(id)),
+		stamp: (id) => fileStamp(file(id)),
+		file
+	};
+}
+
+/**
+ * `base` (the mirror clone or a folder of factorioprints records) and the record store as one source:
+ * a factorioprints id reads from `base`, any other site's from the store. The store's prints come first
+ * in `ids()` (new prints people are waiting on, a few next to the mirror's thousands), so a `--next`
+ * batch takes them before the mirror's. Without a store (`dir` null) it is `base` itself, label and all.
+ */
+export function withStore(base: RecordSource, dir: string | null): RecordSource {
+	if (!dir) return base;
+	const store = storeSource(dir);
+	const pick = (id: string) => (siteOfPrintId(id) === 'factorioprints' ? base : store);
+	return {
+		label: `${base.label} + records`,
+		ids: async () => [...(await store.ids()), ...(await base.ids())],
+		read: (id) => pick(id).read(id),
+		stamp: (id) => pick(id).stamp(id),
+		file: (id) => pick(id).file(id)
 	};
 }
 

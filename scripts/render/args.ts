@@ -9,6 +9,12 @@ export interface RenderArgs {
 	/** Exactly one of these is the source. */
 	clone: string | null;
 	disk: string | null;
+	/**
+	 * The record store (scripts/records/store.ts) read beside the source: prints of every other site
+	 * (uploads, …), resolved by their ids. Default RECORDS_DIR, else ~/data/factorio-records; null with
+	 * `--no-records`. Runs recorded before it existed have none.
+	 */
+	records: string | null;
 	ids: string[] | null;
 	idsFile: string | null;
 	limit: number | null;
@@ -54,14 +60,15 @@ export interface RenderArgs {
 export class UsageError extends Error {}
 
 export const USAGE =
-	'usage: render --from-clone <dir> | --from-disk [dir]  [--ids a,b | --ids-file f] [--limit N | --next N] [--top N [--refresh-top]]\n' +
+	'usage: render --from-clone <dir> | --from-disk [dir]  [--records <dir> | --no-records]  [--ids a,b | --ids-file f] [--limit N | --next N] [--top N [--refresh-top]]\n' +
 	'              [--force] [--retry-failed]\n' +
 	'              [--plan-only] [--upload local|prod [--flags]] [--upload-concurrency N] [--no-thumbs] [--thumb-jobs N]\n' +
 	'              [--workers N] [--encode-parallel N] [--mem-cap-mb N] [--recycle-mb N] [--mem-budget-mb N]\n' +
 	'              [--mem-reserve-mb N] [--timeout-scale X]\n' +
 	'       render --resume [any flag above, to override]';
 
-export const defaultArgs = (machine: { threads: number; ramMb: number }): Omit<RenderArgs, 'clone' | 'disk'> => ({
+export const defaultArgs = (machine: { threads: number; ramMb: number; records?: string | null }): Omit<RenderArgs, 'clone' | 'disk'> => ({
+	records: machine.records ?? null,
 	ids: null,
 	idsFile: null,
 	limit: null,
@@ -122,6 +129,8 @@ export function parseArgs(argv: string[], defaultDisk: string): { given: Partial
 		else if (arg === '--flags') given.flags = true;
 		else if (arg === '--refresh-top') given.refreshTop = true;
 		else if (arg === '--from-clone') given.clone = value(arg);
+		else if (arg === '--records') given.records = value(arg);
+		else if (arg === '--no-records') given.records = null;
 		else if (arg === '--from-disk') given.disk = a[0] && !a[0].startsWith('--') ? a.shift()! : defaultDisk;
 		else if (arg === '--ids') {
 			given.ids = value(arg)
@@ -243,6 +252,7 @@ export function commandLine(a: RenderArgs): string {
 	const parts: string[] = [];
 	if (a.clone) parts.push('--from-clone', a.clone);
 	if (a.disk) parts.push('--from-disk', a.disk);
+	if (a.records) parts.push('--records', a.records);
 	if (a.ids) parts.push('--ids', a.ids.length > 5 ? `<${a.ids.length} ids>` : a.ids.join(','));
 	if (a.idsFile) parts.push('--ids-file', a.idsFile);
 	if (a.limit !== null) parts.push('--limit', String(a.limit));

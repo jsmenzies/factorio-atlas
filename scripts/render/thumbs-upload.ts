@@ -135,6 +135,8 @@ export interface ThumbUploaderOptions {
 	log?: (line: string) => void;
 	/** Checked between prints and files: true stops the uploader (what's left goes up next time). */
 	stopped?: () => boolean;
+	/** Whether the target's stage deleted or blocked the print (removed-guard.ts): its thumbnails never go up. */
+	removed?: (id: string) => Promise<boolean>;
 }
 
 const readIndex = async (file: string): Promise<ThumbsIndex | null> => {
@@ -209,6 +211,7 @@ export async function createThumbUploader(opts: ThumbUploaderOptions) {
 			return true;
 		}
 		try {
+			if (opts.removed && (await opts.removed(id))) return true;
 			// Keys wanted again must not be deleted by a deletion queued earlier.
 			await db.cancelDeletes(
 				target,

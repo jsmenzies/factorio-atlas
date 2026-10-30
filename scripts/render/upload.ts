@@ -166,6 +166,11 @@ export interface UploaderOptions {
 	/** How long a replaced or unused object stays before it may be deleted (default DELETE_GRACE_MS). */
 	graceMs?: number;
 	now?: () => number;
+	/**
+	 * Whether the target's stage deleted or blocked the print (removed-guard.ts), asked before each sync
+	 * of a print: such a print is never uploaded. Throwing counts as a failed sync (tried again later).
+	 */
+	removed?: (id: string) => Promise<boolean>;
 }
 
 export interface UploadStats {
@@ -581,6 +586,17 @@ export function createUploader(opts: UploaderOptions) {
 		pendingByPrint.set(id, plan.upload.length);
 		for (const k of failingPages) if (k.startsWith(`${id}\n`) && !plan.upload.some((j) => `${id}\n${j.path}` === k)) failingPages.delete(k);
 		if (!hasUploadWork(plan)) return 0;
+		// Just before anything goes up: a print the stage deleted is never uploaded (its pages aren't pending).
+		try {
+			if (opts.removed && (await opts.removed(id))) {
+				pendingByPrint.set(id, 0);
+				return 0;
+			}
+		} catch (e) {
+			if (isAbort(e)) throw e;
+			failed(id, null, e);
+			return 1;
+		}
 		const listed = [...plan.listed];
 		let failures = 0;
 		let ctx: PrintCtx;

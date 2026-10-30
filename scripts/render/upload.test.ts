@@ -196,6 +196,44 @@ describe('uploader', () => {
 		expect(r.pages).toBeGreaterThan(0);
 	});
 
+	test('a print the stage deleted is never uploaded; one deleted mid-run is caught by the re-check; a failed check uploads nothing', async () => {
+		await renderPage('', 'aaaaaaaaaa', [H(1)]);
+		const store = fakeStore();
+		const db = fakeDb([job('', 'aaaaaaaaaa')]);
+		const asked: string[] = [];
+		let deleted = true;
+		const u = uploader(store, db, {
+			removed: async (id) => {
+				asked.push(id);
+				return deleted;
+			}
+		});
+		u.schedule(ID, 1);
+		await u.drain();
+		expect(asked).toEqual([ID]);
+		expect(store.calls.filter((c) => c.startsWith('PUT'))).toEqual([]);
+		expect(db.uploads.size).toBe(0);
+		expect(u.pending).toBe(0);
+
+		// The check fails (the stage unreachable): nothing goes up, and the sync counts as failed.
+		const failing = uploader(store, db, {
+			removed: async () => {
+				throw new Error('stage unreachable');
+			}
+		});
+		failing.schedule(ID, 1);
+		await failing.drain();
+		expect(store.calls.filter((c) => c.startsWith('PUT'))).toEqual([]);
+		expect(failing.stats.lastError).toContain('stage unreachable');
+
+		// Not deleted: it goes up as usual.
+		deleted = false;
+		const ok = uploader(store, db, { removed: async () => deleted });
+		ok.schedule(ID, 1);
+		await ok.drain();
+		expect(store.calls.filter((c) => c.startsWith('PUT'))).toContain(`PUT ${ID}/index.json`);
+	});
+
 	test('settled() waits for a print to sync, resolving at once when nothing is queued or after a stop', async () => {
 		await renderPage('', 'aaaaaaaaaa', [H(1)]);
 		const store = fakeStore();

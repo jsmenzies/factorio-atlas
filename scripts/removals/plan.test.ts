@@ -36,7 +36,9 @@ test('liveRun: a live state with a fresh heartbeat', () => {
 });
 
 test('printPaths: renders, thumbnails and the archived record', () => {
-	expect(printPaths('-A', { renders: '/r', thumbs: '/t', raw: '/d' })).toEqual(['/r/-A', '/t/-A', '/d/factorioprints/-A.json']);
+	const dirs = { renders: '/r', thumbs: '/t', raw: '/d', records: '/s' };
+	expect(printPaths('-A', dirs)).toEqual(['/r/-A', '/t/-A', '/d/factorioprints/-A.json']);
+	expect(printPaths('up-AbCdE12345', dirs)).toEqual(['/r/up-AbCdE12345', '/t/up-AbCdE12345', '/s/upload/AbCdE12345.json']);
 });
 
 test('unswept: new tombstones and ones deleted again since the sweep', () => {

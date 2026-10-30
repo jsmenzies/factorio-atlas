@@ -16,6 +16,18 @@ describe('render args', () => {
 		expect(() => resolved('--from-clone /m --top')).toThrow(UsageError);
 	});
 
+	test('--records and --no-records: the record store read beside the source', () => {
+		const withStore = defaultArgs({ threads: 16, ramMb: 20_000, records: '/store' });
+		expect(defaults.records).toBeNull();
+		expect(resolveArgs(parse('--from-clone /m').given, withStore)).toMatchObject({ clone: '/m', records: '/store' });
+		const a = resolveArgs(parse('--from-clone /m --records /other --next 5').given, withStore);
+		expect(a.records).toBe('/other');
+		expect(commandLine(a)).toBe('--from-clone /m --records /other --next 5 --workers 8');
+		expect(resolveArgs(parse('--from-clone /m --no-records').given, withStore).records).toBeNull();
+		expect(resumeArgs({ args: a }, 'r1', parse('--no-records').given).args.records).toBeNull();
+		expect(() => resolved('--from-clone /m --records')).toThrow(UsageError);
+	});
+
 	test('without --top nothing changes', () => {
 		const a = resolved('--from-clone /m --next 400 --upload prod --workers 1');
 		expect(a).toMatchObject({ next: 400, top: null, refreshTop: false, upload: 'prod', workers: 1 });

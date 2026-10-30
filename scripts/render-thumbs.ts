@@ -174,7 +174,12 @@ async function runUpload(target: 'local' | 'prod') {
 	const proxy = await getPlatformProxy<Env>({ persist: true });
 	let code = 0;
 	let thumbDeletes = 0;
+	let stage: Awaited<ReturnType<typeof import('./backfill/stage.js').openTarget>> | null = null;
 	try {
+		// Nor a print the target's stage deleted or blocked, checked again before each print (removed-guard.ts).
+		const { removedGuard } = await import('./render/removed-guard.js');
+		if (target === 'prod') stage = await (await import('./backfill/stage.js')).openTarget('prod', { log: console.log });
+		const guard = await removedGuard((stage?.env ?? proxy.env).DB, console.log);
 		// Never a print removed on request (the local copy of `removal_blocks`, from `bun run removals`).
 		const { loadRemovedPrintIds } = await import('#lib/server/removal-blocks.js');
 		const removed = await loadRemovedPrintIds(proxy.env.DB);
@@ -192,8 +197,10 @@ async function runUpload(target: 'local' | 'prod') {
 			dir: THUMBS,
 			ids: list,
 			graceMs,
-			concurrency: Math.min(jobs, 16)
+			concurrency: Math.min(jobs, 16),
+			removed: guard.removed
 		});
+		if (guard.skipped.size) console.log(`not uploaded: ${guard.skipped.size} prints the ${target} stage deleted or removed`);
 		console.log(
 			`${stats.uploaded} prints uploaded (${stats.files} files, ${(stats.bytes / 1024 / 1024).toFixed(1)} MB), ${stats.unchanged} unchanged, ${stats.missing} without thumbnails; ` +
 				`${stats.deletesScheduled} replaced files to delete in ${Math.round(graceMs / 1000)} s, ${stats.deleted} due ones deleted` +
@@ -206,6 +213,7 @@ async function runUpload(target: 'local' | 'prod') {
 		console.error(e instanceof Error ? e.message : String(e));
 		code = 1;
 	} finally {
+		await stage?.dispose().catch(() => undefined);
 		await proxy.dispose();
 	}
 	if (withFlags && code !== 1) {

@@ -6,9 +6,10 @@
  *       (migration 0014). Prints that drop out keep their row with in_top = 0, so their renders stay.
  *       `bun run render --top N` uses the stored list (and refreshes it itself when it is missing or
  *       shorter than N).
- *   bun run render:check --from-clone <mirror clone> | --from-disk [dir]   [--json]
+ *   bun run render:check --from-clone <mirror clone> | --from-disk [dir]   [--records <dir> | --no-records] [--json]
  *       Compare every print a run has looked at (render_prints, its file's size:mtime then) with its
- *       record file now, and store those that changed or are gone in render_source_changes. A batch
+ *       record file now (another site's print: in the record store, RECORDS_DIR by default, as
+ *       `bun run render` reads it), and store those that changed or are gone in render_source_changes. A batch
  *       (`--next`) looks at a changed print again and draws only the pages whose input changed.
  *
  * Reads only the record files' favourites counts and stamps; writes the local D1 (the same state
@@ -18,11 +19,12 @@ import { join, resolve } from 'node:path';
 import { getPlatformProxy } from 'wrangler';
 import { checkSources, favoritesCacheFile, favoritesDb, refreshFavorites } from './render/favorites.js';
 import { ROOT } from './render/settings.js';
-import { cloneSource, diskSource } from './render/source.js';
+import { cloneSource, diskSource, withStore } from './render/source.js';
+import { recordsDir } from './records/store.js';
 
 const USAGE =
 	'usage: render-scope top <N> --from-clone <dir> | --from-disk [dir] [--json]\n' +
-	'       render-scope check --from-clone <dir> | --from-disk [dir] [--json]';
+	'       render-scope check --from-clone <dir> | --from-disk [dir] [--records <dir> | --no-records] [--json]';
 
 function fail(problem: string): never {
 	console.error(`${problem}\n${USAGE}`);
@@ -44,10 +46,13 @@ if (command === 'top') {
 let clone: string | null = null;
 let disk: string | null = null;
 let asJson = false;
+let records: string | null = recordsDir(ROOT);
 while (argv.length) {
 	const a = argv.shift()!;
 	if (a === '--from-clone') clone = argv[0] && !argv[0].startsWith('--') ? argv.shift()! : fail('--from-clone needs a folder');
 	else if (a === '--from-disk') disk = argv[0] && !argv[0].startsWith('--') ? argv.shift()! : join(ROOT, 'data', 'raw', 'factorioprints');
+	else if (a === '--records') records = argv[0] && !argv[0].startsWith('--') ? resolve(argv.shift()!) : fail('--records needs a folder');
+	else if (a === '--no-records') records = null;
 	else if (a === '--json') asJson = true;
 	else fail(`unknown argument: ${a}`);
 }
@@ -70,7 +75,7 @@ try {
 					`${meta.ms} ms${former ? `; ${former} earlier favourites kept outside the top ${meta.n}` : ''}`
 			);
 	} else {
-		const meta = await checkSources(fdb, source);
+		const meta = await checkSources(fdb, withStore(source, records));
 		if (asJson) console.log(JSON.stringify(meta));
 		else
 			console.log(

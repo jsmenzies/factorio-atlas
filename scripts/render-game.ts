@@ -164,7 +164,8 @@ import { favoritesCacheFile, favoritesDb, refreshFavorites, topIds, type Favorit
 import { entityCount, PageCache, prepared, preparedSkipped, skipReason, type Prepared } from './render/prepare.js';
 import { renderProgress } from './render/progress.js';
 import { batchCandidates, byPrint, isModern, takesPrint, withTopFirst } from './render/scope.js';
-import { blueprintPages, cloneSource, decode, diskSource, versionString, type RecordSource } from './render/source.js';
+import { blueprintPages, cloneSource, decode, diskSource, versionString, withStore, type RecordSource } from './render/source.js';
+import { recordsDir } from './records/store.js';
 import {
 	AVIF,
 	checkRendersDir,
@@ -178,6 +179,8 @@ import {
 	type AssetInfo
 } from './render/settings.js';
 import type { RenderStore } from './render/store.js';
+import { removedGuard, type RemovedGuard } from './render/removed-guard.js';
+import { openTarget, type Target } from './backfill/stage.js';
 import { deleteGraceMs, openStore } from './render/target.js';
 import { createUploader, DELETE_GRACE_MS, hasUploadWork, planPrint, type Uploader, type UploadRow } from './render/upload.js';
 import { thumbsDir } from '#lib/server/renders-dir.js';
@@ -236,7 +239,7 @@ async function bail(problem: string, showUsage = false): Promise<never> {
 	process.exit(1);
 }
 
-const defaults = defaultArgs({ threads: availableParallelism(), ramMb: totalmem() / 1048576 });
+const defaults = defaultArgs({ threads: availableParallelism(), ramMb: totalmem() / 1048576, records: recordsDir(ROOT) });
 let args: RenderArgs;
 let resumeNote: string | null = null;
 let resumedFrom: string | null = null;
@@ -256,6 +259,8 @@ try {
 args = args!;
 // Runs recorded before --mem-reserve-mb existed resume with the default.
 args.memReserveMb ??= defaults.memReserveMb;
+// Runs recorded before the record store existed resume with it (null, from --no-records, stays null).
+if (args.records === undefined) args.records = defaults.records;
 const { force, retryFailed, planOnly, encodeParallel, memCapMb, recycleMb, memBudgetMb, memReserveMb, timeoutScale, limit, next } = args;
 /** Workers that fit in RAM less the reserve, each drawing at least a small page. */
 const workerCap = maxWorkers(totalmem() / 1048576, memReserveMb, memEstimateMb(0));
@@ -281,7 +286,10 @@ if (!forceAll) {
 console.log(`renders: ${OUT_DIR}`);
 
 const sourceDir = resolve(args.clone ?? args.disk!);
-const source: RecordSource = args.clone ? cloneSource(sourceDir) : diskSource(sourceDir);
+/** factorioprints' records (the mirror clone, or a folder of them): favourites are counted here only. */
+const baseSource: RecordSource = args.clone ? cloneSource(sourceDir) : diskSource(sourceDir);
+/** Every print: the base, and every other site's from the record store (scripts/records/store.ts). */
+const source: RecordSource = withStore(baseSource, args.records && resolve(args.records));
 /** The prints given (`--ids`, `--ids-file`), each once, or null for every print in the source. */
 let wanted: string[] | null = args.ids && [...new Set(args.ids)];
 if (args.idsFile) {
@@ -303,6 +311,24 @@ try {
 	if (store) graceMs = deleteGraceMs(process.env.RENDER_DELETE_GRACE_S, args.upload!);
 } catch (e) {
 	await bail(e instanceof Error ? e.message : String(e));
+}
+/**
+ * Prints the upload target's stage deleted or blocked are never uploaded (scripts/render/removed-guard.ts):
+ * the local stage is the proxy's D1; prod is reached as render:flags does it (wrangler login, Node on PATH).
+ */
+let guard: RemovedGuard | null = null;
+let guardTarget: Target | null = null;
+if (store) {
+	try {
+		if (args.upload === 'local') guard = await removedGuard(proxy.env.DB, console.log);
+		else {
+			guardTarget = await openTarget(args.upload!, { log: console.log });
+			guard = await removedGuard(guardTarget.env.DB, console.log);
+		}
+	} catch (e) {
+		await guardTarget?.dispose().catch(() => undefined);
+		await bail(`✗ can't read the ${args.upload} stage's deleted prints, so nothing may be uploaded: ${e instanceof Error ? e.message : e}`);
+	}
 }
 
 // --- assets
@@ -414,7 +440,8 @@ const uploader: Uploader | null = store
 			outDir: OUT_DIR,
 			concurrency: args.uploadConcurrency,
 			graceMs,
-			log
+			log,
+			removed: guard?.removed
 		})
 	: null;
 /** Page thumbnails (THUMBS_DIR), kept apart from the renders: made from finished overviews by the thumb step. */
@@ -432,7 +459,8 @@ const thumbUploader =
 				dir: THUMBS,
 				graceMs,
 				log,
-				stopped: () => stopping
+				stopped: () => stopping,
+				removed: guard?.removed
 			})
 		: null;
 /** After a print's pages are final: its thumbnails (and, uploading, their upload after its render files). */
@@ -1205,9 +1233,9 @@ try {
 		const refreshed = args.refreshTop || !meta || meta.n < args.top;
 		if (refreshed) {
 			const why = args.refreshTop ? '--refresh-top' : meta ? `the stored list has only ${meta.n}` : 'no list stored yet';
-			meta = await refreshFavorites(fdb, source, args.top, favoritesCacheFile(join(ROOT, '.cache', 'render'), sourceDir));
+			meta = await refreshFavorites(fdb, baseSource, args.top, favoritesCacheFile(join(ROOT, '.cache', 'render'), sourceDir));
 			log(
-				`top list (${why}): ${meta.n} most-favourited of ${meta.prints} prints in ${source.label} (at least ${meta.cutoff} favourites), ` +
+				`top list (${why}): ${meta.n} most-favourited of ${meta.prints} prints in ${baseSource.label} (at least ${meta.cutoff} favourites), ` +
 					`${meta.parsed} records read in ${meta.ms} ms`
 			);
 		}
@@ -1307,7 +1335,9 @@ try {
 	await flushSeen().catch(() => undefined);
 	syncRun();
 	await queue.writeRun(run).catch((e: unknown) => console.error(`could not write the run's final state: ${e}`));
+	await guardTarget?.dispose().catch(() => undefined);
 	await proxy.dispose();
+	if (guard?.skipped.size) log(`not uploaded: ${guard.skipped.size} prints the ${args.upload} stage deleted or removed`);
 }
 const secs = (Date.now() - run.started_at) / 1000;
 log(

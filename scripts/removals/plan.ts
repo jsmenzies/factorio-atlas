@@ -6,6 +6,7 @@
 import { LIVE_STATES, type RunState } from '#lib/server/pipeline/runs.js';
 import { RENDER_STALE_MS } from '#lib/server/render-queue.js';
 import type { BlockRow } from '#lib/server/removal-blocks.js';
+import { storeFileOf } from '../records/store.js';
 
 /** Local D1 tables (the render queue and upload records) with rows per print. */
 export const LOCAL_PRINT_TABLES = [
@@ -44,11 +45,14 @@ export const imageBlocks = (blocks: readonly BlockRow[]) =>
 export const liveRun = (runs: readonly { id: string; state: RunState; updated_at: number }[], now: number) =>
 	runs.find((r) => LIVE_STATES.includes(r.state) && now - r.updated_at <= RENDER_STALE_MS) ?? null;
 
-/** Disk paths a deleted print leaves, relative to their folders: its renders, thumbnails and archived record. */
-export const printPaths = (id: string, dirs: { renders: string; thumbs: string; raw: string }) => [
+/**
+ * Disk paths a deleted print leaves, relative to their folders: its renders, thumbnails and record (a
+ * factorioprints print's archived in data/raw, another site's in the record store, scripts/records/store.ts).
+ */
+export const printPaths = (id: string, dirs: { renders: string; thumbs: string; raw: string; records: string }) => [
 	`${dirs.renders}/${id}`,
 	`${dirs.thumbs}/${id}`,
-	`${dirs.raw}/factorioprints/${id}.json`
+	storeFileOf(dirs.records, id) ?? `${dirs.raw}/factorioprints/${id}.json`
 ];
 
 /** A `removal_sweeps` row: a deleted print this machine swept, with its tombstone's `at` then. */

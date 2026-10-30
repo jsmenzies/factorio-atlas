@@ -10,7 +10,8 @@
  *    render runs, render:top, render:thumbs --upload and render:flags read, so no removed print is
  *    ingested, drawn, uploaded or flagged again;
  * 2. per deleted print: its render-queue and upload rows in the local D1 (every target), its folders in
- *    the renders and thumbnails dirs, and its archived record in data/raw;
+ *    the renders and thumbnails dirs, and its record (archived in data/raw, or another site's in the
+ *    record store, scripts/records/store.ts);
  * 3. per deleted print not swept before (`removal_sweeps` in the local D1): its files in prod's RENDERS
  *    bucket again, through R2's S3 API (normally none: a render upload that was running when the removal
  *    was approved may have put some back);
@@ -39,6 +40,7 @@ import { dirname, join } from 'node:path';
 import type { RunState } from '#lib/server/pipeline/runs.js';
 import { rendersDir, thumbsDir } from '#lib/server/renders-dir.js';
 import { insertBlocks, loadBlocks } from '#lib/server/removal-blocks.js';
+import { recordsDir } from './records/store.js';
 import { openStore } from './render/target.js';
 import {
 	blockChanges,
@@ -215,7 +217,7 @@ try {
 	}
 	say(`local rows: ${rowCounts.size ? [...rowCounts].map(([t, c]) => `${t} ${n(c)}`).join(', ') : 'none'}`);
 
-	const dirs = { renders: rendersDir(ROOT), thumbs: thumbsDir(ROOT), raw: join(ROOT, 'data', 'raw') };
+	const dirs = { renders: rendersDir(ROOT), thumbs: thumbsDir(ROOT), raw: join(ROOT, 'data', 'raw'), records: recordsDir(ROOT) };
 	const paths = stage === 'prod' ? ids.flatMap((id) => printPaths(id, dirs)).filter((p) => existsSync(p)) : [];
 	say(`on disk: ${n(paths.length)} folders and files${paths.length ? `, e.g. ${paths[0]}` : ''}`);
 
