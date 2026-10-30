@@ -3,7 +3,10 @@
  * bring the stage up to date with them, using the settings saved from the admin Overview (sync_meta
  * 'settings'; defaults in #lib/sync.js):
  *
- *   1. removals     (comes with removal requests; skipped until then)
+ *   1. removals     `removals --stage S --yes --json`: this machine's copies of prints the stage
+ *                   deleted (blocks into the local D1, render rows and files, thumbnails, screenshot
+ *                   copies). Runs whatever else happens; when it fails, screenshots and render (which
+ *                   could put a removed print's files back) are skipped and the update says so
  *   2. fetch        each source: what's new (for the mirror: GitHub's latest commit against the
  *                   clone's), then fetch it (fast-forward). A source is held back, and only it, when
  *                   adds, deletions and moves are more than `maxChange` of its prints (a layout
@@ -16,9 +19,9 @@
  *   4. authors      `authors --stage S --limit <authorLimit>` (Firebase, only authors never asked;
  *                   factorioprints only); needs ingest
  *   5. screenshots  `screenshots` (new ones from Imgur; weekly `--recheck` if set), `--upload S`,
- *                   `screenshots:flags --stage S`
+ *                   `screenshots:flags --stage S`; needs removals
  *   6. render       `render:top <top>` (factorioprints only) and `render:check`, then
- *                   `render --next <perUpdate> --top <top> --upload S --flags`; needs ingest
+ *                   `render --next <perUpdate> --top <top> --upload S --flags`; needs ingest and removals
  *   7. figures      the stage's counts for the Overview (`--figures`)
  *
  * Each step is the existing command, run as its own process into one log in the run logs folder
@@ -74,6 +77,7 @@ import { MIRROR_SITE, mirrorSource, type SourceAdapter } from './sync/mirror';
 import { lastJsonLine, lastLine, lineMatching } from './sync/output';
 import {
 	backfillComplete,
+	backfillSummary,
 	claimRun,
 	ingestKey,
 	lastIngestKey,
@@ -276,8 +280,21 @@ const failed = (r: ScriptResult) => outcomeOf(r, '', [], `exit ${r.code}: ${last
 const steps: StepDef[] = [
 	{
 		id: 'removals',
-		gate: () => 'comes with removal requests',
-		run: async () => ({ status: 'skipped' })
+		async run(): Promise<Outcome> {
+			const r = await script(['scripts/removals.ts', '--stage', stage, '--yes', '--json']);
+			const result = lastJsonLine<{ ok: boolean; summary: string; stopped: boolean }>(r.tail);
+			if (r.code === 0 && result?.ok) return { status: 'done', summary: result.summary.replace(/^[✓✗]\s*/, ''), code: r.code };
+			if (result?.stopped) return { status: 'stopped', summary: result.summary.replace(/^[✓✗]\s*/, ''), code: r.code };
+			// Prod refuses removed prints itself (ingest checks its blocks), but this machine's copies
+			// weren't swept: the steps that could upload them again don't run.
+			return {
+				status: 'failed',
+				summary:
+					`REMOVALS NOT APPLIED (exit ${r.code}): ${result?.summary.replace(/^[✓✗]\s*/, '') ?? lastLine(r.tail)}; ` +
+					'screenshots and render are skipped until it succeeds',
+				code: r.code
+			};
+		}
 	},
 	{
 		id: 'fetch',
@@ -343,7 +360,7 @@ const steps: StepDef[] = [
 			const r = await script(['scripts/backfill.ts', '--stage', stage, ...recordSourceArgs(), '--yes', '--json']);
 			const result = lastJsonLine<BackfillResult>(r.tail);
 			if (r.code !== 0 || !result) return failed(r);
-			const summary = `${n(result.analysed)} analysed, ${n(result.failed)} failed, ${n(result.done - result.analysed - result.failed)} unchanged or known failures`;
+			const summary = backfillSummary(result);
 			if (result.state !== 'finished')
 				return { status: 'failed', summary: `the backfill ${result.state}: ${summary}`, runId: result.id, code: r.code };
 			// Only a backfill with nothing left to retry lets later updates skip this step.
@@ -370,6 +387,7 @@ const steps: StepDef[] = [
 	},
 	{
 		id: 'screenshots',
+		needs: ['removals'],
 		gate: () => (settings.screenshots ? null : 'turned off in the settings'),
 		async run({ stopping }): Promise<Outcome> {
 			const parts: string[] = [];
@@ -378,8 +396,13 @@ const steps: StepDef[] = [
 			const fetched = await script(['scripts/screenshots.ts', ...recordSourceArgs()]);
 			if (fetched.code !== 0 && fetched.code !== 2) return failed(fetched);
 			warning ||= fetched.code === 2;
-			// `screenshots: done in 26s: fetched 89 (109.0 MB), dead 0, failed 0, …`
-			parts.push(lineMatching(fetched.tail, /^screenshots: done in /).replace(/^screenshots: /, ''));
+			// `screenshots: done in 26s: fetched 89 (109.0 MB), dead 0, failed 0, …`, or with nothing to
+			// fetch its plan line, `screenshots: 18111 already copied, 2 dead; to fetch 0 (…) → <dir>`.
+			parts.push(
+				lineMatching(fetched.tail, /^screenshots: (done in |\d+ already copied)/)
+					.replace(/^screenshots: /, '')
+					.replace(/ → .*$/, '')
+			);
 			const rechecked = await readMeta<number>(db, 'imgur-recheck');
 			if (!stopping() && settings.imgurRecheck === 'weekly' && Date.now() - (rechecked?.value ?? 0) > WEEK_MS) {
 				const r = await script(['scripts/screenshots.ts', '--recheck']);
@@ -404,7 +427,7 @@ const steps: StepDef[] = [
 	},
 	{
 		id: 'render',
-		needs: ['ingest'],
+		needs: ['ingest', 'removals'],
 		async run({ stopping }): Promise<Outcome> {
 			const parts: string[] = [];
 			// The top N favourites come from factorioprints' counts.

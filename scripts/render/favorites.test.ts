@@ -138,6 +138,8 @@ describe('stored favourites stay in scope', () => {
 	test('--next --top looks again at favourites that were never queued as one', () => {
 		expect(favoriteWork(undefined)).toBe(true);
 		expect(favoriteWork([{ status: 'skipped', reason: 'pre-2.0' }])).toBe(true);
+		// A book of planners only: its one row says there's nothing to draw, so it isn't taken again.
+		expect(favoriteWork([{ status: 'skipped', reason: 'no blueprint pages (planners only)' }])).toBe(false);
 		expect(
 			favoriteWork([
 				{ status: 'done', reason: null },

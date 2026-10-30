@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { d1FromSqlite } from '#lib/server/pipeline/d1-sqlite.js';
 import { DEFAULT_SETTINGS, freshSteps, parseSyncRun, SYNC_STALE_MS, type SyncRun, type SyncRunRow } from '#lib/sync.js';
-import { backfillComplete, claimRun, lastIngestKey, SyncRunner, type BackfillResult, type StepDef } from './runner';
+import { backfillComplete, backfillSummary, claimRun, lastIngestKey, SyncRunner, type BackfillResult, type StepDef } from './runner';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const T = 1_800_000_000_000;
@@ -109,6 +109,18 @@ describe('the ingest skip key', () => {
 		expect(backfillComplete(result('finished', { decode: 1, storage: 40 }))).toBe(false);
 		expect(backfillComplete(result('finished', { worker: 1 }))).toBe(false);
 		expect(backfillComplete(result('stopped', {}))).toBe(false);
+	});
+
+	test("the summary names each outcome some print had, so a re-index doesn't read as nothing", () => {
+		const base = { id: 'b', state: 'finished', total: 18_226, done: 18_226, analysed: 0, failed: 0, failures: {} };
+		expect(backfillSummary({ ...base, reindexed: 18_046, viewer: 0, favorites: 0, unchanged: 0, skipped: 180 })).toBe(
+			'18,046 re-indexed, 0 analysed, 0 failed, 180 known failures skipped'
+		);
+		expect(backfillSummary({ ...base, analysed: 3, favorites: 12, unchanged: 18_031, skipped: 180, reindexed: 0, viewer: 0 })).toBe(
+			'12 favourite counts updated, 3 analysed, 0 failed, 18,031 unchanged, 180 known failures skipped'
+		);
+		// A backfill from before these fields: the old wording.
+		expect(backfillSummary({ ...base, analysed: 2, failed: 1 })).toBe('2 analysed, 1 failed, 18,223 unchanged or known failures');
 	});
 });
 

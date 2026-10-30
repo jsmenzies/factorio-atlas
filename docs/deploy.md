@@ -569,7 +569,9 @@ bun run sync --stage local   # try it on the local stage
 
 In order, each step being the command you'd otherwise run by hand:
 
-1. Removals: reserved for removal requests, skipped for now.
+1. Removals: `removals --stage … --yes --json`, this machine's copies of prints the site deleted (see
+   "Removal requests"). It runs whatever else happens; if it fails, the update says so and skips
+   screenshots and render, which could otherwise put a removed print's files back.
 2. Fetch: for the mirror, `git fetch`, a comparison by print id, then a fast-forward. A source is
    held back, and only it, when the prints added, deleted or moved since the last fetch are more than
    5% of them (as a layout change would; edits in place don't count), when it would be left with no
@@ -582,7 +584,8 @@ In order, each step being the command you'd otherwise run by hand:
 5. Render: `render:top` and `render:check`, then `render --next … --upload … --flags`.
 6. The stage's counts.
 
-A failed step is marked and the steps that don't need it still run; authors and render need ingest.
+A failed step is marked and the steps that don't need it still run; authors and render need ingest,
+screenshots and render need removals.
 Prints deleted from the mirror are counted and kept. Each update is a `sync_runs` row in the local
 D1 (migration 0020, so run `bun run db:migrate` first) and one log, `sync-<time>.log`, in the run
 logs folder (`<renders dir>/logs/`). Ctrl-C, or Stop on the Overview, ends the current step cleanly

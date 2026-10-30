@@ -65,7 +65,7 @@ const USAGE = `usage: bun run backfill --stage local|prod [options]
   --retry-failed     retry prints that failed before, even if unchanged
   --db N             D1 generation for prod (default: DATABASES.<stage>.bound in infra/databases.ts)
   --yes              don't ask before writing to prod
-  --json             end with the run as one line of JSON (id, state, counts, failures by kind)
+  --json             end with the run as one line of JSON (id, state, counts by outcome, failures by kind)
 
 keys (TTY): p pause · r resume · s stop after in-flight · q quit now · Ctrl-C stop, twice quit now`;
 
@@ -552,6 +552,11 @@ const finish = async (state: 'finished' | 'stopped' | 'failed', error: string | 
 				done: run.done,
 				analysed: run.analysed,
 				failed: run.failed,
+				reindexed: run.reindexed ?? 0,
+				viewer: run.viewer,
+				favorites: run.favorites,
+				unchanged: run.unchanged,
+				skipped: run.skipped_failed,
 				failures: run.failures
 			})
 		);

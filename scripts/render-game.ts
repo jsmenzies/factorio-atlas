@@ -610,6 +610,9 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
 
 // --- enqueue
 
+/** The reason on the one row of a print with no blueprint pages. */
+const NO_PAGES = 'no blueprint pages (planners only)';
+
 const failedRow = (id: string, title: string | null, key: string, reason: string, t: number, existing?: RenderJobRow): JobWrite => ({
 	print_id: id,
 	path: '',
@@ -815,6 +818,18 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		todo.push({ id, path: page.path, entities: entityCount(page), key, offset: prep.offset, attempts: 0 });
 		queued++;
 		if (!planOnly) pageCache.offer(id, page.path, prep);
+	}
+	// Nothing to draw at all (a book of upgrade or deconstruction planners): one skipped row says so,
+	// as for an undecodable print, so `--next` doesn't take it again as a favourite with no rows and
+	// the coverage panel counts it as not drawable.
+	if (!pages.length) {
+		const old = existing.get('');
+		existing.delete('');
+		run.total++;
+		run.done++;
+		run.skipped++;
+		if (!(old?.status === 'skipped' && old.reason === NO_PAGES))
+			writes.push({ ...failedRow(id, record.title, 'no-pages', NO_PAGES, t, old), status: 'skipped' });
 	}
 	// Rows for pages the print no longer has (it changed since), or a failed decode it got over.
 	const gone = [...existing.values()];

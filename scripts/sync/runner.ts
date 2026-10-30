@@ -123,7 +123,36 @@ export interface BackfillResult {
 	done: number;
 	analysed: number;
 	failed: number;
+	/** Each print's one outcome, beside analysed and failed (absent from a backfill older than these fields). */
+	reindexed?: number;
+	viewer?: number;
+	favorites?: number;
+	unchanged?: number;
+	/** Known failures, skipped until their record changes. */
+	skipped?: number;
 	failures: Record<string, number>;
+}
+
+const count = (x: number) => x.toLocaleString('en-US');
+
+/**
+ * The ingest step's summary: what the backfill did to each print. Analysed and failed always show;
+ * the other outcomes only when some print had them ("18,046 re-indexed, 0 analysed, 0 failed, 180
+ * known failures skipped").
+ */
+export function backfillSummary(r: BackfillResult) {
+	if (r.unchanged === undefined)
+		return `${count(r.analysed)} analysed, ${count(r.failed)} failed, ${count(r.done - r.analysed - r.failed)} unchanged or known failures`;
+	const some = (x: number | undefined, what: string) => (x ? [`${count(x)} ${what}`] : []);
+	return [
+		...some(r.reindexed, 're-indexed'),
+		...some(r.viewer, 'viewer files rebuilt'),
+		...some(r.favorites, 'favourite counts updated'),
+		`${count(r.analysed)} analysed`,
+		`${count(r.failed)} failed`,
+		...some(r.unchanged, 'unchanged'),
+		...some(r.skipped, 'known failures skipped')
+	].join(', ');
 }
 
 /** Whether a backfill leaves nothing to retry: it finished, and every failure is the record's own (kept in ingest_state). */

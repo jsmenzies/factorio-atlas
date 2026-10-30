@@ -69,7 +69,7 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 	const prints = renderWork(plan, union.left, settings);
 	const capped = settings.perUpdate !== null && prints === settings.perUpdate;
 	return [
-		{ id: 'removals', text: 'comes with removal requests', idle: true },
+		{ id: 'removals', text: "sweep this machine's copies of prints removed on the site (renders, thumbnails, screenshots)" },
 		{
 			id: 'fetch',
 			text:
