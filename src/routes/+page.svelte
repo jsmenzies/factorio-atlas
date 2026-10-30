@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ComponentProps } from 'svelte';
+	import type { ComponentProps, Snippet } from 'svelte';
 	import { dev } from '$app/env';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -90,6 +90,23 @@
 			['recent', 'Recently updated']
 		] as [string, string][]
 	);
+	/**
+	 * The "Game version" select: All versions, or one `?version=` value (prints saved in it or claiming it). It
+	 * holds the version filter only while there is at most one; with several (from the sidebar) it shows that
+	 * and the form's hidden inputs carry them, so a new sort keeps them.
+	 */
+	const versionInSelect = $derived(data.params.version.length <= 1);
+	const versionValue = $derived(versionInSelect ? (data.params.version[0] ?? '') : 'several');
+	/** One version set that isn't a choice (an old exact "2.1.21" link) stays shown as itself. */
+	const versionExtra = $derived(versionInSelect && versionValue && !data.versionChoices.includes(versionValue) ? versionValue : null);
+	/** The search with a new sort or version: a new order or filter starts again at the first page; other filters stay. */
+	const pickSelect = (key: 'sort' | 'version', value: string) => {
+		const u = new URL(page.url.href);
+		u.searchParams.delete('p');
+		u.searchParams.delete(key);
+		if (value) u.searchParams.set(key, value);
+		goto(`${u.pathname}${u.search}`, { reset: false });
+	};
 	/** The current search on results page `n` (page 1 has no `p`). */
 	const pageHref = (n: number) => {
 		const u = new URL(page.url.href);
@@ -350,31 +367,54 @@
 					{plural(data.total)}{#if data.pages > 1 && !pager.beyond}<span class="text-stone-500">{` · page ${data.params.page} of ${data.pages}`}</span>{/if}
 				</p>
 			</div>
-			<!-- A GET form, so it works without JS; with JS, changing the select submits it and keeps focus and scroll. -->
-			<form method="GET" data-sveltekit-reset="false">
-				<!-- A new order starts again at its first page. -->
-				{#each [...page.url.searchParams].filter(([k]) => k !== 'sort' && k !== 'p') as [k, v], i (i)}
+			<!-- A GET form, so it works without JS (Apply); with JS, changing a select goes to the new search, keeping focus and scroll. -->
+			<form method="GET" class="grid w-full grid-cols-2 gap-2 pt-2 sm:flex sm:w-auto" onsubmit={(e) => e.preventDefault()}>
+				<!-- A new order or version starts again at its first page. -->
+				{#each [...page.url.searchParams].filter(([k]) => k !== 'sort' && k !== 'p' && !(k === 'version' && versionInSelect)) as [k, v], i (i)}
 					<input type="hidden" name={k} value={v} />
 				{/each}
-				<label class="relative flex items-center gap-1">
-					<span class="text-stone-500">Sort:</span>
-					<select
-						name="sort"
-						value={data.params.sort}
-						class="field-sizing-content cursor-pointer appearance-none rounded bg-transparent py-0.5 pr-5 pl-1 text-stone-200 hover:bg-stone-800 focus:bg-stone-800 focus:outline-none focus-visible:ring-1 focus-visible:ring-amber-500"
-						onchange={(e) => e.currentTarget.form?.requestSubmit()}
-					>
+				{@render outlined('sort-by', 'Sort by', sortSelect)}
+				{@render outlined('game-version', 'Game version', versionSelect)}
+				{#snippet sortSelect(cls: string)}
+					<select id="sort-by" name="sort" value={data.params.sort} class={cls} onchange={(e) => pickSelect('sort', e.currentTarget.value)}>
 						{#each sortOptions as [value, label] (value)}
 							<option {value} class="bg-stone-900">{label}</option>
 						{/each}
 					</select>
-					<svg aria-hidden="true" viewBox="0 0 12 12" class="pointer-events-none absolute right-1 size-3 fill-current text-stone-400">
-						<path d="M2.5 4.5 6 8l3.5-3.5z" />
-					</svg>
-				</label>
-				<noscript><button class="ml-1 rounded bg-stone-800 px-2 py-0.5 text-stone-200">Apply</button></noscript>
+				{/snippet}
+				{#snippet versionSelect(cls: string)}
+					<select
+						id="game-version"
+						name={versionInSelect ? 'version' : undefined}
+						value={versionValue}
+						class={cls}
+						onchange={(e) => pickSelect('version', e.currentTarget.value)}
+					>
+						<option value="" class="bg-stone-900">All versions</option>
+						{#if !versionInSelect}<option value="several" disabled class="bg-stone-900">{data.params.version.join(' + ')}</option>{/if}
+						{#if versionExtra}<option value={versionExtra} class="bg-stone-900">{versionExtra}</option>{/if}
+						{#each data.versionChoices as v (v)}
+							<option value={v} class="bg-stone-900">{v}</option>
+						{/each}
+					</select>
+				{/snippet}
+				<noscript><button class="col-span-2 rounded bg-stone-800 px-2 py-1 text-stone-200">Apply</button></noscript>
 			</form>
 		</div>
+		<!-- An outlined select with its label set in the border's top edge; amber while focused, as the site's accent. -->
+		{#snippet outlined(id: string, label: string, control: Snippet<[string]>)}
+			<div class="group relative min-w-0 sm:w-44">
+				{@render control(
+					'w-full cursor-pointer appearance-none truncate rounded-md border border-stone-700 bg-stone-950 py-2 pr-8 pl-3 text-stone-200 hover:border-stone-500 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 focus:outline-none'
+				)}
+				<label for={id} class="pointer-events-none absolute -top-2 left-2 bg-stone-950 px-1 text-[11px] leading-4 text-stone-400 group-focus-within:text-amber-400"
+					>{label}</label
+				>
+				<svg aria-hidden="true" viewBox="0 0 12 12" class="pointer-events-none absolute top-1/2 right-2.5 size-3 -translate-y-1/2 fill-current text-stone-400">
+					<path d="M2.5 4.5 6 8l3.5-3.5z" />
+				</svg>
+			</div>
+		{/snippet}
 		{#if data.results.length === 0}
 			<p class="rounded border border-dashed border-stone-700 p-8 text-center text-stone-500">
 				{#if pager.beyond}

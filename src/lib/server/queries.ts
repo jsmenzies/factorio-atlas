@@ -205,6 +205,8 @@ export interface PrintCard {
 	source: string;
 	image_id: string | null;
 	image_type: string | null;
+	/** When the print was first posted (epoch ms, its source's own date): the card's "New" badge (#lib/card-tags.ts). */
+	created_at: number | null;
 	updated_at: number | null;
 	game_version: string | null;
 	blueprint_count: number;
@@ -241,7 +243,8 @@ export interface PrintCard {
 }
 
 /** A card's columns; `r` is print_renders and `s` screenshots, each joined by primary key (CARD_JOIN). */
-const CARD = `p.id, p.title, p.author_id, p.author_name, p.favorites, p.source, p.image_id, p.image_type, p.updated_at, p.game_version,
+const CARD = `p.id, p.title, p.author_id, p.author_name, p.favorites, p.source, p.image_id, p.image_type, p.created_at, p.updated_at,
+	p.game_version,
 	p.blueprint_count, p.entity_count, p.requires_space_age, p.uses_circuits, p.uses_trains,
 	p.outputs, p.claimed_versions, p.planets, p.mods,
 	r.print_id IS NOT NULL AS has_render, r.cover_page, r.cover_stamp, r.cover_w, r.cover_h,

@@ -5,13 +5,16 @@
 	import { signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import { showsFavourites } from '#lib/print-id.js';
+	import type { CardVersion } from '#lib/card-tags.js';
 	import type { CardImage } from '#lib/screenshots.js';
 	import type { PrintCard } from '#lib/server/queries.js';
 	import { searchRel } from '#lib/search-seo.js';
 
 	/**
 	 * One search result: picture, title, author and counts as a link to the print, then its version,
-	 * Space Age and render badges as filter links of their own, planets, mods and outputs. The picture
+	 * Space Age and render badges as filter links of their own, planets, mods and outputs. One version chip: the
+	 * newest of the saved and claimed versions (cardVersion in #lib/card-tags.ts), highlighted when it is the game's
+	 * newest. A "New" badge for prints first posted in the last two days (decided by the load). The picture
 	 * (cardImage in #lib/screenshots.ts): our copy of the author's screenshot; Imgur's while ours isn't
 	 * there yet; else the render thumbnail of its cover page; else none.
 	 */
@@ -23,7 +26,7 @@
 		renderOnly,
 		icons
 	}: {
-		print: PrintCard & { image: CardImage | null };
+		print: PrintCard & { image: CardImage | null; version: CardVersion | null; isNew: boolean };
 		/** Load the picture at once: cards in the first row. The rest load as they near the screen. */
 		eager?: boolean;
 		/** Link to the current search with this filter value toggled. */
@@ -52,6 +55,13 @@
 					loading={eager ? 'eager' : 'lazy'}
 					class="aspect-video w-full bg-stone-800 {p.image.kind === 'render' ? 'object-contain' : 'object-cover'}"
 				/>
+				{#if p.isNew}
+					<span
+						title="First posted in the last two days"
+						class="absolute top-2 left-2 grid h-7 place-items-center rounded-full bg-stone-950/80 px-2.5 text-xs font-medium text-amber-300 ring-1 ring-amber-500/60"
+						>New</span
+					>
+				{/if}
 				{#if p.has_render}
 					<span
 						title="Has an in-game render"
@@ -73,20 +83,18 @@
 	<!-- Outside the card link: version and Space Age badges are filter links of their own. -->
 	<div class="space-y-2 px-3 pb-3">
 		<div class="flex flex-wrap gap-1 text-xs">
-			{#if p.game_version}<a
-					href={toggle('version', p.game_version)}
-					rel={searchRel(toggle('version', p.game_version))}
-					title="Filter by Factorio {p.game_version}"
-					class="rounded bg-stone-800 px-1.5 py-0.5 hover:bg-stone-700 {active('version', p.game_version) ? 'ring-1 ring-amber-500' : ''}"
-					>saved in {p.game_version}</a
+			{#if p.isNew && !p.image}<span
+					title="First posted in the last two days"
+					class="rounded bg-amber-900/40 px-1.5 py-0.5 font-medium text-amber-300">New</span
 				>{/if}
-			{#each p.claimed_versions as v (v)}<a
+			{#if p.version}{@const v = p.version.label}<a
 					href={toggle('version', v)}
 					rel={searchRel(toggle('version', v))}
-					title="Filter by Factorio {v}"
-					class="rounded bg-sky-900/50 px-1.5 py-0.5 text-sky-300 hover:bg-sky-800/60 {active('version', v) ? 'ring-1 ring-amber-500' : ''}"
-					>{v}</a
-				>{/each}
+					title={p.version.saved ? `Saved in ${p.version.saved}. Filter by Factorio ${v}` : `Filter by Factorio ${v}`}
+					class="rounded px-1.5 py-0.5 {p.version.latest
+						? 'bg-sky-800/70 font-medium text-sky-100 hover:bg-sky-700/70'
+						: 'bg-stone-800 hover:bg-stone-700'} {active('version', v) ? 'ring-1 ring-amber-500' : ''}">{v}</a
+				>{/if}
 			{#if p.requires_space_age}<a
 					href={toggle('spaceAge', 'yes')}
 					rel={searchRel(toggle('spaceAge', 'yes'))}
