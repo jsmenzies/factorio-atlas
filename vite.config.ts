@@ -2,6 +2,7 @@ import tailwindcss from '@tailwindcss/vite';
 import adapter from '@sveltejs/adapter-cloudflare';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
+import { addControl } from './scripts/add/dev-plugin.ts';
 import { renderControl } from './scripts/render/dev-plugin.ts';
 import { syncControl } from './scripts/sync/dev-plugin.ts';
 
@@ -17,6 +18,8 @@ export default defineConfig({
 		renderControl(),
 		// Dev only: the admin Overview's update and check buttons (scripts/sync/dev-plugin.ts).
 		syncControl(),
+		// Dev only: /admin/add runs `bun run add` (scripts/add/dev-plugin.ts).
+		addControl(),
 		tailwindcss(),
 		sveltekit({
 			compilerOptions: {

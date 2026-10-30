@@ -42,6 +42,11 @@
 		aria-current={page.url.pathname === '/admin/screenshots' ? 'page' : undefined}>Screenshots</a
 	>
 	<a
+		href="/admin/add"
+		class={page.url.pathname.startsWith('/admin/add') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
+		aria-current={page.url.pathname === '/admin/add' ? 'page' : undefined}>Add</a
+	>
+	<a
 		href="/admin/accounts"
 		class={page.url.pathname.startsWith('/admin/accounts') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
 		aria-current={page.url.pathname === '/admin/accounts' ? 'page' : undefined}>Accounts</a

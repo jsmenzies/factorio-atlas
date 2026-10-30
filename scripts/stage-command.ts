@@ -29,12 +29,13 @@ const COMMON = {
 
 /**
  * The command line: the common flags plus `options`. `-h` prints `usage` and exits; a bad flag,
- * a missing or unknown `--stage` or a bad `--db` fails with it.
+ * a missing or unknown `--stage` or a bad `--db` fails with it. Arguments that aren't flags are an error
+ * unless `allowPositionals` (then they come back as `positionals`).
  */
-export const parseStageArgs = <O extends ParseArgsOptionsConfig>(usage: string, options: O) => {
-	const { values: flags } = (() => {
+export const parseStageArgs = <O extends ParseArgsOptionsConfig>(usage: string, options: O, allowPositionals = false) => {
+	const { values: flags, positionals } = (() => {
 		try {
-			return parseArgs({ options: { ...COMMON, ...options }, strict: true });
+			return parseArgs({ options: { ...COMMON, ...options }, strict: true, allowPositionals });
 		} catch (e) {
 			return fail(`${messageOf(e)}\n${usage}`);
 		}
@@ -49,7 +50,7 @@ export const parseStageArgs = <O extends ParseArgsOptionsConfig>(usage: string, 
 	if (!STAGES.includes(stage)) fail(`--stage ${STAGES.join('|')} is required\n${usage}`);
 	const generation = common.db === undefined ? undefined : Number(common.db);
 	if (generation !== undefined && !(Number.isInteger(generation) && generation > 0)) fail('--db must be a positive integer');
-	return { flags, stage, generation };
+	return { flags, stage, generation, positionals };
 };
 
 /** The stage's D1 and R2, or exit with why they can't be opened. */

@@ -742,6 +742,25 @@ print's.
   pending screenshot, and blocks the content like any other takedown; the account's daily counts
   stay.
 
+## Adding prints by link (`/admin/add`)
+
+factoriobin.com has no listing, so its posts are never polled: an admin pastes a post's link at
+`/admin/add`, looks it up, and adds it. The post is read through factoriobin's documented API
+(`/post/<id>/info.json`, then the string on its CDN), once, with a User-Agent naming the site, and its
+root node is the print even when the link names a book page (`src/lib/server/pipeline/factoriobin.ts`).
+It goes through the same gate as every source (`addRecord` in `add-record.ts`: `admitRecord`, then
+`ingestRecord`): a new print `fbin-<id>`, another source of the print it is an exact copy of, already
+here, or refused (an approved removal, an unreadable string). The record is archived in RAW at
+`factoriobin/<id>.json`. No image is copied: factoriobin has no player screenshots, only its own render.
+
+- Deployed, the page adds in the Worker, within the same size cap as uploads (512 KB of string,
+  150,000 entities and tiles); over it, the page says so. Responses are kept 10 minutes in the data
+  centre's Cache API, so a look-up and an add read the post once.
+- Under `vite dev`, the page runs `bun run add <link> --stage prod|local [--plan]` on the machine
+  instead (no size cap), which also puts a print of its own into the record store. Prints added in the
+  Worker reach the record store at the next update (`bun run records`, the `factoriobin` store site),
+  and its render step draws their 2.0+ pages.
+
 ## Monitoring
 
 - `/admin/pipeline`: the latest backfill runs, live progress, failures by reason, D1 rows and R2

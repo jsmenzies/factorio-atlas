@@ -152,3 +152,33 @@ export async function pullSite(dir: string, adapter: StoreAdapter, o: PullOption
 	await writeIndex(dir, site, index);
 	return counts;
 }
+
+/**
+ * One record of `adapter.site` brought in line at once, as `pullSite` would (for a print just added by
+ * hand, so it renders at the next run without waiting for the update's pull): written when listed, else
+ * removed from the store.
+ */
+export async function pullOne(
+	dir: string,
+	adapter: StoreAdapter,
+	siteId: string,
+	now = Date.now
+): Promise<'new' | 'changed' | 'same' | 'gone'> {
+	const listed = (await adapter.list()).find((l) => l.siteId === siteId);
+	const record = listed ? await adapter.fetch(siteId) : null;
+	if (record && (record.site !== adapter.site || record.siteId !== siteId))
+		throw new Error(`the record says it is ${record.site}/${record.siteId}`);
+	const index = await readIndex(dir, adapter.site);
+	const had = index.records[siteId];
+	if (!listed || !record) {
+		await dropRecord(dir, adapter.site, siteId);
+		delete index.records[siteId];
+		await writeIndex(dir, adapter.site, index);
+		return 'gone';
+	}
+	const wrote = await putRecord(dir, record);
+	const t = now();
+	index.records[siteId] = { rev: listed.rev, firstSeen: had?.firstSeen ?? t, fetchedAt: t };
+	await writeIndex(dir, adapter.site, index);
+	return !had ? 'new' : wrote ? 'changed' : 'same';
+}

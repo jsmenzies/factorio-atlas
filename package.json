@@ -42,6 +42,7 @@
 		"screenshots:remove": "bun scripts/screenshots-remove.ts",
 		"removals": "bun scripts/removals.ts",
 		"uploads": "bun scripts/uploads.ts",
+		"add": "bun scripts/add.ts",
 		"records": "bun scripts/records.ts",
 		"game-data": "bun scripts/build-game-data.ts",
 		"icons": "bun scripts/icons.ts",

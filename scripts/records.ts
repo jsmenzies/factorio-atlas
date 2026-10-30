@@ -23,6 +23,7 @@ import { resolve } from 'node:path';
 import { n, openStage, parseStageArgs, requireSchema } from './stage-command';
 import { pullSite, type PullCounts, type StoreAdapter } from './records/pull';
 import { recordsDir, storePrintIds } from './records/store';
+import { factoriobinStoreAdapter } from './records/factoriobin';
 import { uploadsStoreAdapter } from './records/uploads';
 
 const USAGE = 'usage: bun run records --stage local|prod [--dir DIR] [--dry-run] [--json]';
@@ -95,7 +96,7 @@ try {
 	const env = target.env;
 	await requireSchema(env.DB, stage, 'SELECT print_id FROM uploads LIMIT 0', 'uploads table', '0024');
 	/** Every site that feeds the store; factoriobin and the others join here. */
-	const adapters: StoreAdapter[] = [uploadsStoreAdapter(env)];
+	const adapters: StoreAdapter[] = [uploadsStoreAdapter(env), factoriobinStoreAdapter(env)];
 	say(`${stage} → record store ${result.dir}${result.dryRun ? ' (dry run)' : ''}`);
 	const parts: string[] = [];
 	for (const adapter of adapters) {
