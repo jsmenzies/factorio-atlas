@@ -5,7 +5,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { UPLOAD_TARGETS, type UploadTarget } from './ledger.js';
 import { isPrintId } from '#lib/print-id.js';
-import { isUploadImage } from '#lib/screenshots.js';
+import { isOwnImage } from '#lib/screenshots.js';
 import { IMGUR_ID } from './records.js';
 
 /** Sent with every request; no Referer is ever sent (Imgur refuses some). */
@@ -41,17 +41,18 @@ export const screenshotsDir = (root = process.cwd(), value = process.env.SCREENS
 
 /**
  * fetch (default): copy originals from Imgur. uploads: copy a stage's approved upload screenshots from
- * its RAW bucket. make: the sizes, from the originals on disk. upload: make what's missing, then bring a
+ * its RAW bucket. sites: copy the images other sites' records name (codex's), for a stage's prints that show
+ * them (scripts/screenshots/sites.ts). make: the sizes, from the originals on disk. upload: make what's missing, then bring a
  * bucket in line. recheck: ask Imgur whether copied images still exist, and mark the deleted ones removed.
  */
-export type Mode = 'fetch' | 'uploads' | 'make' | 'upload' | 'recheck';
+export type Mode = 'fetch' | 'uploads' | 'sites' | 'make' | 'upload' | 'recheck';
 
 /** Images made or uploaded at once (`--jobs`). */
 export const JOBS = 6;
 
 export interface ShotArgs {
 	mode: Mode;
-	/** For `upload`: the bucket; for `uploads`: the stage whose approved upload screenshots to copy. */
+	/** For `upload`: the bucket; for `uploads` and `sites`: the stage whose prints' images to copy. */
 	target: UploadTarget | null;
 	jobs: number;
 	clone: string;
@@ -76,6 +77,7 @@ export class UsageError extends Error {}
 const MODE_FLAG: Record<Mode, string> = {
 	fetch: 'the fetch',
 	uploads: '--from-uploads',
+	sites: '--from-sites',
 	make: '--make',
 	upload: '--upload',
 	recheck: '--recheck'
@@ -85,6 +87,7 @@ export const USAGE =
 	'usage: screenshots [--from-clone DIR] [--from-disk [DIR]] [--ids a,b] [--limit N] [--rate N] [--in-flight N]\n' +
 	'                   [--recheck-dead] [--plan-only] [--no-canary] [--json]\n' +
 	'       screenshots --from-uploads local|prod [--ids a,b] [--limit N] [--plan-only] [--json]\n' +
+	'       screenshots --from-sites local|prod [--ids a,b] [--limit N] [--plan-only] [--json]\n' +
 	'       screenshots --make [--ids a,b] [--limit N] [--jobs N]\n' +
 	'       screenshots --upload local|prod [--ids a,b] [--limit N] [--jobs N] [--plan-only] [--json]\n' +
 	'       screenshots --recheck [--ids a,b] [--limit N] [--rate N] [--no-canary]';
@@ -121,8 +124,8 @@ export function parseArgs(argv: readonly string[], defaults: { clone: string; di
 				.split(',')
 				.map((s) => s.trim())
 				.filter(Boolean);
-			const bad = ids.filter((id) => !isPrintId(id) && !IMGUR_ID.test(id) && !isUploadImage(id));
-			if (bad.length) throw new UsageError(`not a print, Imgur or upload image id: ${bad.join(', ')}`);
+			const bad = ids.filter((id) => !isPrintId(id) && !IMGUR_ID.test(id) && !isOwnImage(id));
+			if (bad.length) throw new UsageError(`not a print, Imgur, upload or site image id: ${bad.join(', ')}`);
 			a.ids = [...new Set([...(a.ids ?? []), ...ids])];
 		} else if (flag === '--limit') {
 			const n = Number(value());
@@ -137,11 +140,11 @@ export function parseArgs(argv: readonly string[], defaults: { clone: string; di
 			if (!Number.isInteger(n) || n < 1 || n > MAX_IN_FLIGHT)
 				throw new UsageError(`--in-flight takes a whole number from 1 to ${MAX_IN_FLIGHT}`);
 			a.inFlight = n;
-		} else if (flag === '--make' || flag === '--recheck' || flag === '--upload' || flag === '--from-uploads') {
-			const mode = (flag === '--from-uploads' ? 'uploads' : flag.slice(2)) as Mode;
+		} else if (flag === '--make' || flag === '--recheck' || flag === '--upload' || flag === '--from-uploads' || flag === '--from-sites') {
+			const mode = (flag === '--from-uploads' ? 'uploads' : flag === '--from-sites' ? 'sites' : flag.slice(2)) as Mode;
 			if (a.mode !== 'fetch' && a.mode !== mode) throw new UsageError(`${MODE_FLAG[a.mode]} and ${flag} don't go together`);
 			a.mode = mode;
-			if (flag === '--upload' || flag === '--from-uploads') {
+			if (flag === '--upload' || flag === '--from-uploads' || flag === '--from-sites') {
 				const t = value();
 				if (!(UPLOAD_TARGETS as readonly string[]).includes(t)) throw new UsageError(`${flag} takes ${UPLOAD_TARGETS.join(' or ')}`);
 				a.target = t as UploadTarget;

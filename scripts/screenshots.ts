@@ -6,6 +6,7 @@
  *   bun run screenshots [--from-clone DIR] [--from-disk [DIR]] [--ids a,b] [--limit N]
  *                       [--rate N] [--in-flight N] [--recheck-dead] [--plan-only] [--no-canary] [--json]
  *   bun run screenshots --from-uploads local|prod [--ids a,b] [--limit N] [--plan-only] [--json]
+ *   bun run screenshots --from-sites local|prod [--ids a,b] [--limit N] [--plan-only] [--json]
  *   bun run screenshots --make [--ids a,b] [--limit N] [--jobs N]
  *   bun run screenshots --upload local|prod [--ids a,b] [--limit N] [--jobs N] [--plan-only] [--json]
  *   bun run screenshots --recheck [--ids a,b] [--limit N] [--rate N]
@@ -35,6 +36,8 @@
  *
  * `--from-uploads S` (scripts/screenshots/uploads.ts): the stage's approved upload screenshots, copied from
  * its private RAW bucket into the same originals folder and run state, as `upload.<16 hex>`; never Imgur.
+ * `--from-sites S` (scripts/screenshots/sites.ts): the images other sites' records name (codex's
+ * `image_url`) for the stage's prints that show them, copied from their URLs as `<site>.<16 hex>`.
  *
  * The other steps (scripts/screenshots/run.ts) work from state.jsonl, never the records:
  * - `--make`: the sizes (scripts/screenshots/make.ts) into `<dir>/sizes/`; the originals are only read.
@@ -53,7 +56,9 @@ import { ATTEMPTS, CANARY, canaryDue, parseArgs, screenshotsDir, USAGE, UsageErr
 import { classify, type Outcome, type Reply } from './screenshots/classify.js';
 import { decodes } from './screenshots/make.js';
 import { runMake, runRecheck, runUpload } from './screenshots/run.js';
-import { isUploadEntry, runFromUploads } from './screenshots/uploads.js';
+import { runFromUploads } from './screenshots/uploads.js';
+import { runFromSites } from './screenshots/sites.js';
+import { isOwnImage } from '#lib/screenshots.js';
 import { fetchImgur, imgurOriginal } from './screenshots/fetch.js';
 import { EXT, kindOfMime, requestExt } from './screenshots/image.js';
 import { backoffMs, pacer, pool, realClock } from './screenshots/pace.js';
@@ -103,11 +108,13 @@ if (args.mode !== 'fetch') {
 	const code =
 		args.mode === 'uploads'
 			? await runFromUploads(dir, stateFile, entries, args)
-			: args.mode === 'make'
-				? await runMake(dir, entries, args)
-				: args.mode === 'upload'
-					? await runUpload(dir, entries, args)
-					: await runRecheck(dir, stateFile, entries, args);
+			: args.mode === 'sites'
+				? await runFromSites(dir, stateFile, entries, args)
+				: args.mode === 'make'
+					? await runMake(dir, entries, args)
+					: args.mode === 'upload'
+						? await runUpload(dir, entries, args)
+						: await runRecheck(dir, stateFile, entries, args);
 	process.exit(code);
 }
 
@@ -198,7 +205,7 @@ async function ask(id: string, ext: string): Promise<{ outcome: Outcome; reply: 
 // Canary: a known image (the run's oldest stored one, else CANARY) must come back byte for byte,
 // before anything is stored and again every CANARY_EVERY stored images. Null when it did.
 const own = [...entries.values()]
-	.filter((e) => e.status === 'fetched' && e.md5 && e.type && !isUploadEntry(e))
+	.filter((e) => e.status === 'fetched' && e.md5 && e.type && !isOwnImage(e.id))
 	.sort((a, b) => (a.at < b.at ? -1 : 1))[0];
 const candidates = [...(own ? [{ id: own.id, ext: EXT[own.type!], md5: own.md5! }] : []), CANARY];
 async function canary(): Promise<string | null> {
@@ -223,7 +230,7 @@ if (args.canary) {
 }
 
 const guard = duplicateGuard();
-for (const e of entries.values()) if (e.status === 'fetched' && e.md5 && !isUploadEntry(e)) guard.add(e.md5, e.id);
+for (const e of entries.values()) if (e.status === 'fetched' && e.md5 && !isOwnImage(e.id)) guard.add(e.md5, e.id);
 
 const started = Date.now();
 let settled = 0;

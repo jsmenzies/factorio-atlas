@@ -4,7 +4,7 @@ import { env } from 'cloudflare:workers';
 import { BUSY_RESULT, orBusy } from '#lib/server/admin/busy.js';
 import { liveBase } from '#lib/server/admin/pipeline.js';
 import { crossSite, SYNC_TIMING, syncOverview } from '#lib/server/admin/sync.js';
-import { parseSettings } from '#lib/sync.js';
+import { parseSettings, POLLED_SITES } from '#lib/sync.js';
 import { writeMeta } from '#lib/server/sync.js';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -35,7 +35,13 @@ export const actions: Actions = {
 			imgurRecheck: form.get('imgurRecheck'),
 			authors: form.get('authors') === 'on',
 			authorLimit: num(form.get('authorLimit'), null),
-			maxChange: maxChange === null ? null : maxChange / 100
+			maxChange: maxChange === null ? null : maxChange / 100,
+			polled: Object.fromEntries(
+				POLLED_SITES.map(({ site }) => [
+					site,
+					{ on: form.get(`polled.${site}.on`) === 'on', perUpdate: num(form.get(`polled.${site}.perUpdate`), null) }
+				])
+			)
 		});
 		if (errors.length) return fail(400, { errors, message: `Check ${errors.join(', ')}: nothing saved.` });
 		const saved = await orBusy(() => writeMeta(env.DB, 'settings', settings));

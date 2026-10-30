@@ -3,6 +3,8 @@ import {
 	capSize,
 	cardImage,
 	cropBox,
+	isOwnImage,
+	isSiteImage,
 	isUploadImage,
 	NO_SHOT,
 	overCap,
@@ -11,6 +13,7 @@ import {
 	shotFiles,
 	shotKeys,
 	shotView,
+	siteImageId,
 	uploadImageId,
 	type CardImageColumns,
 	type Shot
@@ -202,6 +205,17 @@ describe('upload screenshots (`upload.<16 hex>`)', () => {
 			og: null
 		});
 		expect(NO_SHOT.preparing).toBe('Screenshot coming soon');
+	});
+
+	test("another site's image: its own ids and keys, and never Imgur before it is sized", () => {
+		const id = siteImageId('codex', 'fedcba9876543210ffff');
+		expect(id).toBe('codex.fedcba9876543210');
+		expect([isSiteImage(id), isOwnImage(id), isOwnImage(UP), isOwnImage('AbCd123')]).toEqual([true, true, true, false]);
+		for (const bad of ['codex.0123', 'other.0123456789abcdef', 'codex.0123456789ABCDEF']) expect(isSiteImage(bad)).toBe(false);
+		for (const k of [...shotKeys({ id, v: 1, ext: 'jpg', w: 1920, h: 1080 }), `${id}.png`, `${id}.json`])
+			expect(SHOT_KEY.test(k)).toBe(true);
+		expect(cardImage(card({ image_id: id }), bases)).toBeNull();
+		expect(shotView(id, null, null, '/screenshots')).toMatchObject({ state: 'preparing', imgur: false, backdrop: null });
 	});
 
 	test('sized: our files, as for Imgur images', () => {

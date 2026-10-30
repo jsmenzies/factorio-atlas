@@ -8,7 +8,9 @@
  *                   copies). Runs whatever else happens; when it fails, screenshots and render (which
  *                   could put a removed print's files back) are skipped and the update says so
  *   2. fetch        each source: what's new (for the mirror: GitHub's latest commit against the
- *                   clone's), then fetch it (fast-forward). A source is held back, and only it, when
+ *                   clone's), then fetch it (fast-forward). Polled sites (codex, scripts/sync/polled.ts):
+ *                   list until past the cursor, read new and changed records into the record store's
+ *                   inbox, at most `polled.<site>.perUpdate` reads, ≈ 1 request a second. A source is held back, and only it, when
  *                   adds, deletions and moves are more than `maxChange` of its prints (a layout
  *                   change; `--accept <commit>` lets one through), it would have no prints, or its
  *                   history was rewritten. Then `records --stage S --json`: the record store
@@ -17,11 +19,16 @@
  *   3. ingest       `backfill --stage S --from-clone … --json`; skipped when neither the sources'
  *                   digest nor the analyzer, index or viewer version changed since the last update
  *                   that ran it to the end (a backfill with failures that aren't the records' own
- *                   doesn't count as the end)
+ *                   doesn't count as the end). Then, per polled site that is on, `polled --stage S
+ *                   --site X`: its inbox through the gate, and its deletions as sources gone; after the
+ *                   backfill, so a blueprint new on factorioprints and on the site in one update joins
+ *                   the factorioprints print (its id stays the URL). When it wrote, it pulls the site's
+ *                   own prints into the record store, so the render step draws them
  *   4. authors      `authors --stage S --limit <authorLimit>` (Firebase, only authors never asked;
  *                   factorioprints only); needs ingest
  *   5. screenshots  `screenshots` (new ones from Imgur; weekly `--recheck` if set), `--from-uploads S`
- *                   (approved upload screenshots, from the stage's RAW), `--upload S`,
+ *                   (approved upload screenshots, from the stage's RAW), `--from-sites S` (images other
+ *                   sites' records name, for the stage's prints showing them), `--upload S`,
  *                   `screenshots:flags --stage S`; needs removals
  *   6. render       `render:top <top>` (factorioprints only) and `render:check`, then
  *                   `render --next <perUpdate> --top <top> --upload S --flags`, reading the mirror
@@ -86,8 +93,12 @@ import { localDbFile, openLocalDb } from './sync/local-db';
 import { MIRROR_SITE, mirrorSource, type SourceAdapter } from './sync/mirror';
 import { failureLine, lastJsonLine, lastLine, lineMatching } from './sync/output';
 import { UPLOADS_SOURCE, uploadsSource } from './sync/uploads';
+import { codexSite } from './sync/codex';
+import { polledFetchDetails, polledIngestDetails, polledSource, type PolledSite } from './sync/polled';
+import type { PolledAdmitResult } from './polled';
 import type { UploadRunResult } from './screenshots/run';
 import type { FromUploadsResult } from './screenshots/uploads';
+import type { FromSitesResult } from './screenshots/sites';
 import { screenshotBucketDetails } from './sync/screenshot-details';
 import {
 	backfillComplete,
@@ -148,11 +159,33 @@ const settings = parseSettings((await readMeta<unknown>(db, 'settings'))?.value)
 
 if (!existsSync(clone)) fail(`no mirror clone at ${clone} (set RENDER_CLONE_DIR)`);
 
-/** The print sources an update fetches, in order. Uploads admit their waiting records in their own fetch (scripts/sync/uploads.ts). */
-const SOURCES: SourceAdapter[] = [mirrorSource(clone), uploadsSource(ROOT, stage)];
-
 /** The record store: every other site's records on this machine (scripts/records/store.ts), filled in the fetch step. */
 const records = recordsDir(ROOT);
+
+/** Where in-process work (the polled sites' fetch) logs, and whether the update was asked to stop: the runner's, once it runs. */
+let say = (line: string) => console.error(line);
+let stopRequested = () => false;
+
+/** Polled sites (scripts/sync/polled.ts), one per POLLED_SITES entry: fprints joins here. */
+const POLLED: PolledSite[] = [codexSite];
+const polledSettings = (site: string) => settings.polled[site as keyof typeof settings.polled];
+
+/**
+ * The print sources an update fetches, in order. Uploads admit their waiting records in their own fetch
+ * (scripts/sync/uploads.ts); polled sites' records are admitted in the ingest step.
+ */
+const SOURCES: SourceAdapter[] = [
+	mirrorSource(clone),
+	uploadsSource(ROOT, stage),
+	...POLLED.map((site) =>
+		polledSource(site, {
+			recordsDir: records,
+			settings: () => polledSettings(site.site),
+			log: (line) => say(line),
+			stopping: () => stopRequested()
+		})
+	)
+];
 
 /**
  * Where the steps read print records: the mirror clone, and with `store` the record store too (the
@@ -314,6 +347,8 @@ if (refusal) fail(refusal);
 
 mkdirSync(logDir, { recursive: true });
 const runner = new SyncRunner({ db, run, logFile: join(logDir, logName), cwd: ROOT, echo: true });
+say = (line) => runner.say(line);
+stopRequested = runner.stopping;
 await runner.start();
 runner.say(`sync ${run.id} → ${stage} · log ${join(logDir, logName)}`);
 const script = (args: string[], env?: Record<string, string>) => runner.runScript(args, env);
@@ -330,6 +365,114 @@ const storePicks = (options: string) => {
 		return 0;
 	}
 };
+
+/** The ingest step's first part: the backfill over the mirror clone, skipped when nothing it reads changed. */
+const backfillStep = async (): Promise<Outcome> => {
+	// The backfill's sources only (sourceDigest leaves out uploads, admitted in the fetch), and a hand-over
+	// that had to purge a print another source still has (`ingest_due`): the backfill admits it again.
+	const key = ingestKey(
+		sourceDigest(run.sources),
+		{
+			analyzer: ANALYZER_VERSION,
+			index: INDEX_VERSION,
+			viewer: VIEWER_VERSION,
+			identity: IDENTITY_VERSION
+		},
+		run.sources.find((s) => s.ingestDue)?.ingestDue ?? null
+	);
+	const recent = await db
+		.prepare('SELECT * FROM sync_runs WHERE stage = ? AND id != ? ORDER BY started_at DESC LIMIT 50')
+		.bind(stage, run.id)
+		.all<SyncRunRow>();
+	if (lastIngestKey(recent.results.map(parseSyncRun)) === key) {
+		// Still current: kept on this run too, as the ingest step may end 'done' from the polled sites' admission.
+		run.options.ingestKey = key;
+		return {
+			status: 'skipped',
+			summary: `nothing changed since the last update that ran it (${sourceDigest(run.sources).replace(/@(\w{7})\w+/g, '@$1')})`
+		};
+	}
+	const r = await script(['scripts/backfill.ts', '--stage', stage, ...recordSourceArgs(), '--yes', '--json']);
+	const result = lastJsonLine<BackfillResult>(r.tail);
+	if (r.code !== 0 || !result) return failed(r);
+	const summary = backfillSummary(result);
+	if (result.state !== 'finished')
+		return { status: 'failed', summary: `the backfill ${result.state}: ${summary}`, runId: result.id, code: r.code };
+	// Only a backfill with nothing left to retry lets later updates skip this step.
+	if (backfillComplete(result)) run.options.ingestKey = key;
+	const kinds = Object.entries(result.failures)
+		.map(([k, v]) => `${k} ${n(v)}`)
+		.join(', ');
+	// The backfill reads one source today (recordSourceArgs), so its counts are that source's.
+	const details: DetailGroup[] = [
+		{
+			title:
+				run.sources
+					.filter((s) => !s.ingestsItself)
+					.map((s) => s.site)
+					.join(', ') || undefined,
+			rows: [
+				...detail('re-indexed', result.reindexed),
+				...detail('viewer files rebuilt', result.viewer),
+				...detail('favourite counts updated', result.favorites),
+				...detail('analysed', result.analysed, { always: true }),
+				...detail('failed', result.failed, { always: true, tone: 'bad' }),
+				...Object.entries(result.failures).flatMap(([k, v]) => detail(`${k} failures`, v, { tone: 'bad' })),
+				...detail('known failures skipped', result.skipped),
+				...detail('unchanged', result.unchanged)
+			]
+		}
+	];
+	return {
+		status: result.failed ? 'warning' : 'done',
+		summary: result.failed ? `${summary} (${kinds})` : summary,
+		runId: result.id,
+		code: r.code,
+		details
+	};
+};
+
+/**
+ * The ingest step's second part: each polled site that is on, its inbox admitted through the gate and its
+ * deletions as sources gone (`polled --stage S --site X`, which then pulls the site's own prints into the
+ * record store when the stage changed, for this update's render step). Merged into the backfill's outcome.
+ */
+async function admitPolled(backfill: Outcome, stopping: () => boolean): Promise<Outcome> {
+	const parts: string[] = [];
+	const details: DetailGroup[] = [];
+	let worst: 'done' | 'warning' | 'failed' = 'done';
+	for (const site of POLLED) {
+		if (!polledSettings(site.site)?.on || stopping()) continue;
+		const r = await script(['scripts/polled.ts', '--stage', stage, '--site', site.site, '--dir', records, '--yes', '--json']);
+		const result = lastJsonLine<PolledAdmitResult>(r.tail);
+		if (result) details.push(...polledIngestDetails(result));
+		const line = result?.summary.replace(/^[✓✗]\s*/, '') ?? failureLine(r.tail);
+		parts.push(`${site.site}: ${line}`);
+		if (r.code !== 0 || !result?.ok) worst = 'failed';
+		else if (result.counts.blocked || result.counts.undecodable) worst = worst === 'failed' ? worst : 'warning';
+		if (result?.store)
+			details.push({
+				title: `record store: ${site.site}`,
+				rows: [
+					...detail('prints of its own', result.store.listed, { always: true }),
+					...detail('new', result.store.added),
+					...detail('changed', result.store.changed),
+					...detail('removed', result.store.removed + result.store.vanished)
+				]
+			});
+	}
+	if (!parts.length) return backfill;
+	const rank = { skipped: 0, done: 1, warning: 2, stopped: 3, failed: 4 } as Record<string, number>;
+	const status = (rank[worst] ?? 0) > (rank[backfill.status] ?? 0) ? worst : backfill.status === 'skipped' ? worst : backfill.status;
+	return {
+		...backfill,
+		status,
+		summary: [backfill.status === 'skipped' ? `backfill skipped: ${backfill.summary}` : backfill.summary, ...parts]
+			.filter(Boolean)
+			.join(' · '),
+		details: [...(backfill.details ?? []), ...details]
+	};
+}
 
 const steps: StepDef[] = [
 	{
@@ -393,7 +536,13 @@ const steps: StepDef[] = [
 					plans.push(await source.plan({ maxChange: settings.maxChange, accept: accepted[source.site], signal }));
 				} catch (e) {
 					errors.push(`${source.site}: ${e instanceof Error ? e.message : e}`);
-					run.sources.push({ site: source.site, from: null, to: null, ...(source.ingestsItself ? { ingestsItself: true } : {}) });
+					run.sources.push({
+						site: source.site,
+						from: null,
+						to: null,
+						...(source.ingestsItself ? { ingestsItself: true } : {}),
+						...(source.polled ? { polled: true } : {})
+					});
 				}
 			}
 			await writeMeta(db, 'plan', { checkedAt: Date.now(), sources: plans } satisfies SyncPlan);
@@ -404,6 +553,7 @@ const steps: StepDef[] = [
 					from: plan.from,
 					to: plan.from,
 					...(plan.ingestsItself ? { ingestsItself: true } : {}),
+					...(plan.polled ? { polled: true } : {}),
 					...(plan.ingestDue ? { ingestDue: plan.ingestDue } : {})
 				};
 				run.sources.push(entry);
@@ -426,7 +576,9 @@ const steps: StepDef[] = [
 							`${plan.site} ${short(plan.from.id)} → ${short(entry.to.id)}: +${n(plan.added)} new, ${n(plan.edited)} edited, ` +
 								`${n(plan.favourites)} favourite counts, ${n(plan.deleted.length)} deleted (kept on the site)`
 						);
-				} else if (!sourceMoved(plan)) parts.push(`${plan.site}: already at its latest (${short(plan.to.id)})`);
+				} else if (plan.off) parts.push(`${plan.site}: off in the settings`);
+				else if (!sourceMoved(plan))
+					parts.push(`${plan.site}: ${plan.polled ? 'nothing new' : `already at its latest (${short(plan.to.id)})`}`);
 			}
 			// Then the record store, after the sources have admitted their waiting records (uploads): the render
 			// step reads it. Read-only on the stage.
@@ -444,6 +596,22 @@ const steps: StepDef[] = [
 				sources: plans.map((p) => {
 					const entry = run.sources.find((s) => s.site === p.site);
 					const to = entry?.to;
+					// A polled site is level at its new cursor, with the reads it left for the next update.
+					if (to && entry?.counts && p.polled) {
+						const left = entry.counts.left ?? 0;
+						const position = (SOURCES.find((s) => s.site === p.site) as { lastApply?: string } | undefined)?.lastApply;
+						return {
+							...p,
+							from: to,
+							to,
+							added: 0,
+							edited: 0,
+							deleted: [],
+							behind: 0,
+							position: position ?? p.position,
+							stateText: left ? `${n(left)} left` : undefined
+						};
+					}
 					// A source that admits its own records (uploads) is level at its new cursor, with what it left waiting.
 					if (to && entry?.counts) {
 						const left = entry.counts.left ?? 0;
@@ -456,6 +624,7 @@ const steps: StepDef[] = [
 			const details: DetailGroup[] = plans.map((p) => {
 				const entry = run.sources.find((s) => s.site === p.site);
 				const to = entry?.to;
+				if (p.polled) return polledFetchDetails(p, entry?.counts);
 				// A source that admits its own records (uploads, scripts/sync/uploads.ts) says how they came out.
 				if (p.site === UPLOADS_SOURCE) {
 					const c = entry?.counts ?? {};
@@ -514,66 +683,8 @@ const steps: StepDef[] = [
 	},
 	{
 		id: 'ingest',
-		async run(): Promise<Outcome> {
-			// The backfill's sources only (sourceDigest leaves out uploads, admitted in the fetch), and a hand-over
-			// that had to purge a print another source still has (`ingest_due`): the backfill admits it again.
-			const key = ingestKey(
-				sourceDigest(run.sources),
-				{
-					analyzer: ANALYZER_VERSION,
-					index: INDEX_VERSION,
-					viewer: VIEWER_VERSION,
-					identity: IDENTITY_VERSION
-				},
-				run.sources.find((s) => s.ingestDue)?.ingestDue ?? null
-			);
-			const recent = await db
-				.prepare('SELECT * FROM sync_runs WHERE stage = ? AND id != ? ORDER BY started_at DESC LIMIT 50')
-				.bind(stage, run.id)
-				.all<SyncRunRow>();
-			if (lastIngestKey(recent.results.map(parseSyncRun)) === key)
-				return {
-					status: 'skipped',
-					summary: `nothing changed since the last update that ran it (${sourceDigest(run.sources).replace(/@(\w{7})\w+/g, '@$1')})`
-				};
-			const r = await script(['scripts/backfill.ts', '--stage', stage, ...recordSourceArgs(), '--yes', '--json']);
-			const result = lastJsonLine<BackfillResult>(r.tail);
-			if (r.code !== 0 || !result) return failed(r);
-			const summary = backfillSummary(result);
-			if (result.state !== 'finished')
-				return { status: 'failed', summary: `the backfill ${result.state}: ${summary}`, runId: result.id, code: r.code };
-			// Only a backfill with nothing left to retry lets later updates skip this step.
-			if (backfillComplete(result)) run.options.ingestKey = key;
-			const kinds = Object.entries(result.failures)
-				.map(([k, v]) => `${k} ${n(v)}`)
-				.join(', ');
-			// The backfill reads one source today (recordSourceArgs), so its counts are that source's.
-			const details: DetailGroup[] = [
-				{
-					title:
-						run.sources
-							.filter((s) => !s.ingestsItself)
-							.map((s) => s.site)
-							.join(', ') || undefined,
-					rows: [
-						...detail('re-indexed', result.reindexed),
-						...detail('viewer files rebuilt', result.viewer),
-						...detail('favourite counts updated', result.favorites),
-						...detail('analysed', result.analysed, { always: true }),
-						...detail('failed', result.failed, { always: true, tone: 'bad' }),
-						...Object.entries(result.failures).flatMap(([k, v]) => detail(`${k} failures`, v, { tone: 'bad' })),
-						...detail('known failures skipped', result.skipped),
-						...detail('unchanged', result.unchanged)
-					]
-				}
-			];
-			return {
-				status: result.failed ? 'warning' : 'done',
-				summary: result.failed ? `${summary} (${kinds})` : summary,
-				runId: result.id,
-				code: r.code,
-				details
-			};
+		async run({ stopping }): Promise<Outcome> {
+			return admitPolled(await backfillStep(), stopping);
 		}
 	},
 	{
@@ -646,6 +757,33 @@ const steps: StepDef[] = [
 				parts.push(
 					`uploads: ${n(uploaded.approved)} approved, copied ${n(uploaded.fetched)}${uploaded.failed ? `, failed ${n(uploaded.failed)}` : ''}`
 				);
+			if (stopping()) return { status: 'stopped', summary: parts.join(' · '), details };
+			// Images other sites' records name (codex's), for the stage's prints that show them: copied from their
+			// URLs (scripts/screenshots/sites.ts), never hotlinked. A failure here still lets the rest go up.
+			const fromSites = await script(['scripts/screenshots.ts', '--from-sites', stage, '--json']);
+			const sites = lastJsonLine<FromSitesResult>(fromSites.tail);
+			if (fromSites.code !== 0) {
+				warning = true;
+				if (!sites) parts.push(`other sites: ${failureLine(fromSites.tail)}`);
+			}
+			if (sites?.toFetch || sites?.failed)
+				parts.push(
+					`other sites: ${n(sites.toFetch)} to copy, copied ${n(sites.fetched)}` +
+						(sites.newlyDead ? `, ${n(sites.newlyDead)} gone at the source` : '') +
+						(sites.failed ? `, failed ${n(sites.failed)}` : '')
+				);
+			if (sites)
+				details.push({
+					title: 'From other sites',
+					rows: [
+						...detail('images shown', sites.shown, { always: true }),
+						...detail('already copied', sites.alreadyCopied),
+						...detail('copied now', sites.fetched),
+						...detail('gone at the source', sites.dead + sites.newlyDead, { tone: 'warn' }),
+						...detail('removed', sites.removed),
+						...detail('failed, tried again next update', sites.failed, { tone: 'bad' })
+					]
+				});
 			if (stopping()) return { status: 'stopped', summary: parts.join(' · '), details };
 			const up = await script(['scripts/screenshots.ts', '--upload', stage, '--json']);
 			if (up.code !== 0) return { ...failed(up), details };

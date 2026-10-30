@@ -16,7 +16,7 @@ import { backoffMs, pacer, pool, realClock } from './pace.js';
 import { formatEntry, type StateEntry } from './state.js';
 import { openShotStore } from './store.js';
 import { syncImage } from './upload.js';
-import { isUploadImage } from '#lib/screenshots.js';
+import { isOwnImage, isUploadImage } from '#lib/screenshots.js';
 
 const mb = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
 const secs = (ms: number) => `${Math.round(ms / 1000)}s`;
@@ -206,8 +206,8 @@ export const MAX_GONE = { count: 50, share: 0.05 };
 export const tooManyGone = (gone: number, checked: number) => gone > MAX_GONE.count && gone > checked * MAX_GONE.share;
 
 export async function runRecheck(dir: string, stateFile: string, entries: Map<string, StateEntry>, args: ShotArgs): Promise<number> {
-	// Upload images (`upload.…`) were never on Imgur.
-	const todo = selectEntries(entries.values(), args.ids, args.limit, (e) => e.status === 'fetched' && !isUploadImage(e.id));
+	// Upload and other sites' images (`upload.…`, `codex.…`) were never on Imgur.
+	const todo = selectEntries(entries.values(), args.ids, args.limit, (e) => e.status === 'fetched' && !isOwnImage(e.id));
 	console.log(`screenshots: rechecking ${todo.length} copied images on Imgur, at most ${args.rate}/s`);
 	const pace = pacer(args.rate);
 	const abort = new AbortController();

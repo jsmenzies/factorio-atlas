@@ -2,6 +2,7 @@
 	import { enhance } from '$app/forms';
 	import { bytes, duration, int, when } from '#lib/components/admin/metrics.js';
 	import { serverClock, syncTimeZone } from '#lib/components/admin/live.svelte.js';
+	import { POLLED_SITES } from '#lib/sync.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -123,10 +124,34 @@
 					<label for="authorLimit" class="text-stone-200">At most this many Firebase lookups per update</label>
 					<input id="authorLimit" name="authorLimit" type="number" min="1" max="1000" step="1" value={s.authorLimit} class={field('authorLimit')} />
 
+					<p class={group}>Other sites</p>
+					{#each POLLED_SITES as p (p.site)}
+						<label for="polled-{p.site}-on" class="text-stone-200">
+							Fetch new and changed prints from {p.name}
+							<span class={hint}>Through the same gate as every print: copies join the print already here. About one request a second.</span>
+						</label>
+						<input id="polled-{p.site}-on" name="polled.{p.site}.on" type="checkbox" checked={s.polled[p.site].on} class="size-4 justify-self-end accent-amber-500" />
+
+						<label for="polled-{p.site}-perUpdate" class="text-stone-200">
+							At most this many {p.name} prints read per update
+							<span class={hint}>The rest wait for the next update. The first update reads every print (≈ 460, ≈ 8 minutes).</span>
+						</label>
+						<input
+							id="polled-{p.site}-perUpdate"
+							name="polled.{p.site}.perUpdate"
+							type="number"
+							min="1"
+							max="100000"
+							step="1"
+							value={s.polled[p.site].perUpdate}
+							class={field(`polled.${p.site}.perUpdate`)}
+						/>
+					{/each}
+
 					<p class={group}>Safety</p>
 					<label for="maxChange" class="text-stone-200">
 						Stop if the mirror changed more than this share of its prints since the last pull (%)
-						<span class={hint}>Guards against a layout change like 11 Oct's, which moved every file.</span>
+						<span class={hint}>Guards against a layout change like 11 Oct's, which moved every file. For other sites: prints missing from their list.</span>
 					</label>
 					<input id="maxChange" name="maxChange" type="number" min="1" max="100" step="1" value={Math.round(s.maxChange * 100)} class={field('maxChange')} />
 				</div>

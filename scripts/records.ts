@@ -1,7 +1,8 @@
 /**
  * `bun run records --stage local|prod [--dir DIR] [--dry-run] [--json]`: bring this machine's record
  * store (scripts/records/store.ts: RECORDS_DIR, else ~/data/factorio-records) in line with the stage, for
- * every site whose records live there (today uploads: scripts/records/uploads.ts). Only new and changed
+ * every site whose records live there (uploads: scripts/records/uploads.ts; polled sites such as codex, their
+ * prints that are their own print on the stage: scripts/records/polled.ts). Only new and changed
  * records are fetched; those the site no longer has (deleted, taken down) leave the store. The render
  * runs read the store beside the mirror clone, so uploads get renders and thumbnails like any print.
  *
@@ -25,6 +26,8 @@ import { pullSite, type PullCounts, type StoreAdapter } from './records/pull';
 import { recordsDir, storePrintIds } from './records/store';
 import { factoriobinStoreAdapter } from './records/factoriobin';
 import { uploadsStoreAdapter } from './records/uploads';
+import { polledStoreAdapter } from './records/polled';
+import { POLLED_SITES } from '#lib/sync.js';
 
 const USAGE = 'usage: bun run records --stage local|prod [--dir DIR] [--dry-run] [--json]';
 const JSON_OUT = process.argv.includes('--json');
@@ -95,8 +98,13 @@ let code = 0;
 try {
 	const env = target.env;
 	await requireSchema(env.DB, stage, 'SELECT print_id FROM uploads LIMIT 0', 'uploads table', '0024');
-	/** Every site that feeds the store; factoriobin and the others join here. */
-	const adapters: StoreAdapter[] = [uploadsStoreAdapter(env), factoriobinStoreAdapter(env)];
+	await requireSchema(env.DB, stage, 'SELECT site FROM print_sources LIMIT 0', 'print_sources table', '0022');
+	/** Every site that feeds the store; others join here. Polled sites (codex): their own prints on the stage. */
+	const adapters: StoreAdapter[] = [
+		uploadsStoreAdapter(env),
+		factoriobinStoreAdapter(env),
+		...POLLED_SITES.map((p) => polledStoreAdapter(env, p.site))
+	];
 	say(`${stage} → record store ${result.dir}${result.dryRun ? ' (dry run)' : ''}`);
 	const parts: string[] = [];
 	for (const adapter of adapters) {

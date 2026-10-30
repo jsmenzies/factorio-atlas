@@ -37,7 +37,8 @@ export const mirrorPlan = (plan: SyncPlan | null) => plan?.sources[0] ?? null;
  * A source's line in the Overview's list: held back, behind (and by how much), or up to date. A source
  * whose cursor isn't a commit (uploads) says what waits in its own words (`stateText`).
  */
-export const sourceState = (p: SourcePlan): { text: string; tone: 'ok' | 'warn' | 'bad' } => {
+export const sourceState = (p: SourcePlan): { text: string; tone: 'ok' | 'warn' | 'bad' | 'off' } => {
+	if (p.off) return { text: 'off', tone: 'off' };
 	if (p.error) return { text: 'couldn’t check', tone: 'bad' };
 	if (p.blocked) return { text: 'held back', tone: 'bad' };
 	if (!sourceMoved(p)) return { text: 'up to date', tone: 'ok' };
@@ -87,8 +88,11 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 			? [`+${int(t.added)} new, ${int(t.edited)} edited, ${int(t.favourites)} only favourite counts changed, ${int(t.deleted)} deleted`]
 			: []),
 		...(plan?.sources ?? [])
-			.filter((p) => p.ingestsItself && sourceMoved(p) && !p.blocked)
-			.map((p) => `${p.site}: ${p.stateText ?? 'something waiting'}`)
+			.filter((p) => (p.ingestsItself || p.polled) && sourceMoved(p) && !p.blocked)
+			.map(
+				(p) =>
+					`${p.site}: ${p.stateText ?? 'something waiting'}${p.polled ? ` (≈ ${int(Math.min(p.added + p.edited + p.deleted.length, settings.polled[p.site as keyof typeof settings.polled]?.perUpdate ?? Infinity))} reads at 1 a second)` : ''}`
+			)
 	];
 	return [
 		{ id: 'removals', text: "sweep this machine's copies of prints removed on the site (renders, thumbnails, screenshots)" },
@@ -100,10 +104,12 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 		},
 		{
 			id: 'ingest',
-			text: t.backfill
-				? `analyse ${int(t.added + t.edited)} new and edited prints; ${int(t.favourites)} favourite counts are one row each`
-				: 'skipped when nothing changed since the last update that ran it',
-			idle: !t.backfill
+			text:
+				(t.backfill
+					? `analyse ${int(t.added + t.edited)} new and edited prints; ${int(t.favourites)} favourite counts are one row each`
+					: 'skipped when nothing changed since the last update that ran it') +
+				(t.polled ? `; then admit ${int(t.polled)} records from other sites through the gate` : ''),
+			idle: !t.backfill && !t.polled
 		},
 		settings.authors
 			? { id: 'authors', text: `their records first, then Firebase for up to ${int(settings.authorLimit)}` }

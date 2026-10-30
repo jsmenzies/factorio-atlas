@@ -35,9 +35,16 @@
 							<td class="py-1.5 pr-4 whitespace-nowrap text-stone-200">{when(r.started_at, now, timeZone)}</td>
 							<td class="py-1.5 pr-4 whitespace-nowrap">
 								{#each r.sources as s (s.site)}
+									{#if s.polled}
+										<!-- A polled site's cursor isn't a commit: what its fetch read. -->
+										<code class="block text-stone-300" title={s.blocked ? `${s.site} held back: ${s.blocked}` : s.site}
+											>{s.site}{s.counts ? ` +${(s.counts.new ?? 0) + (s.counts.changed ?? 0)}` : ''}{s.blocked ? ' (held back)' : ''}</code
+										>
+									{:else}
 									<code class="block text-stone-300" title={s.blocked ? `${s.site} held back: ${s.blocked}` : s.site}
 										>{shortCommit(s.from?.id)}{s.to && s.to.id !== s.from?.id ? ` → ${shortCommit(s.to.id)}` : ''}{s.blocked ? ' (held back)' : ''}</code
 									>
+									{/if}
 								{:else}
 									<span class="text-stone-500">–</span>
 								{/each}

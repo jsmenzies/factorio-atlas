@@ -29,7 +29,25 @@ export interface SyncSettings {
 	 * share of them (a layout change); edits in place don't count. A held-back update can be accepted.
 	 */
 	maxChange: number;
+	/** Each polled site (POLLED_SITES): fetched in the fetch step, admitted in the ingest step, when on. */
+	polled: Record<PolledSiteId, PolledSettings>;
 }
+
+/**
+ * Sites the update polls for new and changed prints (scripts/sync/polled.ts): their records go into the
+ * record store's inbox in the fetch step and through the gate in the ingest step.
+ */
+export const POLLED_SITES = [{ site: 'codex', name: 'factoriocodex.com' }] as const;
+export type PolledSiteId = (typeof POLLED_SITES)[number]['site'];
+
+export interface PolledSettings {
+	/** Fetch and admit this site's prints in every update. */
+	on: boolean;
+	/** Record reads an update makes at most (new and changed prints, and deletions to confirm); the rest wait. */
+	perUpdate: number;
+}
+
+export const DEFAULT_POLLED: PolledSettings = { on: true, perUpdate: 1000 };
 
 export const DEFAULT_SETTINGS: SyncSettings = {
 	top: 1000,
@@ -39,7 +57,8 @@ export const DEFAULT_SETTINGS: SyncSettings = {
 	imgurRecheck: 'never',
 	authors: true,
 	authorLimit: 50,
-	maxChange: 0.05
+	maxChange: 0.05,
+	polled: Object.fromEntries(POLLED_SITES.map((p) => [p.site, DEFAULT_POLLED])) as Record<PolledSiteId, PolledSettings>
 };
 
 const whole = (v: unknown, min: number, max: number) =>
@@ -69,10 +88,30 @@ export function parseSettings(input: unknown): { settings: SyncSettings; errors:
 		imgurRecheck: pick('imgurRecheck', (v) => (v === 'never' || v === 'weekly' ? v : undefined)),
 		authors: pick('authors', (v) => (typeof v === 'boolean' ? v : undefined)),
 		authorLimit: pick('authorLimit', (v) => whole(v, 1, 1000)),
-		maxChange: pick('maxChange', (v) => (typeof v === 'number' && v > 0 && v <= 1 ? v : undefined))
+		maxChange: pick('maxChange', (v) => (typeof v === 'number' && v > 0 && v <= 1 ? v : undefined)),
+		polled: parsePolled(o.polled, errors)
 	};
 	return { settings, errors };
 }
+
+/** Each polled site's settings: a valid field kept, else the default; errors named `polled.<site>.<field>`. */
+const parsePolled = (input: unknown, errors: string[]): Record<PolledSiteId, PolledSettings> => {
+	const all = input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
+	const out = {} as Record<PolledSiteId, PolledSettings>;
+	for (const { site } of POLLED_SITES) {
+		const o = all[site] && typeof all[site] === 'object' ? (all[site] as Record<string, unknown>) : {};
+		const field = <K extends keyof PolledSettings>(key: K, v: PolledSettings[K] | undefined): PolledSettings[K] => {
+			if (!(key in o)) return DEFAULT_POLLED[key];
+			if (v === undefined) errors.push(`polled.${site}.${key}`);
+			return v ?? DEFAULT_POLLED[key];
+		};
+		out[site] = {
+			on: field('on', typeof o.on === 'boolean' ? o.on : undefined),
+			perUpdate: field('perUpdate', whole(o.perUpdate, 1, 100_000))
+		};
+	}
+	return out;
+};
 
 // --- steps
 
@@ -173,15 +212,18 @@ export interface SourceRun {
 	ingestsItself?: boolean;
 	/** The source's `meta.ingest_due` (SourcePlan.ingestDue). */
 	ingestDue?: string;
+	/** A polled site (SourcePlan.polled): admitted in the ingest step, not by the backfill, so not in `sourceDigest`. */
+	polled?: boolean;
 }
 
 /**
  * A fingerprint of what the backfill's sources held after the fetch: the ingest step is skipped when it
- * and the versions match. Sources that ingest their own records in the fetch (`ingestsItself`) are left out.
+ * and the versions match. Sources that ingest their own records in the fetch (`ingestsItself`) and polled
+ * sites (admitted in the ingest step, not by the backfill) are left out.
  */
 export const sourceDigest = (sources: readonly SourceRun[]) =>
 	sources
-		.filter((s) => !s.ingestsItself)
+		.filter((s) => !s.ingestsItself && !s.polled)
 		.map((s) => `${s.site}@${s.to?.id ?? '?'}`)
 		.sort()
 		.join(' ');
@@ -258,6 +300,14 @@ export interface SourcePlan {
 	ingestDue?: string | null;
 	/** Why the source couldn't be checked (`sync --plan` goes on with the others); the update's fetch tries it again. */
 	error?: string;
+	/**
+	 * A polled site (scripts/sync/polled.ts): its fetch puts new and changed records in the record store's
+	 * inbox, and the ingest step admits them through the gate (never the backfill). `added`/`edited` count
+	 * records to read, `deleted` prints the site no longer lists.
+	 */
+	polled?: boolean;
+	/** Turned off in the settings: not checked, nothing fetched. */
+	off?: boolean;
 }
 
 /** What an update would do now, from the last check of every source (`bun run sync --plan`). */
@@ -272,7 +322,7 @@ export const sourceMoved = (p: SourcePlan) => p.from.id !== p.to.id;
 /** The plan's counts over the sources that would be fetched (moved and not held back). */
 export const planTotals = (plan: SyncPlan | null) => {
 	const fetched = (plan?.sources ?? []).filter((p) => sourceMoved(p) && !p.blocked);
-	const backfilled = fetched.filter((p) => !p.ingestsItself);
+	const backfilled = fetched.filter((p) => !p.ingestsItself && !p.polled);
 	const sum = (f: (p: SourcePlan) => number, of = backfilled) => of.reduce((n, p) => n + f(p), 0);
 	return {
 		moved: fetched.length > 0,
@@ -287,6 +337,11 @@ export const planTotals = (plan: SyncPlan | null) => {
 		waiting: sum(
 			(p) => p.added,
 			fetched.filter((p) => p.ingestsItself)
+		),
+		/** New and changed records on polled sites (codex), read in the fetch and admitted in the ingest step. */
+		polled: sum(
+			(p) => p.added + p.edited,
+			fetched.filter((p) => p.polled)
 		)
 	};
 };

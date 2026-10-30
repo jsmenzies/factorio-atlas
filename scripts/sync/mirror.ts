@@ -219,6 +219,8 @@ export interface SourceAdapter {
 	site: string;
 	/** Its apply ingests its records itself (uploads): none of the backfill's work (SourcePlan.ingestsItself). */
 	ingestsItself?: boolean;
+	/** A polled site (scripts/sync/polled.ts): its apply reads records into the inbox, the ingest step admits them. */
+	polled?: boolean;
 	plan(o: PlanOptions): Promise<SourcePlan>;
 	/** Where the source stands after it, and how its records came out when it handles them itself (uploads). */
 	apply(plan: SourcePlan, signal?: AbortSignal): Promise<SourceCursor & { counts?: Record<string, number> }>;

@@ -6,7 +6,8 @@
  *
  * Keys, by image id: an Imgur id, or `upload.<16 hex>` for an approved upload's screenshot (the first 16
  * hex digits of its SHA-256; the original stays private in RAW, the screenshots step copies it from
- * there). Either way an id's bytes never change: a new screenshot is a new id.
+ * there), or `<site>.<16 hex>` for another site's image (of its URL's SHA-256, copied from that URL by
+ * `--from-sites`). Either way an id's bytes never change: a new screenshot is a new id.
  *
  *   <id>.<ext>                    the original, untouched (jpg | png | gif | webp)
  *   <id>.v<V>.full.<jpg|webp>     instead of the original when it is over CAP (JPEG stays JPEG, PNG becomes lossless WebP)
@@ -35,6 +36,19 @@ export const UPLOAD_IMAGE = /^upload\.[0-9a-f]{16}$/;
 export const isUploadImage = (id: string) => UPLOAD_IMAGE.test(id);
 /** The image id of an upload image (`upload_images.id`, 16 hex). */
 export const uploadImageId = (hex: string) => `upload.${hex}`;
+
+/**
+ * Another site's image, named in its record (codex's `image_url`): `<site>.` and the first 16 hex digits of
+ * the SHA-256 of its URL. Copied by `bun run screenshots --from-sites S` (scripts/screenshots/sites.ts); never
+ * hotlinked, and never on Imgur.
+ */
+export const SITE_IMAGE = /^(?:codex|fprints|factoriobin)\.[0-9a-f]{16}$/;
+export const isSiteImage = (id: string) => SITE_IMAGE.test(id);
+/** The image id of a site's image URL, from the URL's SHA-256 (hex). */
+export const siteImageId = (site: 'codex' | 'fprints' | 'factoriobin', urlSha256: string) => `${site}.${urlSha256.slice(0, 16)}`;
+
+/** Only our own copies ever show: an upload's image or another site's, never looked up on Imgur. */
+export const isOwnImage = (id: string) => isUploadImage(id) || isSiteImage(id);
 
 /** copied: the files are in the bucket; dead: gone from Imgur before we copied it; removed: deleted on Imgur since, or on request. */
 export type ShotState = 'copied' | 'dead' | 'removed';
@@ -109,7 +123,7 @@ export const shotKeys = (s: Shot) => {
 
 /** Keys the `/screenshots` route serves. */
 export const SHOT_KEY =
-	/^(?:[A-Za-z0-9]{5,10}|upload\.[0-9a-f]{16})(?:\.v\d+\.(?:c\d{3,4}\.avif|l\.avif|og\.jpg|full\.(?:jpg|webp))|\.(?:jpg|png|gif|webp|json))$/;
+	/^(?:[A-Za-z0-9]{5,10}|upload\.[0-9a-f]{16}|(?:codex|fprints|factoriobin)\.[0-9a-f]{16})(?:\.v\d+\.(?:c\d{3,4}\.avif|l\.avif|og\.jpg|full\.(?:jpg|webp))|\.(?:jpg|png|gif|webp|json))$/;
 
 export const SHOT_CONTENT_TYPES: Record<string, string> = {
 	avif: 'image/avif',
@@ -189,13 +203,13 @@ const IMGUR_BACKDROP = { width: 1024, height: 576 };
  * - dead (gone from Imgur before we copied it) or removed (deleted on Imgur, or on request): the
  *   cover page's render thumbnail, else nothing; never Imgur;
  * - unknown (no row: not copied yet): Imgur's 640 px copy as before, else the render thumbnail, else nothing;
- *   an upload's image (`upload.…`) is never on Imgur, so until the screenshots step has sized it the card
- *   shows the render thumbnail, else nothing.
+ *   an upload's or another site's image (`upload.…`, `codex.…`) is never on Imgur, so until the screenshots
+ *   step has sized it the card shows the render thumbnail, else nothing.
  */
 export function cardImage(c: CardImageColumns, bases: { shots: string; renderBase: (id: string) => string }): CardImage | null {
 	const shot = shotOf(c.image_id, c.shot_state, c.shot_v, c.shot_ext, c.shot_w, c.shot_h);
 	if (shot) return { kind: 'screenshot', ...cropPicture(bases.shots, shot) };
-	if (c.shot_state === null && c.image_id && !isUploadImage(c.image_id))
+	if (c.shot_state === null && c.image_id && !isOwnImage(c.image_id))
 		return { kind: 'imgur', src: imgurUrl(c.image_id, c.image_type, 'large'), ...IMGUR_CARD };
 	if (c.cover_page !== null && c.cover_stamp && c.cover_w && c.cover_h) {
 		const base = bases.renderBase(c.id);
@@ -215,8 +229,9 @@ export function cardImage(c: CardImageColumns, bases: { shots: string; renderBas
 /** The print and render pages' view of a print's screenshot, from its manifest. */
 export interface ShotView {
 	/**
-	 * 'unknown': no manifest (not copied yet), or the print has no screenshot. 'preparing': an upload's
-	 * approved screenshot the screenshots step hasn't sized yet (no manifest): nothing to show until it has.
+	 * 'unknown': no manifest (not copied yet), or the print has no screenshot. 'preparing': an upload's approved
+	 * screenshot, or another site's image, that the screenshots step hasn't sized yet (no manifest): nothing to
+	 * show until it has.
 	 */
 	state: ShotState | 'unknown' | 'preparing';
 	/** The pictures come from Imgur (state unknown): their `<img>` needs `referrerpolicy="no-referrer"`. */
@@ -262,8 +277,8 @@ export function shotView(imageId: string | null, imageType: string | null, manif
 	const none = { imgur: false, backdrop: null, large: null, inline: null, full: null, og: null };
 	if (manifest && manifest.state !== 'copied') return { state: manifest.state, ...none };
 	if (!imageId) return { state: 'unknown', ...none };
-	// Never Imgur for an upload's image: only our sized copies, once they exist.
-	if (isUploadImage(imageId)) return { state: 'preparing', ...none };
+	// Never Imgur for an upload's or another site's image: only our sized copies, once they exist.
+	if (isOwnImage(imageId)) return { state: 'preparing', ...none };
 	const original = imgurUrl(imageId, imageType, 'original');
 	const preview = imgurUrl(imageId, imageType, 'preview');
 	return {

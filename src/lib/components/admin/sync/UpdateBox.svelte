@@ -164,7 +164,7 @@
 				</h2>
 				<p class="text-xs text-stone-500">
 					{#each run.sources as s (s.site)}
-						{#if s.ingestsItself}
+						{#if s.ingestsItself || s.polled}
 							{s.site} ·
 						{:else}
 							{s.site} <code>{shortCommit(s.from?.id)}{s.to && s.to.id !== s.from?.id ? ` → ${shortCommit(s.to.id)}` : ''}</code> ·
@@ -186,13 +186,14 @@
 				{#each held as p (p.site)}
 					<p class="text-sm text-stone-400">{p.site} <code>{shortCommit(p.to.id)}</code>: {p.blocked}</p>
 				{/each}
-				<p class="text-xs text-stone-500">Every other step still runs. Accept only after looking at the mirror on GitHub.</p>
+				<p class="text-xs text-stone-500">Every other step still runs. Accept only after looking at the source (the mirror on GitHub, or the site).</p>
 			{:else if phase === 'waiting' && plan}
 				<p class="text-xs font-semibold tracking-wide text-stone-500 uppercase">Update</p>
 				<h2 id="update-title" class="text-lg font-semibold text-stone-100">
 					Something new to fetch: {[
 						...(totals.backfill ? [`${int(totals.added)} new print${totals.added === 1 ? '' : 's'}`] : []),
-						...(totals.waiting ? [`${int(totals.waiting)} upload${totals.waiting === 1 ? '' : 's'} waiting`] : [])
+						...(totals.waiting ? [`${int(totals.waiting)} upload${totals.waiting === 1 ? '' : 's'} waiting`] : []),
+						...(totals.polled ? [`${int(totals.polled)} from other sites`] : [])
 					].join(', ') || 'new names to put on uploads'}
 				</h2>
 				<p class="text-xs text-stone-500">Sources checked {ago(now - plan.checkedAt)}</p>
@@ -303,7 +304,15 @@
 							{/if}
 						</p>
 					</div>
-					<p class="text-sm sm:text-right {state.tone === 'ok' ? 'text-emerald-300' : state.tone === 'warn' ? 'text-amber-200' : 'text-rose-300'}">
+					<p
+						class="text-sm sm:text-right {state.tone === 'ok'
+							? 'text-emerald-300'
+							: state.tone === 'warn'
+								? 'text-amber-200'
+								: state.tone === 'off'
+									? 'text-stone-500'
+									: 'text-rose-300'}"
+					>
 						{state.text}
 					</p>
 				</li>

@@ -44,6 +44,7 @@
 		"uploads": "bun scripts/uploads.ts",
 		"add": "bun scripts/add.ts",
 		"records": "bun scripts/records.ts",
+		"polled": "bun scripts/polled.ts",
 		"game-data": "bun scripts/build-game-data.ts",
 		"icons": "bun scripts/icons.ts",
 		"lint": "oxlint",

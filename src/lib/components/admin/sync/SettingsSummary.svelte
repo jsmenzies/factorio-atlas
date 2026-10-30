@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { SyncSettings } from '#lib/sync.js';
+	import { POLLED_SITES, type SyncSettings } from '#lib/sync.js';
 	import { int, when } from '../metrics.js';
 
 	/** What an update covers, from the saved settings; changed on /admin/settings. */
@@ -10,7 +10,11 @@
 		{ label: 'And the top favourites', value: settings.top ? int(settings.top) : 'none' },
 		{ label: 'Prints to render per update', value: settings.perUpdate === null ? 'all that need it' : int(settings.perUpdate) },
 		{ label: 'Copy screenshots', value: settings.screenshots ? (settings.imgurRecheck === 'weekly' ? 'yes, recheck weekly' : 'yes') : 'no' },
-		{ label: 'Name new authors', value: settings.authors ? `yes, ≤ ${int(settings.authorLimit)} from Firebase` : 'no' }
+		{ label: 'Name new authors', value: settings.authors ? `yes, ≤ ${int(settings.authorLimit)} from Firebase` : 'no' },
+		...POLLED_SITES.map((p) => ({
+			label: `Prints from ${p.name}`,
+			value: settings.polled[p.site].on ? `yes, ≤ ${int(settings.polled[p.site].perUpdate)} reads` : 'no'
+		}))
 	]);
 </script>
 
