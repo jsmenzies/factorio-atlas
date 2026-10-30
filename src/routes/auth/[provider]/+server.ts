@@ -12,5 +12,7 @@ export const GET: RequestHandler = async ({ params, url, cookies }) => {
 	if (!isProvider(params.provider) || !client) error(404, 'No such sign-in');
 	const flow = newFlow(params.provider, url.searchParams.get('return'));
 	setFlowCookie(cookies, flow, dev);
-	redirect(302, await authorizeUrl(flow, client, url.origin));
+	// The provider's own sign-in page, built from its fixed spec (providers.ts): SvelteKit refuses an
+	// external redirect unless told it is one.
+	redirect(302, await authorizeUrl(flow, client, url.origin), { external: true });
 };
