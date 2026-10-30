@@ -38,8 +38,7 @@
 		{@render children()}
 	</main>
 	<footer class="mx-auto max-w-7xl px-4 py-8 text-xs text-stone-500">
-		Factorio is a trademark of Wube Software Ltd. Not affiliated with Wube Software or factorioprints.com. Prints are copied from
-		<a class="underline" href="https://factorioprints.com">factorioprints.com</a> or uploaded here, and credited to their authors. Each
-		screenshot is the author's own image. <a class="whitespace-nowrap underline" href="/privacy">Privacy</a>
+		Factorio is a trademark of Wube Software Ltd. Not affiliated with Wube Software or factorioprints.com.
+		<a class="whitespace-nowrap underline" href="/privacy">Privacy</a>
 	</footer>
 </div>

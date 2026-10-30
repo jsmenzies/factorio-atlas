@@ -11,7 +11,7 @@ import type { Site } from '#lib/print-id.js';
 import { admitRecord, WORKER_LIMITS, type Admission, type AdmitLimits, type Suggestion } from '../pipeline/admit';
 import { sourcesOf, type PrintSourceRow } from '../pipeline/identity-db';
 import { pipelineLayer, type PipelineEnv } from '../pipeline/layers';
-import { ingestRecord, syncFold } from '../pipeline/pipeline';
+import { ingestRecord, syncFold, syncSources } from '../pipeline/pipeline';
 import { RawStoreR2 } from '../pipeline/raw-store';
 import { PrintRepositoryD1 } from '../pipeline/repository';
 import { sourceGone } from '../pipeline/source-gone';
@@ -214,6 +214,7 @@ export const workerGate = (env: GateEnv): UploadGate => {
 						// The backfill admits that source again, but the sync skips it while nothing else changed.
 						await markIngestDue(env.DB);
 					}),
+				resync: (printId) => run(syncSources(printId)),
 				refold: (printId) => run(syncFold(printId))
 			});
 			return r.status === 'purged' ? 'purged' : r.status === 'unknown' || r.status === 'already-gone' ? 'none' : 'kept';

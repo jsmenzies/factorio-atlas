@@ -10,7 +10,8 @@ import { d1FromSqlite } from './d1-sqlite';
 import { decodeExchangeString, encodeExchangeString } from './decode';
 import { FOLDED_TOKEN } from './fold';
 import { fingerprintBlockValues, identityPurgeStatements, sourcesOf } from './identity-db';
-import { applyPlan, ingestRecord, ingestText, planIngest, refoldAll, syncFold } from './pipeline';
+import { applyPlan, ingestRecord, ingestText, planIngest, refoldAll, syncFold, syncSources } from './pipeline';
+import { withSources } from './print-doc';
 import { RawStore } from './raw-store';
 import { loadIngestStates, PrintRepository, PrintRepositoryD1 } from './repository';
 import { sourceGone } from './source-gone';
@@ -109,6 +110,8 @@ describe('identity rows on ingest', () => {
 		]);
 		expect(h.all<{ source: string }>('SELECT source FROM prints WHERE id = ?', ID)).toEqual([{ source: 'factorioprints' }]);
 		expect(h.doc(ID)?.print.copy_of).toBeUndefined();
+		// Its own source alone: no list in the document (the page reads it from the id).
+		expect(h.doc(ID)?.print.sources).toBeUndefined();
 		expect((await h.ingest(ID, FIXTURE)).status).toBe('unchanged');
 	});
 
@@ -353,8 +356,16 @@ describe('ingestRecord: first upload wins', () => {
 		const a = await admitRecord(h.db, later);
 		expect(a).toMatchObject({ status: 'existing', printId: ID, via: 'exact' });
 		if (a.status !== 'existing') return;
+		const version = () => h.all<{ value: string }>("SELECT value FROM meta WHERE key = 'sync_version'")[0]?.value;
+		const versionBefore = version();
 		expect(await h.run(ingestRecord(later, a))).toEqual({ status: 'identified', id: ID });
-		expect(h.r2.get(`analysis/${ID}.json`)).toBe(docBefore);
+		// The document gains the sources list and nothing else; cached pages are purged.
+		expect(h.doc(ID)?.print.sources).toEqual([
+			{ site: 'factorioprints', site_id: ID },
+			{ site: 'factoriobin', site_id: 'later001' }
+		]);
+		expect(withSources(h.r2.get(`analysis/${ID}.json`)!, undefined)).toBe(docBefore!);
+		expect(version()).not.toBe(versionBefore);
 		expect(h.all('SELECT title, source FROM prints')).toEqual([{ title: 'All the Belts', source: 'factorioprints' }]);
 		expect((await sourcesOf(h.db, ID)).map((s) => s.site)).toEqual(['factorioprints', 'factoriobin']);
 
@@ -363,6 +374,14 @@ describe('ingestRecord: first upload wins', () => {
 		if (b.status !== 'existing') throw new Error(b.status);
 		expect((await h.run(ingestRecord(earlier, b))).status).toBe('analysed');
 		expect(h.all('SELECT id, title, source FROM prints')).toEqual([{ id: ID, title: 'The real first post', source: 'factoriobin' }]);
+		// Written before the batch that adds its row, the document lists it first already.
+		expect(h.doc(ID)?.print.sources).toEqual([
+			{ site: 'factoriobin', site_id: 'early001' },
+			{ site: 'factorioprints', site_id: ID },
+			{ site: 'factoriobin', site_id: 'later001' }
+		]);
+		// Nothing left to sync.
+		expect(await h.run(syncSources(ID))).toBe(false);
 	});
 });
 
@@ -470,7 +489,8 @@ describe('the soft fold', () => {
 					await h.db.batch([h.db.prepare('DELETE FROM prints WHERE id = ?').bind(id), ...identityPurgeStatements(h.db, id)]);
 				};
 				const refold = (id: string) => h.run(syncFold(id));
-				expect(await sourceGone(h.db, 'factorioprints', ID, { purge, refold })).toEqual({ status: 'purged', printId: ID });
+				const resync = (id: string) => h.run(syncSources(id));
+				expect(await sourceGone(h.db, 'factorioprints', ID, { purge, resync, refold })).toEqual({ status: 'purged', printId: ID });
 			}
 			// A print that fails analysis leaves the site too (its prints row goes).
 			expect(folds(h)).toEqual([
@@ -528,20 +548,30 @@ describe('sourceGone', () => {
 		const refold = async (id: string) => void refolded.push(id);
 		const reingested: string[] = [];
 		const reingest = async (id: string, winner: { site: string }) => void reingested.push(`${id}<-${winner.site}`);
-		const deps = { purge, reingest, refold };
+		const resync = (id: string) => h.run(syncSources(id));
+		const deps = { purge, reingest, resync, refold };
+		const listed = () => h.doc(ID)?.print.sources;
 
-		// Two sources: factorioprints (2017) and factoriobin (2026).
+		// Two sources: factorioprints (2017) and factoriobin (2026), both on the page.
 		h.sqlite
 			.query(
 				"INSERT INTO print_sources (site, site_id, print_id, url, uploaded_at, first_seen) VALUES ('factoriobin', 'LYMz5ZJT', ?, 'u', ?, 0)"
 			)
 			.run(ID, Date.UTC(2026, 0, 1));
+		expect(await resync(ID)).toBe(true);
+		expect(listed()).toEqual([
+			{ site: 'factorioprints', site_id: ID },
+			{ site: 'factoriobin', site_id: 'LYMz5ZJT' }
+		]);
+		// The later one goes: the page is back to its own source alone, so the document drops the list.
 		expect(await sourceGone(h.db, 'factoriobin', 'LYMz5ZJT', deps)).toEqual({ status: 'kept', printId: ID });
+		expect(listed()).toBeUndefined();
 		expect(await sourceGone(h.db, 'factoriobin', 'LYMz5ZJT', deps)).toEqual({ status: 'already-gone', printId: ID });
-		// Live again, then the credited (earlier) one goes.
+		// Live again, then the credited (earlier) one goes: the page lists only factoriobin.
 		h.sqlite.run("UPDATE print_sources SET gone_at = NULL WHERE site = 'factoriobin'");
 		expect(await sourceGone(h.db, 'factorioprints', ID, deps)).toMatchObject({ status: 'handed-over', printId: ID });
 		expect(reingested).toEqual([`${ID}<-factoriobin`]);
+		expect(listed()).toEqual([{ site: 'factoriobin', site_id: 'LYMz5ZJT' }]);
 		expect(refolded).toEqual([]);
 		expect(await sourceGone(h.db, 'factoriobin', 'LYMz5ZJT', deps)).toEqual({ status: 'purged', printId: ID });
 		expect([purged, refolded]).toEqual([[ID], [ID]]);

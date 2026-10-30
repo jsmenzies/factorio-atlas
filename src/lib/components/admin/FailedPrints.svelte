@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { sourceUrl } from '#lib/format.js';
+	import { sourceUrl } from '#lib/sources.js';
 	import type { FailedPrint } from '#lib/server/admin/pipeline.js';
 	import { clock, int } from './metrics.js';
 

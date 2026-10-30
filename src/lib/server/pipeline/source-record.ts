@@ -10,7 +10,7 @@
  *   which are factorioprints user ids).
  */
 import type { Site } from '#lib/print-id.js';
-import { sourceUrl } from '#lib/format.js';
+import { siteUrl } from '#lib/sources.js';
 import { stripPrivateFields, toEpochMs, type FirebaseRecord } from './record';
 
 export interface SourceAuthor {
@@ -148,7 +148,7 @@ export const fromFactorioprints = (id: string, text: string): SourceRecord => {
 	return {
 		site: 'factorioprints',
 		siteId: id,
-		url: sourceUrl(id) ?? '',
+		url: siteUrl('factorioprints', id) ?? '',
 		title: r.title ?? null,
 		description: r.descriptionMarkdown ?? null,
 		author: userId || r.author?.displayName ? { site: 'factorioprints', id: userId, name: r.author?.displayName ?? null } : null,
@@ -176,7 +176,7 @@ export const sourceMetaOf = (printId: string, r: Pick<FirebaseRecord, 'createdDa
 		: {
 				site: 'factorioprints',
 				siteId: printId,
-				url: sourceUrl(printId) ?? `https://factorioprints.com/view/${printId}`,
+				url: siteUrl('factorioprints', printId) ?? '',
 				uploadedAt: toEpochMs(r.createdDate),
 				updatedAt: toEpochMs(r.lastUpdatedDate)
 			};

@@ -1,8 +1,10 @@
 import { env } from 'cloudflare:workers';
 import { error, fail } from '@sveltejs/kit';
+import type { Site } from '#lib/print-id.js';
 import { CONTACT_MAX, DETAILS_MAX, isRemovalReason } from '#lib/reports.js';
 import { createRemovalRequest } from '#lib/server/reports.js';
 import { goneReason } from '#lib/server/print-pages.js';
+import { ownSource, SOURCE_SITES } from '#lib/sources.js';
 import { TURNSTILE_FIELD, turnstileSiteKey, verifyTurnstile } from '#lib/server/turnstile.js';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -12,15 +14,21 @@ import type { Actions, PageServerLoad } from './$types';
  * noindex, and Disallowed in robots.txt.
  */
 export const load: PageServerLoad = async ({ params }) => {
-	const print = await env.DB.prepare('SELECT title, author_name FROM prints WHERE id = ?')
-		.bind(params.id)
-		.first<{ title: string; author_name: string | null }>();
+	const [found, sources] = await env.DB.batch([
+		env.DB.prepare('SELECT title, author_name FROM prints WHERE id = ?').bind(params.id),
+		env.DB.prepare('SELECT DISTINCT site FROM print_sources WHERE print_id = ? AND gone_at IS NULL ORDER BY site').bind(params.id)
+	]);
+	const print = (found.results as { title: string; author_name: string | null }[])[0];
 	if (!print) {
 		const gone = await goneReason(params.id);
 		if (gone) error(410, gone);
 		error(404, 'Print not found');
 	}
-	return { id: params.id, title: print.title, author: print.author_name, siteKey: turnstileSiteKey(env) };
+	// The other sites that keep their own copy (uploads are only here); a print without source rows has its id's.
+	const sites = (sources.results as { site: Site }[]).map((r) => r.site);
+	const own = ownSource(params.id)?.site;
+	const elsewhere = (sites.length ? sites : own ? [own] : []).filter((s) => SOURCE_SITES[s]?.url).map((s) => SOURCE_SITES[s].name);
+	return { id: params.id, title: print.title, author: print.author_name, elsewhere, siteKey: turnstileSiteKey(env) };
 };
 
 const text = (form: FormData, key: string, max: number) => {

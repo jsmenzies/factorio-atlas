@@ -3,6 +3,7 @@
  * never queries D1.
  */
 import type { Site } from '#lib/print-id.js';
+import type { PrintSource } from '#lib/sources.js';
 import type { PrintAnalysis } from './analyze';
 import type { FoldState } from './fold';
 import type { FirebaseRecord } from './record';
@@ -30,6 +31,11 @@ export interface PrintDoc {
 		source_url: string;
 		/** The site of the record shown (no favourites but factorioprints'); absent from documents written before it. */
 		source?: Site;
+		/**
+		 * Every live source of the print (`print_sources`), credited first (#lib/sources.ts `docSources`).
+		 * Absent when the only one is the site the print's id names, and from documents written before it.
+		 */
+		sources?: PrintSource[];
 		/** Only on a later exact copy by the same author (the soft fold, fold.ts): their earlier print. */
 		copy_of?: { id: string };
 		/** Only on an exact copy by someone else (fold.ts): the earliest print of that content. */
@@ -86,6 +92,15 @@ export const withFold = (text: string, fold: FoldState): string => {
 			...(fold.identicalTo ? { identical_to: { id: fold.identicalTo } } : {})
 		}
 	});
+};
+
+/** A serialised document listing `sources` (`docSources`'s, undefined for none); the same string when it already does. */
+export const withSources = (text: string, sources: readonly PrintSource[] | undefined): string => {
+	const doc = JSON.parse(text) as PrintDoc;
+	if (JSON.stringify(doc.print.sources ?? null) === JSON.stringify(sources ?? null)) return text;
+	const print = { ...doc.print };
+	delete print.sources;
+	return JSON.stringify({ ...doc, print: sources ? { ...print, sources: [...sources] } : print });
 };
 
 export const parsePrintDoc = (text: string | null): PrintDoc | null => {

@@ -4,6 +4,7 @@
  * Worker-safe. Statements are returned, not run, so they go into the same batch as a print's own rows.
  */
 import type { Site } from '#lib/print-id.js';
+import { docSources, type PrintSource } from '#lib/sources.js';
 import { sourceBlock } from '../removal-blocks';
 import type { PrintFingerprint } from './identity';
 import type { SourceMeta } from './source-record';
@@ -95,20 +96,21 @@ export const fingerprintBlockValues = async (db: D1Database, printId: string): P
 			.all<{ sha256: string }>()
 	).results.map((r) => r.sha256);
 
+/** `sourcesOf`'s statement, for a batch. */
+export const sourcesStatement = (db: D1Database, printId: string) =>
+	db
+		.prepare(
+			`SELECT print_id, site, site_id, url, uploaded_at, first_seen, updated_at, gone_at FROM print_sources
+			WHERE print_id = ? ORDER BY gone_at IS NOT NULL, COALESCE(uploaded_at, first_seen), site, site_id`
+		)
+		.bind(printId);
+
 /** Every source of a print, live and gone, earliest upload first. */
 export const sourcesOf = async (db: D1Database, printId: string): Promise<PrintSourceRow[]> =>
-	(
-		await db
-			.prepare(
-				`SELECT print_id, site, site_id, url, uploaded_at, first_seen, updated_at, gone_at FROM print_sources
-				WHERE print_id = ? ORDER BY gone_at IS NOT NULL, COALESCE(uploaded_at, first_seen), site, site_id`
-			)
-			.bind(printId)
-			.all<PrintSourceRow>()
-	).results;
+	(await sourcesStatement(db, printId).all<PrintSourceRow>()).results;
 
-/** The credited source: the live one posted first. */
-export const winnerOf = (sources: readonly PrintSourceRow[]): PrintSourceRow | null =>
+/** The live sources, the credited one (posted first) first. */
+export const liveSources = (sources: readonly PrintSourceRow[]): PrintSourceRow[] =>
 	sources
 		.filter((s) => s.gone_at === null)
 		.sort(
@@ -116,7 +118,41 @@ export const winnerOf = (sources: readonly PrintSourceRow[]): PrintSourceRow | n
 				(a.uploaded_at ?? a.first_seen) - (b.uploaded_at ?? b.first_seen) ||
 				a.site.localeCompare(b.site) ||
 				a.site_id.localeCompare(b.site_id)
-		)[0] ?? null;
+		);
+
+/** What a print's R2 document lists of these sources (`docSources`: its live ones, credited first; undefined for its own alone). */
+export const docSourcesOf = (printId: string, sources: readonly PrintSourceRow[]): PrintSource[] | undefined =>
+	docSources(printId, liveSources(sources));
+
+/** The credited source: the live one posted first. */
+export const winnerOf = (sources: readonly PrintSourceRow[]): PrintSourceRow | null => liveSources(sources)[0] ?? null;
+
+/**
+ * `sources` as they will be once `source` is written for `printId` (`identityStatements`: attached and
+ * live again), for a document written before that batch.
+ */
+export const withSourceRow = (
+	printId: string,
+	sources: readonly PrintSourceRow[],
+	source: SourceMeta,
+	now = Date.now()
+): PrintSourceRow[] => {
+	const same = (s: PrintSourceRow) => s.site === source.site && s.site_id === source.siteId;
+	const old = sources.find(same);
+	return [
+		...sources.filter((s) => !same(s)),
+		{
+			print_id: printId,
+			site: source.site,
+			site_id: source.siteId,
+			url: source.url,
+			uploaded_at: source.uploadedAt,
+			updated_at: source.updatedAt,
+			first_seen: old?.first_seen ?? now,
+			gone_at: null
+		}
+	];
+};
 
 /** What an approved removal blocks a record by, and the removed print the block came from. */
 export interface BlockHit {

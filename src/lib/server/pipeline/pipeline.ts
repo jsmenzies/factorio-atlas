@@ -7,8 +7,8 @@ import { gameData } from './game-data';
 import type { Admission } from './admit';
 import { fingerprintPrint, type PrintFingerprint } from './identity';
 import type { FoldMember } from './fold';
-import { blockHashes } from './identity-db';
-import { analysisKey, parsePrintDoc, toPrintDoc, withAuthorName, withFold } from './print-doc';
+import { blockHashes, docSourcesOf, withSourceRow } from './identity-db';
+import { analysisKey, parsePrintDoc, toPrintDoc, withAuthorName, withFold, withSources } from './print-doc';
 import { RawStore } from './raw-store';
 import { FirebaseRecord, stripPrivateFields } from './record';
 import {
@@ -425,6 +425,9 @@ export const applyPlan = Effect.fn('applyPlan')(function* (
 			// Identity rows alone change nothing the site shows; the print is already live, so no block check.
 			if (plan.identity) {
 				yield* repo.identify(id, plan.identity);
+				// A print without identity rows had no source row, so this is its only one: the document needs a
+				// list only when it isn't the site the print's id names.
+				if (docSourcesOf(id, withSourceRow(id, [], plan.identity.source)) !== undefined) yield* syncSources(id);
 				yield* fold(id, options);
 			}
 			if (plan.reindex) return yield* reindex(id, plan.reindex, plan.favorites, plan.viewerFiles, options);
@@ -475,8 +478,11 @@ export const applyPlan = Effect.fn('applyPlan')(function* (
 			if (plan.archive !== null) yield* raw.put(plan.print.rawKey, plan.archive);
 			const viewerFiles = plan.viewerFiles ? yield* putViewerFiles(id, plan.viewerFiles) : 0;
 			const authorName = yield* resolveAuthorName(plan.print.record);
-			// The fold its row has now goes into the document's first write; `fold` puts right what changed.
-			const doc = withFold(withAuthorName(plan.doc, authorName), yield* repo.foldState(id));
+			// The fold its row has now goes into the document's first write; `fold` puts right what changed. So do
+			// its sources, as they will be once the upsert's batch writes this record's row.
+			const current = yield* repo.docState(id);
+			const sources = identity ? withSourceRow(id, current.sources, identity.source) : current.sources;
+			const doc = withSources(withFold(withAuthorName(plan.doc, authorName), current.fold), docSourcesOf(id, sources));
 			yield* raw.put(analysisKey(id), doc);
 			const stored = yield* upsertUnlessRemoved({ ...plan.print, authorName }, options.extra?.() ?? []);
 			if (stored.removed) return yield* forgetWrites(id, plan.archive === null ? null : plan.print.rawKey);
@@ -541,6 +547,29 @@ export const writeFolds = Effect.fn('writeFolds')(function* (
 	}
 	yield* repo.applyFold(members, bump);
 	return documents;
+});
+
+/**
+ * Bring a print's R2 document's sources list (`PrintDoc.print.sources`) up to date with `print_sources`,
+ * after a source joined the print or went without the document being rewritten, and with `bump` purge the
+ * page cache when it changed. Reads one D1 query and one R2 object; writes only when the list differs.
+ * Returns whether it wrote. A print with no document (not stored, or purged) is left alone.
+ */
+export const syncSources = Effect.fn('syncSources')(function* (id: string, { bump = true }: { bump?: boolean } = {}) {
+	const repo = yield* PrintRepository;
+	const raw = yield* RawStore;
+	const text = yield* raw.get(analysisKey(id));
+	if (text === null) return false;
+	const next = withSources(text, docSourcesOf(id, yield* repo.sources(id)));
+	if (next === text) return false;
+	yield* raw.put(analysisKey(id), next);
+	// As the favourites patch: a takedown since the read would have its document back.
+	if (yield* repo.isRemoved(id)) {
+		yield* raw.delete(analysisKey(id));
+		return false;
+	}
+	if (bump) yield* repo.bumpPages();
+	return true;
 });
 
 /** Refold now, or hand the print to the run's `foldLater`. */
@@ -675,6 +704,8 @@ export const ingestRecord = Effect.fn('ingestRecord')(function* (
 	);
 	if (earlier) {
 		yield* repo.identify(printId, { source: sourceMetaOfRecord(record), fingerprint: admitted.fingerprint }, options.extra?.() ?? []);
+		// The print's page lists its sources ("Also on …").
+		yield* syncSources(printId);
 		return { status: 'identified', id: printId } satisfies IngestOutcome;
 	}
 	const state = yield* repo.getState(printId);

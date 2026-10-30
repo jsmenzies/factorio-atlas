@@ -7,11 +7,12 @@ import { buildingsIn } from './buildings';
 import { gameData } from './game-data';
 import { StorageError } from './errors';
 import type { PrintFingerprint } from './identity';
-import { blockedBy, identityStatements, sourcesOf, type PrintSourceRow } from './identity-db';
+import { bumpPageVersion } from '../page-cache';
+import { blockedBy, identityStatements, sourcesOf, sourcesStatement, type PrintSourceRow } from './identity-db';
 import {
 	FOLDED_PREFIX_SQL,
 	FOLDED_TOKEN,
-	foldStateOf,
+	foldStatement,
 	foldStatements,
 	planAllFolds,
 	planFold,
@@ -102,8 +103,13 @@ export class PrintRepository extends Context.Service<
 		readonly planAllFolds: () => Effect.Effect<FoldMember[], StorageError>;
 		/** Write the members whose fold changed, and with `bump` bump the page cache when any did. */
 		readonly applyFold: (members: readonly FoldMember[], bump: boolean) => Effect.Effect<void, StorageError>;
-		/** A print's fold as its D1 row has it now (both null for a print not stored yet). */
-		readonly foldState: (id: string) => Effect.Effect<FoldState, StorageError>;
+		/**
+		 * What a print's R2 document takes from D1 besides its record and analysis, in one round trip: its fold
+		 * as its row has it now (both null for a print not stored yet) and every source (`sourcesOf`).
+		 */
+		readonly docState: (id: string) => Effect.Effect<{ fold: FoldState; sources: PrintSourceRow[] }, StorageError>;
+		/** Purge every cached page (`bumpPageVersion`), after an R2 document changed outside an ingest batch. */
+		readonly bumpPages: () => Effect.Effect<void, StorageError>;
 		/** Every source of a print, live and gone (identity-db.ts `sourcesOf`). */
 		readonly sources: (id: string) => Effect.Effect<PrintSourceRow[], StorageError>;
 		/** The removed print whose block refuses the source or any of the hashes (identity-db.ts `blockedBy`), or null. */
@@ -393,7 +399,16 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 			),
 		planFold: (id) => tryD1(`d1.planFold ${id}`, () => planFold(db, id)),
 		planAllFolds: () => tryD1('d1.planAllFolds', () => planAllFolds(db)),
-		foldState: (id) => tryD1(`d1.foldState ${id}`, () => foldStateOf(db, id)),
+		docState: (id) =>
+			tryD1(`d1.docState ${id}`, async () => {
+				const [fold, sources] = await db.batch([foldStatement(db, id), sourcesStatement(db, id)]);
+				const row = (fold.results as { duplicate_of: string | null; identical_to: string | null }[])[0];
+				return {
+					fold: { duplicateOf: row?.duplicate_of ?? null, identicalTo: row?.identical_to ?? null },
+					sources: sources.results as PrintSourceRow[]
+				};
+			}),
+		bumpPages: () => tryD1('d1.bumpPages', () => bumpPageVersion(db).run()).pipe(Effect.asVoid),
 		sources: (id) => tryD1(`d1.sources ${id}`, () => sourcesOf(db, id)),
 		applyFold: (members, bump) =>
 			tryD1('d1.applyFold', async () => {

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import RichText from '#lib/components/RichText.svelte';
 	import ShotLightbox from '#lib/components/ShotLightbox.svelte';
-	import { formatDate, sourceUrl } from '#lib/format.js';
+	import { formatDate } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import type { NodeAnalysis, PrintAnalysis } from '#lib/server/pipeline/analyze.js';
 	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
@@ -9,6 +9,7 @@
 	import { plainText } from '#lib/richtext.js';
 	import { NO_SHOT, type ShotView } from '#lib/screenshots.js';
 	import { searchRel } from '#lib/search-seo.js';
+	import { siteUrl, SOURCE_SITES, sourcesOfPrint, urlText } from '#lib/sources.js';
 
 	/**
 	 * Where a print comes from (the original, author, dates), the description saved inside the
@@ -25,6 +26,10 @@
 	}: { print: PagePrint; analysis: PrintAnalysis; root: NodeAnalysis | undefined; shot: ShotView; icons: IconSet } = $props();
 
 	const shot = $derived(view.inline);
+	// Every live source, credited first (#lib/sources.ts): the first is the one the title and author are from.
+	const sources = $derived(
+		sourcesOfPrint(print).map((s) => ({ site: s.site, name: SOURCE_SITES[s.site]?.name ?? s.site, url: siteUrl(s.site, s.site_id) }))
+	);
 	const alt = $derived(`Screenshot of ${plainText(String(print.title))}`);
 	let lightbox = $state<ShotLightbox>();
 	let shotFailed = $state(false);
@@ -85,13 +90,19 @@
 		<section class="space-y-3">
 			<h3 class="border-b border-stone-800 pb-2 font-semibold text-stone-100">Source</h3>
 			<p class="text-sm text-stone-300">
-				{#if sourceUrl(print.id)}Mirrored from <a class="text-amber-400 underline" href={sourceUrl(print.id)} rel="external"
-						>factorioprints.com/view/{print.id}</a
-					>, by{:else}Posted by{/if}
+				{#if sources[0]?.url}From {sources[0].name}: <a class="text-amber-400 underline" href={sources[0].url} rel="external"
+						>{urlText(sources[0].url)}</a
+					>, by{:else if sources[0]?.site === 'upload'}Uploaded here by{:else}Posted by{/if}
 				{#if print.author_id}<a class="text-stone-100 underline decoration-stone-500 hover:text-amber-300" href="/?author={print.author_id}" rel={searchRel(`/?author=${print.author_id}`)}
 						>{print.author_name ?? 'unknown author'}</a
 					>{:else if print.author_name}{print.author_name}{:else}an unknown author{/if}.
 			</p>
+			{#each sources.slice(1) as s, i (i)}
+				<p class="text-sm text-stone-300">
+					{#if s.url}Also on {s.name}: <a class="text-amber-400 underline" href={s.url} rel="external">{urlText(s.url)}</a
+						>{:else if s.site === 'upload'}Also uploaded here.{:else}Also on {s.name}.{/if}
+				</p>
+			{/each}
 			<p class="text-sm text-stone-400">
 				Made it, or shouldn't it be here? <a class="text-amber-400 underline" href="/prints/{print.id}/remove" rel="nofollow">Request removal</a>
 			</p>

@@ -66,8 +66,8 @@
 		<p>
 			<strong class="font-medium text-stone-100">Other sites.</strong> Screenshots, renders and icons come from the site’s own storage. A
 			print added very recently may show its screenshot straight from Imgur until it has been copied, and pictures in an author’s description
-			load from wherever the author put them. Neither is told which page you are on. factorioprints.com and GitHub are contacted only if you
-			follow a link to them.
+			load from wherever the author put them. Neither is told which page you are on. The sites prints are copied from, such as factorioprints.com,
+			and GitHub are contacted only if you follow a link to them.
 		</p>
 	</section>
 

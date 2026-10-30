@@ -169,14 +169,9 @@ export const foldStatements = (
 	];
 };
 
-/** A print's fold as the D1 rows hold it now, for its document's first write (pipeline.ts). */
-export const foldStateOf = async (db: D1Database, printId: string): Promise<FoldState> => {
-	const row = await db
-		.prepare('SELECT duplicate_of, identical_to FROM prints WHERE id = ?')
-		.bind(printId)
-		.first<{ duplicate_of: string | null; identical_to: string | null }>();
-	return { duplicateOf: row?.duplicate_of ?? null, identicalTo: row?.identical_to ?? null };
-};
+/** A print's fold as the D1 rows hold it now (`duplicate_of`, `identical_to`), for its document's first write: the repository's `docState` batch. */
+export const foldStatement = (db: D1Database, printId: string) =>
+	db.prepare('SELECT duplicate_of, identical_to FROM prints WHERE id = ?').bind(printId);
 
 /** The upsert's guard: the token for a folded print (its `duplicate_of` survives re-ingests). */
 export const FOLDED_PREFIX_SQL = `CASE WHEN EXISTS (SELECT 1 FROM prints WHERE id = ? AND duplicate_of IS NOT NULL) THEN '${FOLDED_TOKEN} ' ELSE '' END`;

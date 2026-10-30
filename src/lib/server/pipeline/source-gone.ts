@@ -8,6 +8,7 @@
  * ingested again from its record (`reingest`). With no live source left, the print is purged
  * (`purge`: removals' purgePrintData with kind 'gone', which leaves a tombstone and keeps the source
  * rows, marked gone) and the groups it was in are refolded (`refold`, the pipeline's `syncFold`).
+ * Whenever the print stays, its document's sources list is brought up to date (`resync`).
  * Worker-safe; the stage's writes come by injection. Idempotent: whenever the print is gone at the end,
  * `refold` runs, so a call cut short between the purge and the refold is finished by running it again.
  */
@@ -31,6 +32,11 @@ export interface SourceGoneDeps {
 	readonly purge: (printId: string) => Promise<unknown>;
 	/** Ingest the print again from `winner`'s record. Needed once a print has two sources. */
 	readonly reingest?: (printId: string, winner: PrintSourceRow) => Promise<unknown>;
+	/**
+	 * Bring the print's document's sources list up to date (the pipeline's `syncSources`), whenever the print
+	 * stays: its page lists every live source, so one that went must leave it.
+	 */
+	readonly resync: (printId: string) => Promise<unknown>;
 	/** Recompute the soft fold once the print is gone (it may have been an original, or a copy). */
 	readonly refold: (printId: string) => Promise<unknown>;
 	readonly now?: number;
@@ -61,11 +67,18 @@ export async function sourceGone(db: D1Database, site: Site, siteId: string, dep
 		await deps.refold(printId);
 		return { status: 'purged', printId };
 	}
-	if (row.gone_at !== null) return { status: 'already-gone', printId };
+	// Also when it was marked gone before: a call cut short before the resync is finished by running it again.
+	if (row.gone_at !== null) {
+		await deps.resync(printId);
+		return { status: 'already-gone', printId };
+	}
 	if (before && before.site === site && before.site_id === siteId) {
 		if (!deps.reingest) throw new Error(`${printId}: its credited source went and another is live, but no reingest was given`);
 		await deps.reingest(printId, after);
+		// The re-ingest's document lists the sources already, unless it changed nothing.
+		await deps.resync(printId);
 		return { status: 'handed-over', printId, winner: after };
 	}
+	await deps.resync(printId);
 	return { status: 'kept', printId };
 }

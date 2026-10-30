@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { sourceUrl } from '#lib/format.js';
+	import { sourceUrl } from '#lib/sources.js';
 	import type { JobPage } from '#lib/server/admin/render.js';
 	import { plainText } from '#lib/richtext.js';
 	import { clock, duration, int } from '../metrics.js';
