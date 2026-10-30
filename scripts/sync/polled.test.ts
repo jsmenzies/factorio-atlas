@@ -270,7 +270,18 @@ describe('PoliteHttp', () => {
 		const goneIf = (status: number, text: string) => status === 500 && text.includes('no rows');
 		expect(await h.get('https://example.com/r?id=1', 'read', undefined, { goneIf })).toEqual({ status: 500, body: null });
 		expect(slept).toEqual([]);
-		expect(h.get('https://example.com/r?id=2', 'read', undefined, { goneIf })).rejects.toThrow('HTTP 500');
+		await expect(h.get('https://example.com/r?id=2', 'read', undefined, { goneIf })).rejects.toThrow('HTTP 500');
+		// goneIf sees the start of an error body, never a whole page.
+		let seen = 0;
+		const big = new PoliteHttp({
+			minIntervalMs: 0,
+			tries: 1,
+			fetch: (async () => new Response('x'.repeat(1_000_000), { status: 500 })) as unknown as typeof fetch
+		});
+		await expect(
+			big.get('https://example.com/r?id=3', 'read', undefined, { goneIf: (_s, t) => ((seen = t.length), false) })
+		).rejects.toThrow('HTTP 500');
+		expect(seen).toBe(4096);
 	});
 
 	test('the source carries its kind, for the Overview even when its plan fails', () => {

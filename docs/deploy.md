@@ -607,8 +607,11 @@ a second; an update reads at most 1,000 prints (a setting), the rest wait for th
 site's total doesn't match what this machine knows, and once a week, it lists every page (fprints:
 every update): a print missing from the list is read once more, and a 404 (fprints: its API's "no
 rows" answer) or a print no longer public is a deletion (a print
-the list still shows is never one: its failed read is tried again). More than the 5% guard missing, or
-an empty list, holds the site back until accepted. In the ingest step,
+the list still shows is never one: its failed read is tried again). fprints' sitemap is a file the
+site rebuilds now and then, not a live list, so its new prints and edits are seen only once it is
+rebuilt, and a print deleted or made private while still listed is a failed read (tried again, never
+a deletion) until then. More than the 5% guard missing, or an empty list, holds the site back until
+accepted. In the ingest step,
 after the backfill, `bun run polled --stage … --site codex|fprints` puts every new or changed record through
 the same gate as any print (blocks, joins with the same blueprint already here, suggestions), and
 each deletion as a source gone: kept while another site has the print, else deleted with its renders,

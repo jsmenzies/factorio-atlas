@@ -93,6 +93,7 @@ import { confirmProd, fail, n } from './stage-command';
 import { localDbFile, openLocalDb } from './sync/local-db';
 import { MIRROR_SITE, mirrorSource, type SourceAdapter } from './sync/mirror';
 import { failureLine, lastJsonLine, lastLine, lineMatching } from './sync/output';
+import { failedPlan, plansAfterFetch } from './sync/plan';
 import { UPLOADS_SOURCE, uploadsSource } from './sync/uploads';
 import { codexSite } from './sync/codex';
 import { fprintsSite } from './sync/fprints';
@@ -220,24 +221,9 @@ const planAll = async (signal?: AbortSignal) => {
 		try {
 			sources.push(await s.plan({ maxChange: settings.maxChange, accept: accepted[s.site], signal }));
 		} catch (e) {
-			const none = { id: 'none', date: 0 };
 			const error = e instanceof Error ? e.message : String(e);
 			console.error(`✗ ${s.site}: ${error}`);
-			sources.push({
-				site: s.site,
-				...(s.kind ? { kind: s.kind } : {}),
-				...(s.polled ? { polled: true } : {}),
-				from: none,
-				to: none,
-				prints: 0,
-				added: 0,
-				edited: 0,
-				favourites: 0,
-				deleted: [],
-				modern: 0,
-				blocked: null,
-				error
-			});
+			sources.push(failedPlan(s, error));
 		}
 	}
 	return { checkedAt: Date.now(), sources } satisfies SyncPlan;
@@ -550,7 +536,10 @@ const steps: StepDef[] = [
 				try {
 					plans.push(await source.plan({ maxChange: settings.maxChange, accept: accepted[source.site], signal }));
 				} catch (e) {
-					errors.push(`${source.site}: ${e instanceof Error ? e.message : e}`);
+					const error = e instanceof Error ? e.message : String(e);
+					errors.push(`${source.site}: ${error}`);
+					// Kept in the saved plan with its error, so the Overview never calls it up to date.
+					plans.push(failedPlan(source, error));
 					run.sources.push({
 						site: source.site,
 						from: null,
@@ -563,6 +552,7 @@ const steps: StepDef[] = [
 			await writeMeta(db, 'plan', { checkedAt: Date.now(), sources: plans } satisfies SyncPlan);
 			const parts: string[] = [];
 			for (const plan of plans) {
+				if (plan.error) continue;
 				const entry: SourceRun = {
 					site: plan.site,
 					from: plan.from,
@@ -608,76 +598,57 @@ const steps: StepDef[] = [
 			// The Overview compares each plan's two cursors: after the fetch, the fetched ones are level.
 			await writeMeta(db, 'plan', {
 				checkedAt: Date.now(),
-				sources: plans.map((p) => {
-					const entry = run.sources.find((s) => s.site === p.site);
-					const to = entry?.to;
-					// A polled site is level at its new cursor, with the reads it left for the next update.
-					if (to && entry?.counts && p.polled) {
-						const left = entry.counts.left ?? 0;
-						const position = (SOURCES.find((s) => s.site === p.site) as { lastApply?: string } | undefined)?.lastApply;
-						return {
-							...p,
-							from: to,
-							to,
-							added: 0,
-							edited: 0,
-							deleted: [],
-							behind: 0,
-							position: position ?? p.position,
-							stateText: left ? `${n(left)} left` : undefined
-						};
-					}
-					// A source that admits its own records (uploads) is level at its new cursor, with what it left waiting.
-					if (to && entry?.counts) {
-						const left = entry.counts.left ?? 0;
-						return { ...p, from: to, to, added: left, position: left ? `${n(left)} still waiting` : 'none waiting', stateText: undefined };
-					}
-					return to && to.id === p.to.id ? { ...p, from: to, added: 0, edited: 0, favourites: 0, deleted: [], modern: 0 } : p;
-				})
+				sources: plansAfterFetch(
+					plans,
+					run.sources,
+					(site) => (SOURCES.find((s) => s.site === site) as { lastApply?: string } | undefined)?.lastApply
+				)
 			} satisfies SyncPlan);
 			const summary = [...parts, ...errors].join(' · ');
-			const details: DetailGroup[] = plans.map((p) => {
-				const entry = run.sources.find((s) => s.site === p.site);
-				const to = entry?.to;
-				if (p.polled) return polledFetchDetails(p, entry?.counts);
-				// A source that admits its own records (uploads, scripts/sync/uploads.ts) says how they came out.
-				if (p.site === UPLOADS_SOURCE) {
-					const c = entry?.counts ?? {};
+			const details: DetailGroup[] = plans
+				.filter((p) => !p.error)
+				.map((p) => {
+					const entry = run.sources.find((s) => s.site === p.site);
+					const to = entry?.to;
+					if (p.polled) return polledFetchDetails(p, entry?.counts);
+					// A source that admits its own records (uploads, scripts/sync/uploads.ts) says how they came out.
+					if (p.site === UPLOADS_SOURCE) {
+						const c = entry?.counts ?? {};
+						return {
+							title: p.site,
+							rows: [
+								...detail('waiting', p.added, { always: true }),
+								...detail(
+									'oldest waiting',
+									p.added ? new Date(p.to.date).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : null
+								),
+								...detail('admitted', c.admitted),
+								...detail('refused as duplicates', c.duplicate),
+								...detail('blocked', c.blocked, { tone: 'warn' }),
+								...detail('unreadable', c.unreadable, { tone: 'warn' }),
+								...detail('failed, tried again next update', c.failed ?? 0, { always: true, tone: 'bad' }),
+								...detail(`gave up (${PROCESSING_ATTEMPTS} tries)`, c['gave up'], { tone: 'bad' }),
+								...detail('still processing', c.left ?? p.added, { always: true }),
+								...detail('new names put on uploads', c.renamed),
+								...detail('names still to put on uploads', c['names left'], { tone: 'warn' }),
+								...detail('accounts being deleted', c.deleting, { tone: 'warn' })
+							]
+						};
+					}
 					return {
 						title: p.site,
 						rows: [
-							...detail('waiting', p.added, { always: true }),
-							...detail(
-								'oldest waiting',
-								p.added ? new Date(p.to.date).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : null
-							),
-							...detail('admitted', c.admitted),
-							...detail('refused as duplicates', c.duplicate),
-							...detail('blocked', c.blocked, { tone: 'warn' }),
-							...detail('unreadable', c.unreadable, { tone: 'warn' }),
-							...detail('failed, tried again next update', c.failed ?? 0, { always: true, tone: 'bad' }),
-							...detail(`gave up (${PROCESSING_ATTEMPTS} tries)`, c['gave up'], { tone: 'bad' }),
-							...detail('still processing', c.left ?? p.added, { always: true }),
-							...detail('new names put on uploads', c.renamed),
-							...detail('names still to put on uploads', c['names left'], { tone: 'warn' }),
-							...detail('accounts being deleted', c.deleting, { tone: 'warn' })
+							{ label: 'position', value: to && to.id !== p.from.id ? `${short(p.from.id)} → ${short(to.id)}` : short(p.from.id) },
+							...detail('held back', p.blocked, { tone: 'warn' }),
+							...detail('commits fetched', p.blocked ? 0 : p.behind),
+							...detail('new prints', p.added, { always: !p.blocked }),
+							...detail('edited', p.edited),
+							...detail('only favourite counts', p.favourites),
+							...detail('deleted (kept on the site)', p.deleted.length),
+							...detail('with a 2.0+ page', p.modern)
 						]
 					};
-				}
-				return {
-					title: p.site,
-					rows: [
-						{ label: 'position', value: to && to.id !== p.from.id ? `${short(p.from.id)} → ${short(to.id)}` : short(p.from.id) },
-						...detail('held back', p.blocked, { tone: 'warn' }),
-						...detail('commits fetched', p.blocked ? 0 : p.behind),
-						...detail('new prints', p.added, { always: !p.blocked }),
-						...detail('edited', p.edited),
-						...detail('only favourite counts', p.favourites),
-						...detail('deleted (kept on the site)', p.deleted.length),
-						...detail('with a 2.0+ page', p.modern)
-					]
-				};
-			});
+				});
 			if (store) {
 				const sites = Object.values(store.sites);
 				const sum = (k: 'added' | 'changed' | 'removed' | 'vanished' | 'failed') => sites.reduce((t, c) => t + c[k], 0);

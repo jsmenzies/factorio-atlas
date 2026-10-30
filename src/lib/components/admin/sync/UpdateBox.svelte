@@ -199,7 +199,11 @@
 				{#each held as p (p.site)}
 					<p class="text-sm text-stone-400">{p.site} <code>{shortCommit(p.to.id)}</code>: {p.blocked}</p>
 				{/each}
-				<p class="text-xs text-stone-500">Every other step still runs. Accept only after looking at the source (the mirror on GitHub, or the site).</p>
+				<p class="text-xs text-stone-500">
+					Every other step still runs. Accept only after looking at the source (the mirror on GitHub, or the site).{failed.length
+						? ` Also: ${uncheckedText(failed)}.`
+						: ''}
+				</p>
 			{:else if phase === 'waiting' && plan}
 				<p class="text-xs font-semibold tracking-wide text-stone-500 uppercase">Update</p>
 				<h2 id="update-title" class="text-lg font-semibold text-stone-100">

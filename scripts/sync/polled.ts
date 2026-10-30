@@ -94,6 +94,36 @@ export interface HttpOptions {
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** How much of a failed answer's body `goneIf` sees: an error message, never a whole page. */
+const ERROR_BODY_BYTES = 4096;
+
+/** The first `max` bytes of a body as text; the rest is never read. */
+const headText = async (res: Response, max: number) => {
+	const reader = res.body?.getReader();
+	if (!reader) return '';
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	try {
+		while (size < max) {
+			const part = await reader.read();
+			if (part.done) break;
+			chunks.push(part.value);
+			size += part.value.length;
+		}
+	} catch {
+		// A body cut short: what came is enough.
+	} finally {
+		await reader.cancel().catch(() => undefined);
+	}
+	const all = new Uint8Array(size);
+	let at = 0;
+	for (const c of chunks) {
+		all.set(c, at);
+		at += c.length;
+	}
+	return new TextDecoder().decode(all.subarray(0, max));
+};
+
 /** How a GET's body is read, and which failures mean the record isn't there (a site that answers 500 for an unknown id). */
 export interface GetOptions {
 	/** The body as text (a sitemap), not JSON. */
@@ -143,7 +173,7 @@ export class PoliteHttp {
 			}
 			if (res.ok) return { status: res.status, body: g.text ? await res.text() : await res.json() };
 			if (g.goneIf) {
-				const text = await res.text().catch(() => '');
+				const text = await headText(res, ERROR_BODY_BYTES);
 				if (g.goneIf(res.status, text)) return { status: res.status, body: null };
 			} else await res.body?.cancel();
 			if ((res.status === 429 || res.status >= 500) && attempt < tries) {

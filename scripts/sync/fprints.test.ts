@@ -41,23 +41,29 @@ describe('parseSitemap', () => {
 					url(`https://fprints.xyz/blueprint/${B}`, 'not a date'),
 					url(`https://fprints.xyz/blueprint/${A}`, '2020-01-01'),
 					url('https://fprints.xyz/blueprint/not-a-uuid'),
-					url(`https://evil.example/blueprint/${C}`)
+					url(`https://evil.example/blueprint/${C}`),
+					url(`https://fprints.xyz/blueprint/${C.toUpperCase()}`)
 				)
 			)
 		).toEqual([
 			{ uuid: A, lastmod: Date.parse('2026-10-12T22:42:29.334Z') },
-			{ uuid: B, lastmod: null }
+			{ uuid: B, lastmod: null },
+			{ uuid: C, lastmod: null }
 		]);
 	});
 
 	test('an error page is no sitemap: an error, never "no prints"', () => {
-		expect(() => parseSitemap('<html><body>502 Bad Gateway</body></html>')).toThrow('not a sitemap');
+		expect(() => parseSitemap('<html><body>502 Bad Gateway</body></html>')).toThrow('not a whole sitemap');
 		expect(parseSitemap(sitemap())).toEqual([]);
+		// Cut short: an error, never "every print after the cut gone".
+		const whole = sitemap(url(`https://fprints.xyz/blueprint/${A}`, '2026-10-12T22:42:29.334Z'), url(`https://fprints.xyz/blueprint/${B}`));
+		expect(() => parseSitemap(whole.slice(0, whole.indexOf(B)))).toThrow('not a whole sitemap');
+		expect(parseSitemap(`${whole}\n`).length).toBe(2);
 	});
 });
 
 describe('fprintsRecord', () => {
-	test('a public row as a SourceRecord: string, author by id, times, version tag, remix and links, its image', () => {
+	test('a public row as a SourceRecord: string, author by id, times, version tag, links (not the remix), its image', () => {
 		const got = fprintsRecord(A, row());
 		if (!('record' in got)) throw new Error(got.gone);
 		expect(got.record).toEqual({
@@ -73,17 +79,17 @@ describe('fprintsRecord', () => {
 			updatedAt: Date.parse('2026-10-12T22:42:29.334Z'),
 			favorites: null,
 			tags: ['/version/2,1/'],
-			sourceHints: [
-				'https://www.factorio.school/view/-BBBBBBBBBBBBBBBBBBBB',
-				'https://example.com/notes',
-				'https://factorioprints.com/view/-AAAAAAAAAAAAAAAAAAAA'
-			]
+			// remixed_from_url names the print this one was made from: another print, so no hint.
+			sourceHints: ['https://example.com/notes', 'https://factorioprints.com/view/-AAAAAAAAAAAAAAAAAAAA']
 		});
 		expect(/^fprints\.[0-9a-f]{16}$/.test(got.record.image!.key)).toBe(true);
 	});
 
 	test('not public: gone; no string or another id: an error; empty fields null; images elsewhere not copied', () => {
 		expect(fprintsRecord(A, row({ is_public: false }))).toEqual({ gone: 'no longer public' });
+		// No is_public at all: public (the sitemap listed it); the API's id in capitals is the same print.
+		expect('record' in fprintsRecord(A, row({ is_public: undefined }))).toBe(true);
+		expect('record' in fprintsRecord(A, row({ id: A.toUpperCase() }))).toBe(true);
 		expect(() => fprintsRecord(A, row({ blueprint_string: ' ' }))).toThrow('no blueprint string');
 		expect(() => fprintsRecord(B, row())).toThrow('the API answered for');
 		const bare = fprintsRecord(
@@ -200,6 +206,8 @@ describe('fprints through the polled framework', () => {
 			minIntervalMs: 0,
 			fetch: (async () => new Response('<html>oops</html>')) as unknown as typeof fetch
 		});
-		await expect(planPoll(fprintsSite, await readState(inbox, 'fprints'), broken, { maxChange: 0.05 })).rejects.toThrow('not a sitemap');
+		await expect(planPoll(fprintsSite, await readState(inbox, 'fprints'), broken, { maxChange: 0.05 })).rejects.toThrow(
+			'not a whole sitemap'
+		);
 	});
 });

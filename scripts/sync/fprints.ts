@@ -2,8 +2,8 @@
  * fprints.xyz as a polled site (polled.ts): its sitemap lists every public print, and the import API the
  * site offers to other sites gives one print's record. No account or key.
  *
- *   GET https://fprints.xyz/sitemap.xml                       every public print as `/blueprint/<uuid>`, with
- *                                                             `lastmod` (the record's `updated_at`); one request
+ *   GET https://fprints.xyz/sitemap.xml                       the public prints as `/blueprint/<uuid>`, each with
+ *                                                             a `lastmod`; one request
  *   GET <FPRINTS_API>?id=<uuid>                               one print: the site's `blueprints` row
  *
  * The sitemap is the whole list (`listsAll`), so every update compares it with what this machine has: new
@@ -11,8 +11,15 @@
  * gone (the API answers HTTP 500 "JSON object requested, multiple (or no) rows returned" for an unknown id).
  * A print's revision is its lastmod and FPRINTS_RECORD_VERSION.
  *
+ * The sitemap is a file fprints builds now and then, not a live list: a lastmod is the print's `updated_at`
+ * when the sitemap was built, and edits since then don't move it (seen 2026-10-30: newest lastmod
+ * 2026-10-12, while one print's `updated_at` was 2026-10-30). So new prints and edits are seen only once
+ * fprints rebuilds its sitemap, and a print deleted or made private while still listed is a failed read
+ * (kept, tried again; never gone) until then.
+ *
  * The record (`fprintsRecord`): the string, title, description, created/updated times, the game version
- * the uploader chose as a version tag, `remixed_from_url` and links in the description as `sourceHints`, and
+ * the uploader chose as a version tag, links in the description as `sourceHints` (not `remixed_from_url`: a remix
+ * is another print made from that one, not the same print), and
  * its image (`image_url`, on fprints' Bunny CDN) as a site image (screenshots/site-images.ts). The API gives
  * the author's user id but not their name, and no tags (both live only in the site's own database views,
  * which we don't read), so the author is credited by fprints' link alone. Copy counts are not kept.
@@ -35,6 +42,7 @@ export const FPRINTS_RECORD_VERSION = 1;
 export const fprintsRev = (lastmod: number | null) => `${lastmod ?? ''}#${FPRINTS_RECORD_VERSION}`;
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
+/** An fprints id as this site keeps it: lowercase (the sitemap's are lowercased as they're read). */
 export const FPRINTS_UUID = new RegExp(`^${UUID}$`);
 
 /** The print's page on the site (src/lib/sources.ts, the one site table). */
@@ -51,12 +59,13 @@ export interface SitemapEntry {
  * text isn't a sitemap (an error page), so a broken answer never reads as "every print deleted".
  */
 export function parseSitemap(xml: string): SitemapEntry[] {
-	if (!/<urlset[\s>]/.test(xml)) throw new Error(`${FPRINTS_SITEMAP}: not a sitemap`);
+	// A whole <urlset>: an error page, or a sitemap cut short, is an error (never "every print after it gone").
+	if (!/<urlset[\s>]/.test(xml) || !/<\/urlset>\s*$/.test(xml)) throw new Error(`${FPRINTS_SITEMAP}: not a whole sitemap`);
 	const prints = new Map<string, SitemapEntry>();
-	const loc = new RegExp(`^${FPRINTS_ORIGIN.replace(/\./g, '\\.')}/blueprint/(${UUID})/?$`);
+	const loc = new RegExp(`^${FPRINTS_ORIGIN.replace(/\./g, '\\.')}/blueprint/(${UUID})/?$`, 'i');
 	for (const m of xml.matchAll(/<url>([\s\S]*?)<\/url>/g)) {
 		const at = /<loc>\s*([^<\s]+)\s*<\/loc>/.exec(m[1])?.[1];
-		const uuid = at ? loc.exec(at)?.[1] : undefined;
+		const uuid = at ? loc.exec(at)?.[1]?.toLowerCase() : undefined;
 		if (!uuid || prints.has(uuid)) continue;
 		prints.set(uuid, { uuid, lastmod: time(/<lastmod>\s*([^<\s]+)\s*<\/lastmod>/.exec(m[1])?.[1]) });
 	}
@@ -85,12 +94,12 @@ export const noSuchRow = (status: number, text: string) => status === 500 && /mu
 
 /** The SourceRecord of a row the API answered, or gone when it isn't public. Throws when it has no string or is another print. */
 export function fprintsRecord(uuid: string, row: FprintsRow): Fetched {
-	if (row.id !== uuid) throw new Error(`fprints ${uuid}: the API answered for ${String(row.id)}`);
-	if (row.is_public !== true) return { gone: 'no longer public' };
+	if (row.id?.toLowerCase() !== uuid) throw new Error(`fprints ${uuid}: the API answered for ${String(row.id)}`);
+	// Only an explicit false: a row without the field is taken as public (the sitemap listed it).
+	if (row.is_public === false) return { gone: 'no longer public' };
 	const blueprintString = row.blueprint_string?.trim();
 	if (!blueprintString) throw new Error(`fprints ${uuid}: no blueprint string`);
 	const description = row.description?.trim() || null;
-	const remix = row.remixed_from_url?.trim();
 	const tag = versionTag(row.game_version);
 	const record: SourceRecord = {
 		site: 'fprints',
@@ -107,7 +116,7 @@ export function fprintsRecord(uuid: string, row: FprintsRow): Fetched {
 		updatedAt: time(row.updated_at),
 		favorites: null,
 		tags: tag ? [tag] : [],
-		sourceHints: [...new Set([...(remix && /^https?:\/\//.test(remix) ? [remix] : []), ...linksIn(description)])].slice(0, 20)
+		sourceHints: linksIn(description)
 	};
 	return { record };
 }
