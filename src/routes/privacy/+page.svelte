@@ -96,13 +96,15 @@
 	<section class="space-y-3">
 		<h2 class="border-b border-stone-800 pb-2 text-lg font-semibold text-stone-100">Blueprints, authors and screenshots</h2>
 		<p>
-			The blueprints here are copied from <a class={link} href="https://factorioprints.com" rel="external">factorioprints.com</a>, where
+			Most blueprints here are copied from <a class={link} href="https://factorioprints.com" rel="external">factorioprints.com</a>, where
 			their authors shared them publicly, and each one links back to its original. Authors are named as factorioprints.com names them: from
-			the print itself, or from the display name on their factorioprints account, which is often the name on their Google account.
+			the print itself, or from the display name on their factorioprints account, which is often the name on their Google account. The rest
+			are uploaded here by their authors, under their display name here (see “Accounts and uploads”).
 		</p>
 		<p>
-			Screenshots are copies of the images authors uploaded to Imgur for their prints. When we find that a screenshot has been deleted from
-			Imgur, we delete our copy too. A print deleted from factorioprints.com may still be here: ask for it to be removed as below.
+			Screenshots of copied prints are copies of the images authors uploaded to Imgur for them. When we find that a screenshot has been
+			deleted from Imgur, we delete our copy too. A print deleted from factorioprints.com may still be here: ask for it to be removed as
+			below. An uploaded print’s screenshot is the image its uploader sent with it.
 		</p>
 	</section>
 

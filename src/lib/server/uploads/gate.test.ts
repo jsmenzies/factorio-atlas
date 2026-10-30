@@ -229,6 +229,10 @@ describe('uploads through the real gate', () => {
 		expect(s.RAW.objects.has(recordKey(siteIdOf(printId)))).toBe(false);
 		expect(s.one('SELECT kind FROM print_tombstones WHERE print_id = ?', printId)).toEqual({ kind: 'takedown' });
 		expect(s.one('SELECT 1 AS hit FROM removal_blocks WHERE kind = ? AND value = ?', 'print', printId)).toEqual({ hit: 1 });
+		// Its one real source, never a made-up `factorioprints:up-…` one.
+		expect(s.sqlite.query(`SELECT value FROM removal_blocks WHERE kind = 'source'`).all()).toEqual([
+			{ value: `upload:${siteIdOf(printId)}` }
+		]);
 		expect(s.one('SELECT uploads, images FROM upload_quota WHERE user_id = ?', ada.id)).toEqual(quota);
 		// The same string again, from anyone: refused.
 		expect(await createUpload(s.deps(), await s.account('Bob'), input())).toMatchObject({

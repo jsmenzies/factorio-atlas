@@ -14,6 +14,8 @@
 	};
 	const LAST_SEEN_HINT =
 		'Latest session start or renewal. Sessions record no visits, and renew when used with under 15 days left, so the last visit may be up to 15 days later. — when no session is left.';
+	const UPLOADS_HINT =
+		'Live: on the site. Processing: waiting for the next update to take it in. Refused: a duplicate, blocked or unreadable. Failed: given up after 3 tries.';
 </script>
 
 <svelte:head><title>Accounts · Admin</title></svelte:head>
@@ -59,7 +61,13 @@
 					<th class="py-1 pr-4 font-medium">Joined</th>
 					<th class="py-1 pr-4 font-medium" title={LAST_SEEN_HINT}>Last seen ≈</th>
 					<th class="py-1 pr-4 text-right font-medium">Sessions</th>
-					<th class="py-1 pr-4 text-right font-medium" title="Live / processing / refused / failed">Uploads</th>
+					<th class="py-1 pr-4 text-right font-medium" title={UPLOADS_HINT}>
+						Uploads
+						<span class="block text-[11px] font-normal tracking-normal normal-case"
+							><span class="text-emerald-400">live</span> / <span class="text-amber-400">processing</span> /
+							<span class="text-red-400">refused</span> / <span class="text-red-400">failed</span></span
+						>
+					</th>
 					<th class="py-1 pr-4 text-right font-medium" title="Screenshots waiting for approval">Screenshots</th>
 					<th class="py-1 font-medium">State</th>
 				</tr>
@@ -72,7 +80,7 @@
 						<td class="py-1.5 pr-4 text-stone-400 tabular-nums">{date(a.createdAt)}</td>
 						<td class="py-1.5 pr-4 text-stone-400 tabular-nums">{date(a.lastSeen)}</td>
 						<td class="py-1.5 pr-4 text-right tabular-nums {a.sessions ? 'text-stone-100' : 'text-stone-600'}">{a.sessions}</td>
-						<td class="py-1.5 pr-4 text-right tabular-nums" title="Live / processing / refused / failed">
+						<td class="py-1.5 pr-4 text-right tabular-nums" title={UPLOADS_HINT}>
 							<span class="text-emerald-400">{a.uploads.live}</span>
 							<span class="text-stone-600">/</span>
 							<span class={a.uploads.processing ? 'text-amber-400' : 'text-stone-600'}>{a.uploads.processing}</span>

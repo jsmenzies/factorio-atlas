@@ -37,7 +37,7 @@ import { bumpPageVersion } from './page-cache';
 import { fingerprintBlockValues, identityPurgeStatements, sourcesOf } from './pipeline/identity-db';
 import { analysisKey } from './pipeline/print-doc';
 import { rawKeyFor } from './pipeline/source-record';
-import { insertBlocks, printBlocks, sourceBlock, type Block, type BlockRow } from './removal-blocks';
+import { FACTORIOPRINTS, insertBlocks, printBlocks, sourceBlock, type Block, type BlockRow } from './removal-blocks';
 import { removalRecordStatements, removedRowStatement } from './screenshot-flags';
 import { uploadPurgeExtras } from './uploads/uploads';
 
@@ -182,6 +182,9 @@ const tombstone = (db: D1Database, printId: string, kind: TombstoneKind, now: nu
 
 const unique = (xs: readonly string[]) => [...new Set(xs)];
 
+/** Each block once, the first kept (a factorioprints print's own source is both its id block and a source row). */
+const uniqueBlocks = (blocks: readonly Block[]): Block[] => [...new Map(blocks.map((b) => [`${b.kind}\0${b.value}`, b])).values()];
+
 /** Delete every copy of a print in this stage and leave a tombstone; no blocks (see the header). */
 export const purgePrintData = async (env: TakedownEnv, printId: string, options: PurgeOptions) =>
 	purge(env, printId, options, [], await screenshotFate(env.DB, printId, options.kind, options.screenshotToo ?? false));
@@ -281,9 +284,10 @@ async function purge(
 }
 
 /**
- * An approved removal: block the print (its id, its factorioprints source and, when it goes, its image),
- * then purge it. `reportId` is the request approved, null when an admin removed it. An upload's print
- * (`up-…`) takes its upload's rows and pending screenshot with it (`uploadPurgeExtras`); the account's
+ * An approved removal: block the print (its id, every source it came from, its content hashes and, when it
+ * goes, its image), then purge it. Only a factorioprints print's id is also a source id (`printBlocks`); an
+ * upload's id gets no made-up `factorioprints:up-…` source. `reportId` is the request approved, null when an
+ * admin removed it. An upload's print (`up-…`) takes its upload's rows and pending screenshot with it (`uploadPurgeExtras`); the account's
  * daily upload counts stay as they are, so a takedown never gives an upload back.
  */
 export async function takedownPrint(
@@ -296,14 +300,16 @@ export async function takedownPrint(
 	const fate = await screenshotFate(env.DB, printId, 'takedown', options.screenshotToo ?? false);
 	// Read before the purge deletes what they come from (a retry finds them as blocks already written).
 	const [sources, hashes] = await Promise.all([sourcesOf(env.DB, printId), fingerprintBlockValues(env.DB, printId)]);
-	const blocks: Block[] = [
-		...printBlocks(printId),
+	const site = siteOfPrintId(printId);
+	const blocks = uniqueBlocks([
+		// A factorioprints print's id is also its source id there; any other print's id is ours alone.
+		...(site === FACTORIOPRINTS ? printBlocks(printId) : [{ kind: 'print' as const, value: printId }]),
 		...(fate.fate === 'removed' && fate.image ? [{ kind: 'image' as const, value: fate.image }] : []),
-		// Every other site the print came from, and its content (whole print and pages, from 50 entities and tiles).
-		...sources.filter((s) => s.site !== 'factorioprints' || s.site_id !== printId).map((s) => sourceBlock(s.site, s.site_id)),
+		// Every site the print came from, and its content (whole print and pages, from 50 entities and tiles).
+		...sources.map((s) => sourceBlock(s.site, s.site_id)),
 		...hashes.map((value) => ({ kind: 'sha256' as const, value }))
-	];
+	]);
 	const rows: BlockRow[] = blocks.map((b) => ({ ...b, print_id: printId, report_id: reportId, created_at: now }));
-	const upload = siteOfPrintId(printId) === 'upload' ? await uploadPurgeExtras(env.DB, printId) : null;
+	const upload = site === 'upload' ? await uploadPurgeExtras(env.DB, printId) : null;
 	return purge(env, printId, { ...options, kind: 'takedown', now, ...upload }, rows, fate);
 }

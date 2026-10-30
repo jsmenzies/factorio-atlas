@@ -73,6 +73,32 @@ export async function runMake(dir: string, entries: Map<string, StateEntry>, arg
 	return failed.length ? 1 : 0;
 }
 
+/** The upload images (`upload.…`) among an upload run's counts. */
+export interface UploadBucketCounts {
+	images: number;
+	made: number;
+	put: number;
+	bytes: number;
+	deleted: number;
+	alreadyUp: number;
+	failed: number;
+}
+
+/** `--upload` with --json: its counts as the last stdout line. The totals include `uploads`. */
+export interface UploadRunResult {
+	mode: 'upload';
+	target: string;
+	images: number;
+	made: number;
+	put: number;
+	bytes: number;
+	deleted: number;
+	alreadyUp: number;
+	failed: number;
+	stopped: boolean;
+	uploads: UploadBucketCounts;
+}
+
 export async function runUpload(dir: string, entries: Map<string, StateEntry>, args: ShotArgs): Promise<number> {
 	const target = args.target!;
 	const file = join(dir, ledgerFile(target));
@@ -98,8 +124,9 @@ export async function runUpload(dir: string, entries: Map<string, StateEntry>, a
 	let deleted = 0;
 	let unchanged = 0;
 	const failed: string[] = [];
-	// Upload screenshots (`upload.…`) by themselves too: the update shows them as their own group.
-	const uploads = { images: 0, made: 0, put: 0, bytes: 0, failed: 0 };
+	// Upload screenshots (`upload.…`) by themselves too (a part of the totals above): the update shows them as
+	// their own group and the rest as the bucket's.
+	const uploads: UploadBucketCounts = { images: 0, made: 0, put: 0, bytes: 0, deleted: 0, alreadyUp: 0, failed: 0 };
 	let stop: string | null = null;
 	const ticker = setInterval(
 		() =>
@@ -129,6 +156,8 @@ export async function runUpload(dir: string, entries: Map<string, StateEntry>, a
 					if (upload) {
 						uploads.put += r.put;
 						uploads.bytes += r.bytes;
+						uploads.deleted += r.deleted;
+						if (r.unchanged) uploads.alreadyUp++;
 					}
 				}
 			} catch (err) {
@@ -164,7 +193,7 @@ export async function runUpload(dir: string, entries: Map<string, StateEntry>, a
 				failed: failed.length,
 				stopped: !!stop,
 				uploads
-			})
+			} satisfies UploadRunResult)
 		);
 	return stop ? 2 : failed.length ? 1 : 0;
 }

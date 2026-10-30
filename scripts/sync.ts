@@ -86,7 +86,9 @@ import { localDbFile, openLocalDb } from './sync/local-db';
 import { MIRROR_SITE, mirrorSource, type SourceAdapter } from './sync/mirror';
 import { failureLine, lastJsonLine, lastLine, lineMatching } from './sync/output';
 import { UPLOADS_SOURCE, uploadsSource } from './sync/uploads';
+import type { UploadRunResult } from './screenshots/run';
 import type { FromUploadsResult } from './screenshots/uploads';
+import { screenshotBucketDetails } from './sync/screenshot-details';
 import {
 	backfillComplete,
 	backfillSummary,
@@ -647,41 +649,7 @@ const steps: StepDef[] = [
 			if (stopping()) return { status: 'stopped', summary: parts.join(' · '), details };
 			const up = await script(['scripts/screenshots.ts', '--upload', stage, '--json']);
 			if (up.code !== 0) return { ...failed(up), details };
-			const bucket = lastJsonLine<{
-				images: number;
-				made: number;
-				put: number;
-				bytes: number;
-				deleted: number;
-				alreadyUp: number;
-				failed: number;
-				uploads?: { images: number; made: number; put: number; bytes: number; failed: number };
-			}>(up.tail);
-			if (uploaded)
-				details.push({
-					title: 'From uploads',
-					rows: [
-						...detail('approved', uploaded.approved, { always: true }),
-						...detail('copied from RAW', uploaded.fetched),
-						...detail('sized', bucket?.uploads?.made ?? 0, { always: uploaded.toFetch > 0 }),
-						{
-							label: 'files put',
-							value: bucket?.uploads?.put ? `${n(bucket.uploads.put)} (${(bucket.uploads.bytes / 1e6).toFixed(1)} MB)` : 0
-						},
-						...detail('failed', uploaded.failed + (bucket?.uploads?.failed ?? 0), { always: true, tone: 'bad' })
-					]
-				});
-			if (bucket)
-				details.push({
-					title: `${stage[0].toUpperCase()}${stage.slice(1)} bucket`,
-					rows: [
-						...detail('already up', bucket.alreadyUp, { always: true }),
-						...detail('sizes made', bucket.made),
-						{ label: 'files put', value: bucket.put ? `${n(bucket.put)} (${(bucket.bytes / 1e6).toFixed(1)} MB)` : 0 },
-						{ label: 'deleted', value: bucket.deleted },
-						...detail('failed', bucket.failed, { always: true, tone: 'bad' })
-					]
-				});
+			details.push(...screenshotBucketDetails(stage, uploaded, lastJsonLine<UploadRunResult>(up.tail)));
 			// `screenshots: local bucket: 18120 images in 830s: made 89, put 122048 files (…), …`
 			parts.push(
 				lineMatching(up.tail, /^screenshots: \S+ bucket: /)
