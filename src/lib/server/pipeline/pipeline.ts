@@ -7,7 +7,7 @@ import { gameData } from './game-data';
 import type { Admission } from './admit';
 import { fingerprintPrint, type PrintFingerprint } from './identity';
 import type { FoldMember } from './fold';
-import { blockHashes, docSourcesOf, withSourceRow } from './identity-db';
+import { blockHashes, docSourcesOf, withSourceRow, type PrintSourceRow } from './identity-db';
 import { analysisKey, parsePrintDoc, toPrintDoc, withAuthorName, withFold, withSources } from './print-doc';
 import { RawStore } from './raw-store';
 import { FirebaseRecord, stripPrivateFields } from './record';
@@ -475,12 +475,20 @@ export const applyPlan = Effect.fn('applyPlan')(function* (
 				});
 				return { status: 'blocked', id, by };
 			}
+			const current = yield* repo.docState(id);
+			// First upload wins, whichever path planned it: a record posted after another live source of the
+			// print (the backfill's factorioprints copy of a print another site brought first) adds only its
+			// source row and hashes, and leaves the shown record alone, as ingestRecord does.
+			if (identity && postedLater(identity.source, current.sources)) {
+				yield* repo.identify(id, identity, options.extra?.() ?? []);
+				yield* syncSources(id);
+				return { status: 'identified', id };
+			}
 			if (plan.archive !== null) yield* raw.put(plan.print.rawKey, plan.archive);
 			const viewerFiles = plan.viewerFiles ? yield* putViewerFiles(id, plan.viewerFiles) : 0;
 			const authorName = yield* resolveAuthorName(plan.print.record);
 			// The fold its row has now goes into the document's first write; `fold` puts right what changed. So do
 			// its sources, as they will be once the upsert's batch writes this record's row.
-			const current = yield* repo.docState(id);
 			const sources = identity ? withSourceRow(id, current.sources, identity.source) : current.sources;
 			const doc = withSources(withFold(withAuthorName(plan.doc, authorName), current.fold), docSourcesOf(id, sources));
 			yield* raw.put(analysisKey(id), doc);
@@ -675,6 +683,20 @@ export const reanalyzePrint = Effect.fn('reanalyzePrint')(function* (id: string,
 	return yield* processRaw(id, text, `raw:${rawKey(id)}`, yield* (yield* PrintRepository).getState(id), options);
 });
 
+/**
+ * Whether another live source of the print was posted before this one (`uploaded_at`, else first seen; a
+ * source that doesn't say when counts as posted now): then it, not this one, is the record the print shows.
+ */
+export const postedLater = (
+	source: { readonly site: string; readonly siteId: string; readonly uploadedAt: number | null },
+	sources: readonly PrintSourceRow[]
+) => {
+	const posted = source.uploadedAt ?? Date.now();
+	return sources.some(
+		(s) => s.gone_at === null && !(s.site === source.site && s.site_id === source.siteId) && (s.uploaded_at ?? s.first_seen) < posted
+	);
+};
+
 export interface IngestRecordOptions extends IngestOptions, ApplyOptions {
 	/** `prints.source_url`: defaults to the record's own page. */
 	readonly sourceUrl?: string;
@@ -698,11 +720,7 @@ export const ingestRecord = Effect.fn('ingestRecord')(function* (
 ) {
 	const repo = yield* PrintRepository;
 	const { printId, admitted } = admission;
-	const posted = record.uploadedAt ?? Date.now();
-	const earlier = (yield* repo.sources(printId)).some(
-		(s) => s.gone_at === null && !(s.site === record.site && s.site_id === record.siteId) && (s.uploaded_at ?? s.first_seen) < posted
-	);
-	if (earlier) {
+	if (postedLater(record, yield* repo.sources(printId))) {
 		yield* repo.identify(printId, { source: sourceMetaOfRecord(record), fingerprint: admitted.fingerprint }, options.extra?.() ?? []);
 		// The print's page lists its sources ("Also on …").
 		yield* syncSources(printId);

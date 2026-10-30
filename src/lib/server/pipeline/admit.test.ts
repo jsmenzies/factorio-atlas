@@ -385,6 +385,79 @@ describe('ingestRecord: first upload wins', () => {
 	});
 });
 
+describe('first upload wins against the backfill', () => {
+	test('a factorioprints record posted minutes after another site’s copy never takes the credit back', async () => {
+		const h = setup();
+		await h.ingest(ID, FIXTURE);
+		const created = (JSON.parse(FIXTURE) as { createdDate: number }).createdDate;
+		// The same author posts on fprints ten minutes before factorioprints (the shape of 5 real prints).
+		const fprints = (title: string, updatedAt: number): SourceRecord => ({
+			site: 'fprints',
+			siteId: '66d30661-0000-4000-8000-000000000000',
+			url: 'https://fprints.xyz/blueprint/66d30661-0000-4000-8000-000000000000',
+			title,
+			description: null,
+			author: { site: 'fprints', id: 'u1', name: null },
+			blueprintString: stringOf(FIXTURE),
+			image: null,
+			uploadedAt: created - 10 * 60_000,
+			updatedAt,
+			favorites: null,
+			sourceHints: []
+		});
+		const shown = () => h.all('SELECT title, source FROM prints');
+		const first = fprints('Belts, posted on fprints first', created);
+		const a = await admitRecord(h.db, first);
+		if (a.status !== 'existing') throw new Error(a.status);
+		expect((await h.run(ingestRecord(first, a))).status).toBe('analysed');
+		expect(shown()).toEqual([{ title: 'Belts, posted on fprints first', source: 'fprints' }]);
+
+		// The backfill comes to the factorioprints record: its text differs from what the print shows, so it is
+		// planned and analysed again, but only its source row and hashes are written.
+		const state = await h.run(
+			Effect.gen(function* () {
+				return yield* (yield* PrintRepository).getState(ID);
+			})
+		);
+		const plan = await h.run(planIngest(ID, FIXTURE, 'test', state));
+		expect(plan.kind).toBe('analysed');
+		expect(await h.run(applyPlan(plan))).toEqual({ status: 'identified', id: ID });
+		expect(await h.ingest(ID, FIXTURE)).toEqual({ status: 'identified', id: ID });
+		expect(shown()).toEqual([{ title: 'Belts, posted on fprints first', source: 'fprints' }]);
+		expect(JSON.parse(h.r2.get(`fprints/${first.siteId}.json`)!).title).toBe('Belts, posted on fprints first');
+
+		// An edit on fprints: still the credited source, so shown.
+		const edit = fprints('Belts, edited on fprints', created + 3_600_000);
+		const b = await admitRecord(h.db, edit);
+		if (b.status !== 'existing') throw new Error(b.status);
+		expect((await h.run(ingestRecord(edit, b))).status).toBe('analysed');
+		expect(await h.ingest(ID, FIXTURE)).toEqual({ status: 'identified', id: ID });
+		expect(shown()).toEqual([{ title: 'Belts, edited on fprints', source: 'fprints' }]);
+		expect(h.doc(ID)?.print.sources).toEqual([
+			{ site: 'fprints', site_id: first.siteId },
+			{ site: 'factorioprints', site_id: ID }
+		]);
+	});
+
+	test('a factorioprints record that is the only, or the earliest, source is analysed as before', async () => {
+		const h = setup();
+		expect((await h.ingest(ID, FIXTURE)).status).toBe('analysed');
+		const later = bin('later002', stringOf(FIXTURE), { uploadedAt: Date.UTC(2026, 0, 1) });
+		const a = await admitRecord(h.db, later);
+		if (a.status !== 'existing') throw new Error(a.status);
+		await h.run(ingestRecord(later, a));
+		expect(
+			(
+				await h.ingest(
+					ID,
+					withRecord(FIXTURE, (r) => (r.title = 'Renamed on factorioprints'))
+				)
+			).status
+		).toBe('analysed');
+		expect(h.all('SELECT title, source FROM prints')).toEqual([{ title: 'Renamed on factorioprints', source: 'factorioprints' }]);
+	});
+});
+
 describe('the soft fold', () => {
 	/** All the Belts posted again a day later: by its own author, or by someone else. */
 	const repost = (by: 'same' | 'other', days = 1) =>
