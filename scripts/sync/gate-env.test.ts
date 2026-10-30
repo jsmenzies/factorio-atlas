@@ -5,11 +5,11 @@ import { join } from 'node:path';
 import { d1FromSqlite } from '#lib/server/pipeline/d1-sqlite.js';
 import { purgePrintData } from '#lib/server/takedown.js';
 import type { RenderStore } from '../render/store';
-import { deployedGateEnv } from './gate-env';
+import { deployedGateEnv, PROBE_PREFIX, probeBuckets } from './gate-env';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 
-/** The backfill's remote RAW as it is: get, put, and delete of one key per call (an array would be one bad key). */
+/** The backfill's remote RAW as it is: get, put, list of one page, and delete of one key per call (an array would be one bad key). */
 const remoteRaw = (objects: Map<string, string>, calls: string[]) =>
 	({
 		get: async (k: string) => (objects.has(k) ? { text: async () => objects.get(k)! } : null),
@@ -18,6 +18,10 @@ const remoteRaw = (objects: Map<string, string>, calls: string[]) =>
 			if (typeof k !== 'string') throw new Error('the remote RAW deletes one key per call');
 			calls.push(`raw delete ${k}`);
 			objects.delete(k);
+		},
+		list: async (o: R2ListOptions) => {
+			calls.push(`raw list ${o.prefix}`);
+			return { objects: [...objects.keys()].filter((k) => k.startsWith(o.prefix ?? '')).map((key) => ({ key })), truncated: false };
 		}
 	}) as unknown as R2Bucket;
 
@@ -84,14 +88,22 @@ describe('a deployed stage gate for Bun', () => {
 		expect(sqlite.query(`SELECT 1 FROM prints WHERE id = 'codex-5'`).get()).toBeNull();
 		expect(sqlite.query(`SELECT kind FROM print_tombstones WHERE print_id = 'codex-5'`).get()).toEqual({ kind: 'gone' });
 		expect([...rawObjects.keys()]).toEqual([]);
-		expect(calls).toContain('factorio-prints-prod-raw list viewer/codex-5/');
+		expect(calls).toContain('raw list viewer/codex-5/');
 		expect(calls).toContain('factorio-prints-prod-renders delete codex-5/index.json');
 		expect(r.renderObjects).toBe(1);
 	});
 
 	test('without the R2 keys a purge fails loudly rather than leaving files', async () => {
 		const { env } = deployedGateEnv('prod', 1, { DB: {} as D1Database, RAW: remoteRaw(new Map(), []) }, {}, {}, stores(new Map(), []));
-		await expect(env.RAW.list({ prefix: 'viewer/x/' })).rejects.toThrow('R2_ACCESS_KEY_ID');
 		await expect(env.RENDERS.list({ prefix: 'x/' })).rejects.toThrow('R2_ACCESS_KEY_ID');
+		await expect(env.SCREENSHOTS.list({ prefix: 'x/' })).rejects.toThrow('R2_ACCESS_KEY_ID');
+	});
+
+	test('the access probe lists an empty prefix of each bucket and names those that refuse', async () => {
+		const calls: string[] = [];
+		const ok = remoteRaw(new Map(), calls);
+		const refusing = { list: async () => Promise.reject(new Error('HTTP 403 AccessDenied\nmore')) } as unknown as R2Bucket;
+		expect(await probeBuckets({ raw: ok, renders: refusing, screenshots: ok })).toEqual(['list access to renders (HTTP 403 AccessDenied)']);
+		expect(calls).toEqual([`raw list ${PROBE_PREFIX}`, `raw list ${PROBE_PREFIX}`]);
 	});
 });

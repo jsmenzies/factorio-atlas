@@ -202,4 +202,34 @@ describe('addRecord with update (a polled site changed the record)', () => {
 		expect(printHash(s, FP_ID)).toBe(before);
 		expect(s.one('SELECT COUNT(*) AS n FROM print_sources WHERE print_id = ?', FP_ID)).toEqual({ n: 1 });
 	});
+
+	test('its own print, an earlier source that cannot move (no archived record): failed, the print keeps its identity', async () => {
+		const s = setup();
+		await addRecord(s.b, codex('8', { blueprintString: STRING }), { update: true });
+		const older = other('fprints', 'old', { blueprintString: STRING, uploadedAt: Date.UTC(2024, 0, 1) });
+		expect(await addRecord(s.b, older)).toMatchObject({ status: 'joins', printId: 'codex-8', shown: true });
+		s.objects.delete(rawKeyFor('fprints', 'old'));
+		const before = printHash(s, 'codex-8');
+		const r = await addRecord(s.b, codex('8', { blueprintString: BOOK, updatedAt: 9 }), { update: true });
+		expect(r).toMatchObject({ status: 'failed', moved: [{ site: 'fprints', siteId: 'old', printId: null, reason: 'no archived record' }] });
+		expect(printHash(s, 'codex-8')).toBe(before);
+		expect(s.one('SELECT source FROM prints WHERE id = ?', 'codex-8')).toEqual({ source: 'fprints' });
+	});
+
+	test('leaving a print it was shown on with no archived record to hand it to: failed, nothing written', async () => {
+		const s = setup();
+		const fp = fromFactorioprints(FP_ID, FP_TEXT);
+		const admitted = await admitRecord(s.DB, fp);
+		if (admitted.status !== 'new') throw new Error(admitted.status);
+		await Effect.runPromise(Effect.provide(ingestRecord(fp, { ...admitted, printId: FP_ID }), pipelineLayer(s.env)));
+		await addRecord(s.b, codex('9', { blueprintString: STRING, uploadedAt: Date.UTC(2010, 0, 1) }));
+		s.objects.delete(rawKeyFor('factorioprints', FP_ID));
+		const r = await addRecord(s.b, codex('9', { blueprintString: BOOK, uploadedAt: Date.UTC(2010, 0, 1), updatedAt: 9 }), { update: true });
+		expect(r).toMatchObject({ status: 'failed' });
+		expect(s.one('SELECT print_id, gone_at FROM print_sources WHERE site = ? AND site_id = ?', 'codex', '9')).toEqual({
+			print_id: FP_ID,
+			gone_at: null
+		});
+		expect(s.one('SELECT source FROM prints WHERE id = ?', FP_ID)).toEqual({ source: 'codex' });
+	});
 });

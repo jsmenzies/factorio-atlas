@@ -299,7 +299,9 @@ local bucket instead. Pages rendered by an earlier run that aren't up yet go fir
 `--upload` and nothing left to draw only uploads.
 
 1. In the dashboard, R2 → Manage API tokens → Create API token: **Object Read & Write**, applied
-   to the renders bucket only.
+   to the stage's renders and screenshots buckets (`factorio-prints-<stage>-renders` and
+   `factorio-prints-<stage>-screenshots`): render uploads use the first, screenshot uploads the second,
+   and deletions made outside the Worker (`bun run polled`) list and delete in both.
 2. Put its key pair in `.env` (never commit it):
 
    ```sh
@@ -487,7 +489,9 @@ live, and needs the R2 API token ("Uploading renders"). `--json` puts the result
   `.env`. The deploy binds it with the zone's id (`CACHE_ZONE_ID`) when the stage has those domains.
   Deletions made outside the Worker (`bun run polled`, the update's other-sites step) read both from
   `.env`, so add the zone's id there too as `CACHE_ZONE_ID` (the zone's Overview page, "API" → "Zone
-  ID"); without it, or without `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`, those deletions wait.
+  ID"); without it, or without `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`, those deletions wait. They
+  also wait while the R2 token can't list the renders or screenshots bucket, or the stage's RAW bucket
+  (read through your wrangler login): each run checks with one listing of an empty prefix.
 
 ## Page views
 

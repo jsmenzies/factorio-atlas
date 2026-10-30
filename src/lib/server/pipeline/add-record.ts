@@ -183,6 +183,10 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 			// sources list (and credit, when it was the one shown) put right, then its row deleted and the record
 			// added afresh, so a run cut short anywhere does the rest next time.
 			try {
+				// When it was the one shown, the next source takes the credit: its record first, or nothing moves.
+				const next = split.shown && split.next ? await archivedRecord(b.RAW, split.next.site, split.next.site_id) : null;
+				if (split.shown && split.next && !next)
+					throw new Error(`no archived record of ${split.next.site}:${split.next.site_id} to hand ${printId} to`);
 				await b.DB.batch([
 					b.DB.prepare('UPDATE print_sources SET gone_at = ? WHERE site = ? AND site_id = ? AND print_id = ? AND gone_at IS NULL').bind(
 						o.now ?? Date.now(),
@@ -192,12 +196,9 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 					),
 					bumpPageVersion(b.DB, o.now)
 				]);
-				if (split.shown && split.next) {
-					const next = await archivedRecord(b.RAW, split.next.site, split.next.site_id);
-					if (next) {
-						const r = await addRecord(b, next, { ...o, update: true });
-						if (r.status === 'failed') throw new Error(`handing ${printId} to ${split.next.site}:${split.next.site_id}: ${r.reason}`);
-					}
+				if (next && split.next) {
+					const r = await addRecord(b, next, { ...o, update: true });
+					if (r.status === 'failed') throw new Error(`handing ${printId} to ${split.next.site}:${split.next.site_id}: ${r.reason}`);
 				}
 				await run(syncSources(printId, { bump: false }));
 				await b.DB.prepare('DELETE FROM print_sources WHERE site = ? AND site_id = ? AND print_id = ?')
@@ -245,6 +246,21 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 				} catch (e) {
 					return done({ status: 'failed', reason: `moving ${other.site}:${other.site_id} off ${printId}: ${reasonOf(e)}` });
 				}
+			}
+			// A source that couldn't move and was posted first would still be the one shown: the edited content
+			// must not become that print's identity. Stop; the next run tries the move again.
+			try {
+				const stayed = liveSources(await sourcesOf(b.DB, printId)).filter((x) => !(x.site === record.site && x.site_id === record.siteId));
+				if (postedLater(record, stayed))
+					return {
+						...done({
+							status: 'failed',
+							reason: `${stayed.map((x) => `${x.site}:${x.site_id}`).join(', ')} couldn't move off ${printId} and was posted before it`
+						}),
+						moved
+					};
+			} catch (e) {
+				return done({ status: 'failed', reason: reasonOf(e) });
 			}
 		}
 	}

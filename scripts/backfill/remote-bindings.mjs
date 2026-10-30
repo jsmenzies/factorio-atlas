@@ -10,7 +10,8 @@
  *
  *   node scripts/backfill/remote-bindings.mjs <wrangler config>   (env BACKFILL_SIDECAR_TOKEN)
  *
- * Prints `READY <port>` once the bindings work, then answers POST /d1 and GET (the bytes)|PUT|DELETE /r2?key=…,
+ * Prints `READY <port>` once the bindings work, then answers POST /d1, GET (the bytes)|PUT|DELETE /r2?key=…,
+ * and GET /r2list?prefix=…&cursor=…&limit=… (one page of keys: `{ keys, truncated, cursor }`),
  * each with `authorization: Bearer <token>`. Exits when stdin closes (the parent died) or on SIGTERM.
  * Plain JavaScript so Node runs it without a build step.
  */
@@ -82,6 +83,19 @@ const server = createServer(async (req, res) => {
 		const url = new URL(req.url ?? '/', 'http://localhost');
 		if (url.pathname === '/d1' && req.method === 'POST') {
 			return send(res, 200, JSON.stringify(await d1(JSON.parse(await readBody(req)))));
+		}
+		if (url.pathname === '/r2list' && req.method === 'GET') {
+			const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit') ?? 1000) || 1000));
+			const page = await RAW.list({
+				prefix: url.searchParams.get('prefix') ?? '',
+				cursor: url.searchParams.get('cursor') || undefined,
+				limit
+			});
+			return send(
+				res,
+				200,
+				JSON.stringify({ keys: page.objects.map((o) => o.key), truncated: page.truncated, cursor: page.truncated ? page.cursor : null })
+			);
 		}
 		if (url.pathname === '/r2') {
 			const key = url.searchParams.get('key');

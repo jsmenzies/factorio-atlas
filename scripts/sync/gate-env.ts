@@ -3,14 +3,14 @@
  * stage, for a Bun script that polls another site (scripts/polled.ts): the same bindings the site Worker
  * has. `local` is the miniflare state `bun run dev` serves, every binding included.
  *
- * A deployed stage's D1 and RAW come through the backfill's remote bindings (scripts/backfill/remote.ts),
- * whose RAW does only get, put and one-key delete. A purge (takedown.ts `purgePrintData`) also deletes
- * several RAW keys at once and lists `viewer/<id>/`, so RAW here is that binding for reads and writes,
- * one-key deletes for a list of keys, and R2's S3 API for listing. RENDERS and SCREENSHOTS, which a purge
- * lists and deletes from, are R2's S3 API too (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY, as render and
- * screenshot uploads use), and the edge purge needs CACHE_PURGE_TOKEN and CACHE_ZONE_ID (the zone of the
- * renders and screenshots domains). `canPurge` is false while any of these is missing (`missing` names
- * them): a deletion then waits rather than leaving files in the buckets or the edge cache.
+ * A deployed stage's D1 and RAW come through the backfill's remote bindings (scripts/backfill/remote.ts:
+ * get, put, list, one key per delete; a list of keys is deleted one by one here). RENDERS and SCREENSHOTS,
+ * which a purge lists and deletes from, go through R2's S3 API (R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY,
+ * as render and screenshot uploads use; the token must cover both buckets), and the edge purge needs
+ * CACHE_PURGE_TOKEN and CACHE_ZONE_ID (the zone of the renders and screenshots domains). `canPurge` is
+ * false while any of these is missing, or while a read-only probe (a listing of a prefix that holds
+ * nothing) of RAW, RENDERS or SCREENSHOTS is refused; `missing` says which. A deletion then waits rather
+ * than running half-way (a purge deletes the document before the rows).
  */
 import { getPlatformProxy, unstable_readConfig } from 'wrangler';
 import type { GateEnv } from '#lib/server/uploads/gate.js';
@@ -57,22 +57,32 @@ const noBucket = (what: string): R2Bucket =>
 				: () => Promise.reject(new TargetError(`${what} needs R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY (docs/deploy.md)`))
 	});
 
-/**
- * RAW for a Bun run on a deployed stage: the remote binding for get and put, a list of keys deleted one by
- * one through it (it takes one key per call), and listing through `lister` (R2's S3 API), else refused.
- */
-export const rawBucket = (remote: R2Bucket, lister: R2Bucket | null): R2Bucket =>
+/** RAW for a Bun run on a deployed stage: the remote binding, a list of keys deleted one by one (it takes one key per call). */
+export const rawBucket = (remote: R2Bucket): R2Bucket =>
 	({
 		get: (key: string) => remote.get(key),
 		put: (key: string, value: string, o?: R2PutOptions) => remote.put(key, value, o),
 		delete: async (keys: string | string[]) => {
 			for (const key of [keys].flat()) await remote.delete(key);
 		},
-		list: (o?: R2ListOptions) =>
-			lister
-				? lister.list(o)
-				: Promise.reject(new TargetError('listing RAW needs R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY (docs/deploy.md)'))
+		list: (o?: R2ListOptions) => remote.list(o)
 	}) as unknown as R2Bucket;
+
+/** A prefix no object has: listing it costs one request and says whether the bucket lets us list. */
+export const PROBE_PREFIX = '.atlas-access-probe/';
+
+/** Lists PROBE_PREFIX in each bucket a purge uses; the refusals, as lines for `missing`. */
+export async function probeBuckets(buckets: Record<string, R2Bucket>): Promise<string[]> {
+	const refused: string[] = [];
+	for (const [name, bucket] of Object.entries(buckets)) {
+		try {
+			await bucket.list({ prefix: PROBE_PREFIX, limit: 1 });
+		} catch (e) {
+			refused.push(`list access to ${name} (${e instanceof Error ? e.message.split('\n')[0] : String(e)})`);
+		}
+	}
+	return refused;
+}
 
 const domainUrl = (v: string | undefined) => (v?.trim() ? `https://${v.trim()}` : '');
 
@@ -95,7 +105,7 @@ export function deployedGateEnv(
 	const names = resourceNames(stage, generation);
 	const env: GateEnv = {
 		DB: remote.DB,
-		RAW: rawBucket(remote.RAW, keys ? s3(names.raw) : null),
+		RAW: rawBucket(remote.RAW),
 		MIRROR_BASE_URL: vars.MIRROR_BASE_URL,
 		FIREBASE_BASE_URL: vars.FIREBASE_BASE_URL,
 		RENDERS: s3(names.renders),
@@ -127,8 +137,24 @@ export async function openStageGate(stage: Stage, generation?: number): Promise<
 	const vars = unstable_readConfig({ config: 'wrangler.jsonc' }, { hideWarnings: true }).vars as Record<string, string>;
 	const gen = generation ?? boundGeneration(stage);
 	const target = await openTarget(stage, { generation: gen });
-	const { env, canPurge, missing } = deployedGateEnv(stage, gen, target.env, vars, process.env, (bucket, keys) =>
+	const names = resourceNames(stage, gen);
+	const built = deployedGateEnv(stage, gen, target.env, vars, process.env, (bucket, keys) =>
 		s3Store({ accountId: accountId(), bucket, ...keys })
 	);
-	return { env, label: `${target.database}, ${target.bucket}`, canPurge, missing, dispose: target.dispose };
+	// Only worth probing with the keys there: without them every bucket refuses already.
+	const refused = built.missing.length
+		? []
+		: await probeBuckets({
+				[names.raw]: built.env.RAW,
+				[names.renders]: built.env.RENDERS,
+				[screenshotsBucket(stage)]: built.env.SCREENSHOTS
+			});
+	const missing = [...built.missing, ...refused];
+	return {
+		env: built.env,
+		label: `${target.database}, ${target.bucket}`,
+		canPurge: missing.length === 0,
+		missing,
+		dispose: target.dispose
+	};
 }

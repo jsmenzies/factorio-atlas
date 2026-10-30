@@ -121,6 +121,17 @@ export const openRemoteBindings = async (configPath: string, log: (line: string)
 		},
 		delete: async (k: string) => {
 			await call(key(k), { method: 'DELETE' });
+		},
+		/** One page of keys (as R2's list: `objects`, `truncated`, `cursor`). */
+		list: async (o: R2ListOptions = {}) => {
+			const q = new URLSearchParams({ prefix: o.prefix ?? '', limit: String(o.limit ?? 1000), ...(o.cursor ? { cursor: o.cursor } : {}) });
+			const page = (await (await call(`/r2list?${q}`)).json()) as { keys: string[]; truncated: boolean; cursor: string | null };
+			return {
+				objects: page.keys.map((k) => ({ key: k })),
+				truncated: page.truncated,
+				...(page.cursor ? { cursor: page.cursor } : {}),
+				delimitedPrefixes: []
+			};
 		}
 	} as unknown as R2Bucket;
 
