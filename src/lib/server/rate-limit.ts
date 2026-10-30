@@ -2,8 +2,9 @@
  * Per-visitor request limits, run from hooks.server.ts after the /admin guard, so they cover pages
  * and their `__data.json` alike. Workers Rate Limiting bindings (wrangler.jsonc `ratelimits`,
  * provisioned by alchemy.run.ts): every request counts towards PAGE_LIMIT, searches (the home
- * route with a query string, and a quality chip's counts) towards SEARCH_LIMIT as well, and sent
- * removal requests towards REPORT_LIMIT. Counts are kept per Cloudflare location
+ * route with a query string, and a quality chip's counts) towards SEARCH_LIMIT as well, sent
+ * removal requests towards REPORT_LIMIT, sign-in steps and account changes towards AUTH_LIMIT, and
+ * uploads and their edits towards UPLOAD_LIMIT. Counts are kept per Cloudflare location
  * and are approximate. The zone's WAF rule (alchemy.run.ts) stops floods before they reach the Worker.
  */
 
@@ -16,6 +17,8 @@ export interface Limiters {
 	PAGE_LIMIT?: Limiter;
 	SEARCH_LIMIT?: Limiter;
 	REPORT_LIMIT?: Limiter;
+	AUTH_LIMIT?: Limiter;
+	UPLOAD_LIMIT?: Limiter;
 }
 
 /**
@@ -53,6 +56,17 @@ export const isSearch = (routeId: string | null, url: URL) => (routeId === '/' &
 /** Sending a removal request (the form's POST). */
 export const isReport = (routeId: string | null, method: string) => routeId === '/prints/[id]/remove' && method === 'POST';
 
+/**
+ * A sign-in step (each one is a call to a provider and makes sessions and accounts) or a change to
+ * an account, so a script can't churn through either.
+ */
+export const isAuth = (routeId: string | null, method: string) =>
+	routeId !== null && (routeId.startsWith('/auth/') || (routeId === '/account' && method !== 'GET' && method !== 'HEAD'));
+
+/** Sending an upload, or an edit or delete of one (the forms' POSTs). */
+export const isUpload = (routeId: string | null, method: string) =>
+	(routeId === '/upload' || routeId === '/uploads/[id]') && method === 'POST';
+
 /** Null when the request may go on, else the 429 to send. No limiter (local dev), no client IP or a file route: never limited. */
 export const rateLimited = async (request: Request, routeId: string | null, url: URL, limiters: Limiters) => {
 	const ip = request.headers.get('cf-connecting-ip');
@@ -61,7 +75,9 @@ export const rateLimited = async (request: Request, routeId: string | null, url:
 	const checks = [
 		limiters.PAGE_LIMIT,
 		isSearch(routeId, url) ? limiters.SEARCH_LIMIT : undefined,
-		isReport(routeId, request.method) ? limiters.REPORT_LIMIT : undefined
+		isReport(routeId, request.method) ? limiters.REPORT_LIMIT : undefined,
+		isAuth(routeId, request.method) ? limiters.AUTH_LIMIT : undefined,
+		isUpload(routeId, request.method) ? limiters.UPLOAD_LIMIT : undefined
 	];
 	for (const limiter of checks) {
 		if (limiter && !(await limiter.limit({ key })).success) {

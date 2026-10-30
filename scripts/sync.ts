@@ -53,6 +53,7 @@ import { newRunId } from '#lib/server/pipeline/runs.js';
 import { VIEWER_VERSION } from '#lib/server/pipeline/viewer-files.js';
 import { rendersDir } from '#lib/server/renders-dir.js';
 import { LIVE_SYNC_WHERE, liveSyncParams, readMeta, writeMeta } from '#lib/server/sync.js';
+import { PROCESSING_ATTEMPTS } from '#lib/server/uploads/uploads.js';
 import {
 	detail,
 	estimateRender,
@@ -77,6 +78,7 @@ import { confirmProd, fail, n } from './stage-command';
 import { localDbFile, openLocalDb } from './sync/local-db';
 import { MIRROR_SITE, mirrorSource, type SourceAdapter } from './sync/mirror';
 import { failureLine, lastJsonLine, lastLine, lineMatching } from './sync/output';
+import { UPLOADS_SOURCE, uploadsSource } from './sync/uploads';
 import {
 	backfillComplete,
 	backfillSummary,
@@ -136,8 +138,8 @@ const settings = parseSettings((await readMeta<unknown>(db, 'settings'))?.value)
 
 if (!existsSync(clone)) fail(`no mirror clone at ${clone} (set RENDER_CLONE_DIR)`);
 
-/** The print sources an update fetches, in order. */
-const SOURCES: SourceAdapter[] = [mirrorSource(clone)];
+/** The print sources an update fetches, in order. Uploads admit their waiting records in their own fetch (scripts/sync/uploads.ts). */
+const SOURCES: SourceAdapter[] = [mirrorSource(clone), uploadsSource(ROOT, stage)];
 
 /**
  * Where the steps read print records: today the mirror clone. Moving the steps to another record
@@ -148,19 +150,44 @@ const recordSourceArgs = () => ['--from-clone', clone];
 const short = (id: string | null | undefined) => id?.slice(0, 7) ?? '?';
 
 const describeSource = (p: SourcePlan) =>
-	!sourceMoved(p)
-		? `${p.site}: at its latest (${short(p.to.id)})`
-		: `${p.site}: ${short(p.from.id)} → ${short(p.to.id)}: +${n(p.added)} new, ${n(p.edited)} edited, ` +
-			`${n(p.favourites)} only favourite counts, ${n(p.deleted.length)} deleted; ${n(p.modern)} of the new and edited have a 2.0+ page` +
-			(p.blocked ? `\n✗ held back: ${p.blocked}` : '');
+	p.error
+		? `${p.site}: couldn't check: ${p.error}`
+		: p.position
+			? `${p.site}: ${p.position}`
+			: !sourceMoved(p)
+				? `${p.site}: at its latest (${short(p.to.id)})`
+				: `${p.site}: ${short(p.from.id)} → ${short(p.to.id)}: +${n(p.added)} new, ${n(p.edited)} edited, ` +
+					`${n(p.favourites)} only favourite counts, ${n(p.deleted.length)} deleted; ${n(p.modern)} of the new and edited have a 2.0+ page` +
+					(p.blocked ? `\n✗ held back: ${p.blocked}` : '');
 
 const acceptedIds = async () => (await readMeta<Record<string, string>>(db, 'accept'))?.value ?? {};
 
-/** Each source's plan, without fetching anything. */
+/** Each source's plan, without fetching anything. One that can't be checked (the stage unreachable) is shown as such; the rest still are. */
 const planAll = async (signal?: AbortSignal) => {
 	const accepted = await acceptedIds();
 	const sources: SourcePlan[] = [];
-	for (const s of SOURCES) sources.push(await s.plan({ maxChange: settings.maxChange, accept: accepted[s.site], signal }));
+	for (const s of SOURCES) {
+		try {
+			sources.push(await s.plan({ maxChange: settings.maxChange, accept: accepted[s.site], signal }));
+		} catch (e) {
+			const none = { id: 'none', date: 0 };
+			const error = e instanceof Error ? e.message : String(e);
+			console.error(`✗ ${s.site}: ${error}`);
+			sources.push({
+				site: s.site,
+				from: none,
+				to: none,
+				prints: 0,
+				added: 0,
+				edited: 0,
+				favourites: 0,
+				deleted: [],
+				modern: 0,
+				blocked: null,
+				error
+			});
+		}
+	}
 	return { checkedAt: Date.now(), sources } satisfies SyncPlan;
 };
 
@@ -341,37 +368,83 @@ const steps: StepDef[] = [
 					plans.push(await source.plan({ maxChange: settings.maxChange, accept: accepted[source.site], signal }));
 				} catch (e) {
 					errors.push(`${source.site}: ${e instanceof Error ? e.message : e}`);
-					run.sources.push({ site: source.site, from: null, to: null });
+					run.sources.push({ site: source.site, from: null, to: null, ...(source.ingestsItself ? { ingestsItself: true } : {}) });
 				}
 			}
 			await writeMeta(db, 'plan', { checkedAt: Date.now(), sources: plans } satisfies SyncPlan);
 			const parts: string[] = [];
 			for (const plan of plans) {
-				const entry: SourceRun = { site: plan.site, from: plan.from, to: plan.from };
+				const entry: SourceRun = {
+					site: plan.site,
+					from: plan.from,
+					to: plan.from,
+					...(plan.ingestsItself ? { ingestsItself: true } : {}),
+					...(plan.ingestDue ? { ingestDue: plan.ingestDue } : {})
+				};
 				run.sources.push(entry);
 				if (plan.blocked) {
 					entry.blocked = plan.blocked;
 					parts.push(`${plan.site} held back: ${plan.blocked}`);
 				} else if (sourceMoved(plan) && !stopping()) {
-					entry.to = await SOURCES.find((s) => s.site === plan.site)!.apply(plan, signal);
+					const { counts, ...to } = await SOURCES.find((s) => s.site === plan.site)!.apply(plan, signal);
+					entry.to = to;
 					entry.deleted = plan.deleted;
-					parts.push(
-						`${plan.site} ${short(plan.from.id)} → ${short(entry.to.id)}: +${n(plan.added)} new, ${n(plan.edited)} edited, ` +
-							`${n(plan.favourites)} favourite counts, ${n(plan.deleted.length)} deleted (kept on the site)`
-					);
+					if (counts) {
+						entry.counts = counts;
+						parts.push(
+							`${plan.site}: ${Object.entries(counts)
+								.map(([k, v]) => `${n(v)} ${k}`)
+								.join(', ')}`
+						);
+					} else
+						parts.push(
+							`${plan.site} ${short(plan.from.id)} → ${short(entry.to.id)}: +${n(plan.added)} new, ${n(plan.edited)} edited, ` +
+								`${n(plan.favourites)} favourite counts, ${n(plan.deleted.length)} deleted (kept on the site)`
+						);
 				} else if (!sourceMoved(plan)) parts.push(`${plan.site}: already at its latest (${short(plan.to.id)})`);
 			}
 			// The Overview compares each plan's two cursors: after the fetch, the fetched ones are level.
 			await writeMeta(db, 'plan', {
 				checkedAt: Date.now(),
 				sources: plans.map((p) => {
-					const to = run.sources.find((s) => s.site === p.site)?.to;
+					const entry = run.sources.find((s) => s.site === p.site);
+					const to = entry?.to;
+					// A source that admits its own records (uploads) is level at its new cursor, with what it left waiting.
+					if (to && entry?.counts) {
+						const left = entry.counts.left ?? 0;
+						return { ...p, from: to, to, added: left, position: left ? `${n(left)} still waiting` : 'none waiting', stateText: undefined };
+					}
 					return to && to.id === p.to.id ? { ...p, from: to, added: 0, edited: 0, favourites: 0, deleted: [], modern: 0 } : p;
 				})
 			} satisfies SyncPlan);
 			const summary = [...parts, ...errors].join(' · ');
 			const details: DetailGroup[] = plans.map((p) => {
-				const to = run.sources.find((s) => s.site === p.site)?.to;
+				const entry = run.sources.find((s) => s.site === p.site);
+				const to = entry?.to;
+				// A source that admits its own records (uploads, scripts/sync/uploads.ts) says how they came out.
+				if (p.site === UPLOADS_SOURCE) {
+					const c = entry?.counts ?? {};
+					return {
+						title: p.site,
+						rows: [
+							...detail('waiting', p.added, { always: true }),
+							...detail(
+								'oldest waiting',
+								p.added ? new Date(p.to.date).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : null
+							),
+							...detail('admitted', c.admitted),
+							...detail('refused as duplicates', c.duplicate),
+							...detail('blocked', c.blocked, { tone: 'warn' }),
+							...detail('unreadable', c.unreadable, { tone: 'warn' }),
+							...detail('failed, tried again next update', c.failed ?? 0, { always: true, tone: 'bad' }),
+							...detail(`gave up (${PROCESSING_ATTEMPTS} tries)`, c['gave up'], { tone: 'bad' }),
+							...detail('still processing', c.left ?? p.added, { always: true }),
+							...detail('new names put on uploads', c.renamed),
+							...detail('names still to put on uploads', c['names left'], { tone: 'warn' }),
+							...detail('accounts being deleted', c.deleting, { tone: 'warn' })
+						]
+					};
+				}
 				return {
 					title: p.site,
 					rows: [
@@ -393,12 +466,18 @@ const steps: StepDef[] = [
 	{
 		id: 'ingest',
 		async run(): Promise<Outcome> {
-			const key = ingestKey(sourceDigest(run.sources), {
-				analyzer: ANALYZER_VERSION,
-				index: INDEX_VERSION,
-				viewer: VIEWER_VERSION,
-				identity: IDENTITY_VERSION
-			});
+			// The backfill's sources only (sourceDigest leaves out uploads, admitted in the fetch), and a hand-over
+			// that had to purge a print another source still has (`ingest_due`): the backfill admits it again.
+			const key = ingestKey(
+				sourceDigest(run.sources),
+				{
+					analyzer: ANALYZER_VERSION,
+					index: INDEX_VERSION,
+					viewer: VIEWER_VERSION,
+					identity: IDENTITY_VERSION
+				},
+				run.sources.find((s) => s.ingestDue)?.ingestDue ?? null
+			);
 			const recent = await db
 				.prepare('SELECT * FROM sync_runs WHERE stage = ? AND id != ? ORDER BY started_at DESC LIMIT 50')
 				.bind(stage, run.id)
@@ -422,7 +501,11 @@ const steps: StepDef[] = [
 			// The backfill reads one source today (recordSourceArgs), so its counts are that source's.
 			const details: DetailGroup[] = [
 				{
-					title: run.sources.map((s) => s.site).join(', ') || undefined,
+					title:
+						run.sources
+							.filter((s) => !s.ingestsItself)
+							.map((s) => s.site)
+							.join(', ') || undefined,
 					rows: [
 						...detail('re-indexed', result.reindexed),
 						...detail('viewer files rebuilt', result.viewer),

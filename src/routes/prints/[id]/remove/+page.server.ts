@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { error, fail } from '@sveltejs/kit';
 import { CONTACT_MAX, DETAILS_MAX, isRemovalReason } from '#lib/reports.js';
 import { createRemovalRequest } from '#lib/server/reports.js';
+import { goneReason } from '#lib/server/print-pages.js';
 import { TURNSTILE_FIELD, turnstileSiteKey, verifyTurnstile } from '#lib/server/turnstile.js';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -15,8 +16,8 @@ export const load: PageServerLoad = async ({ params }) => {
 		.bind(params.id)
 		.first<{ title: string; author_name: string | null }>();
 	if (!print) {
-		const tomb = await env.DB.prepare('SELECT kind FROM print_tombstones WHERE print_id = ?').bind(params.id).first<{ kind: string }>();
-		if (tomb?.kind === 'takedown') error(410, 'Removed on request');
+		const gone = await goneReason(params.id);
+		if (gone) error(410, gone);
 		error(404, 'Print not found');
 	}
 	return { id: params.id, title: print.title, author: print.author_name, siteKey: turnstileSiteKey(env) };

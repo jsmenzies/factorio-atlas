@@ -4,8 +4,17 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { d1FromSqlite } from '#lib/server/pipeline/d1-sqlite.js';
-import { DEFAULT_SETTINGS, freshSteps, parseSyncRun, SYNC_STALE_MS, type SyncRun, type SyncRunRow } from '#lib/sync.js';
-import { backfillComplete, backfillSummary, claimRun, lastIngestKey, SyncRunner, type BackfillResult, type StepDef } from './runner';
+import { DEFAULT_SETTINGS, freshSteps, parseSyncRun, sourceDigest, SYNC_STALE_MS, type SyncRun, type SyncRunRow } from '#lib/sync.js';
+import {
+	backfillComplete,
+	backfillSummary,
+	claimRun,
+	ingestKey,
+	lastIngestKey,
+	SyncRunner,
+	type BackfillResult,
+	type StepDef
+} from './runner';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const T = 1_800_000_000_000;
@@ -84,6 +93,17 @@ describe('the ingest skip key', () => {
 		if (key) r.options.ingestKey = key;
 		return r;
 	};
+
+	test('waiting uploads never change it (admitted in the fetch); an ingest owed by a failed hand-over does', () => {
+		const versions = { analyzer: 10, index: 3 };
+		const mirror = { site: 'factorioprints', from: { id: 'a', date: 0 }, to: { id: 'b', date: 0 } };
+		const uploads = (id: string) => ({ site: 'uploads', from: null, to: { id, date: 0 }, ingestsItself: true });
+		const before = ingestKey(sourceDigest([mirror]), versions);
+		expect(ingestKey(sourceDigest([mirror, uploads('3-abc')]), versions)).toBe(before);
+		expect(ingestKey(sourceDigest([mirror, uploads('none')]), versions)).toBe(before);
+		expect(ingestKey(sourceDigest([mirror, uploads('none')]), versions, '1793300000000')).not.toBe(before);
+		expect(ingestKey(sourceDigest([mirror]), versions, null)).toBe(before);
+	});
 
 	test("the newest update whose ingest ran to the end, past ones that skipped it (so they don't alternate)", () => {
 		expect(lastIngestKey([withIngest('c', 'skipped'), withIngest('b', 'done', 'K2'), withIngest('a', 'done', 'K1')])).toBe('K2');

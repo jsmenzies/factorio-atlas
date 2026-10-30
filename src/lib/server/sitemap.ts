@@ -66,6 +66,11 @@ export const robotsTxt = (origin: string) =>
 		'Disallow: /prints/*/render',
 		'Disallow: /prints/*/remove',
 		'Disallow: /quality-levels',
+		'Disallow: /auth/',
+		'Disallow: /account',
+		'Disallow: /login',
+		'Disallow: /me',
+		'Disallow: /upload',
 		'Disallow: /?',
 		...['makes', 'uses'].flatMap((key) => [
 			`Allow: /?${key}=`,

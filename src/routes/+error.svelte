@@ -2,27 +2,32 @@
 	import { page } from '$app/state';
 	import PageMeta from '#lib/components/PageMeta.svelte';
 	import { sourceUrl } from '#lib/format.js';
+	import { GONE } from '#lib/gone.js';
 	import { isFactorioprintsId } from '#lib/print-id.js';
 
 	/**
 	 * Every error, in the site's look and with its real status code. A print we don't have may be
 	 * newer than our last import, so it links to the same print on factorioprints.com (only a
-	 * factorioprints id can be there); one taken down on request answers 410 and links only back to
-	 * search, as does anything else.
+	 * factorioprints id can be there). A print taken down on request, or an upload its author deleted,
+	 * answers 410 (told apart by the message, lib/gone.ts) and links only back to search, as does anything
+	 * else.
 	 */
 	const printId = $derived.by(() => {
 		const id = page.status === 404 ? /^\/prints\/([^/]+)\/?$/.exec(page.url.pathname)?.[1] : undefined;
 		return id && isFactorioprintsId(id) ? id : undefined;
 	});
 	const removed = $derived(page.status === 410);
+	const deleted = $derived(removed && page.error?.message === GONE.deleted);
 	const serverError = $derived(page.status >= 500);
 	// Over the rate limit (lib/server/rate-limit.ts); seen here when it hits an in-app navigation.
 	const tooMany = $derived(page.status === 429);
 	const heading = $derived(
 		printId
 			? 'This print isn’t on Blueprint Atlas yet'
-			: removed
-				? 'This print was removed'
+			: deleted
+				? 'This blueprint was deleted'
+				: removed
+					? 'This print was removed'
 				: serverError
 				? 'Something went wrong on our side'
 				: tooMany
@@ -32,7 +37,7 @@
 </script>
 
 <PageMeta
-	title="{serverError || tooMany ? 'Error' : removed ? 'Removed' : 'Not found'} · Blueprint Atlas"
+	title="{serverError || tooMany ? 'Error' : deleted ? 'Deleted' : removed ? 'Removed' : 'Not found'} · Blueprint Atlas"
 	description="{heading}. Search Factorio blueprints by what they make, with high-res renders."
 	noindex
 />
@@ -44,6 +49,8 @@
 		<p class="text-stone-400">
 			It may be newer than our last copy of factorioprints.com, or it was removed. The original may still be there.
 		</p>
+	{:else if deleted}
+		<p class="text-stone-400">Its author deleted it from Blueprint Atlas.</p>
 	{:else if removed}
 		<p class="text-stone-400">It was taken down at the request of its author or owner.</p>
 	{:else if serverError}

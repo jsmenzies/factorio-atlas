@@ -6,10 +6,12 @@
  * scheduled handler). A failed run throws, so it shows as an error in the Worker's logs, and the
  * next day's run puts everything right: the sync writes the whole difference.
  *
- * It also clears the contact and details of reports decided over 30 days ago (lib/server/reports.ts), the
- * one other daily chore, first, so a failed views sync doesn't hold it up; its own failure is logged and
- * doesn't hold up the views sync either (the next day's run clears what this one missed).
+ * It also clears the contact and details of reports decided over 30 days ago (lib/server/reports.ts),
+ * first, so a failed views sync doesn't hold it up; its own failure is logged and doesn't hold up the
+ * views sync either (the next day's run clears what this one missed). So do the accounts' chores
+ * (expired sessions, old name holds, old upload counts: lib/server/auth/sessions.ts), which never throw.
  */
+import { accountChores } from '#lib/server/auth/sessions.js';
 import { clearOldReportText } from '#lib/server/reports.js';
 import { fetchViews, syncViews } from '#lib/server/views.js';
 
@@ -30,6 +32,7 @@ export default {
 		} catch (e) {
 			console.error(`reports: clearing old contacts failed: ${e instanceof Error ? e.message : String(e)}`);
 		}
+		await accountChores(env.DB);
 		const wanted = await fetchViews({ accountId: env.ACCOUNT_ID, token: env.ANALYTICS_API_TOKEN, dataset: env.VIEWS_DATASET });
 		const { plan, known, rowsWritten } = await syncViews(env.DB, wanted);
 		console.log(

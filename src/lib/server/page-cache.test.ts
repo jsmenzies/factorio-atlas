@@ -71,6 +71,13 @@ describe('what is cached', () => {
 			['GET', '/prints/[id]/string'],
 			['GET', '/admin/pipeline'],
 			['GET', '/sitemap.xml'],
+			// Per account: they read the session, which cached routes can't (lib/server/auth/locals.ts).
+			['GET', '/me'],
+			['GET', '/account'],
+			['GET', '/login'],
+			['GET', '/upload'],
+			['GET', '/uploads/[id]'],
+			['GET', '/auth/[provider]/callback'],
 			['GET', null]
 		] as const)
 			expect(cacheTtl(method, route)).toBeNull();

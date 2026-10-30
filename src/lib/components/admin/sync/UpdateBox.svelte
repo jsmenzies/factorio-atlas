@@ -164,7 +164,11 @@
 				</h2>
 				<p class="text-xs text-stone-500">
 					{#each run.sources as s (s.site)}
-						{s.site} <code>{shortCommit(s.from?.id)}{s.to && s.to.id !== s.from?.id ? ` → ${shortCommit(s.to.id)}` : ''}</code> ·
+						{#if s.ingestsItself}
+							{s.site} ·
+						{:else}
+							{s.site} <code>{shortCommit(s.from?.id)}{s.to && s.to.id !== s.from?.id ? ` → ${shortCommit(s.to.id)}` : ''}</code> ·
+						{/if}
 					{/each}
 					started {clock(run.started_at, now, timeZone)} · to {run.stage}
 				</p>
@@ -186,7 +190,10 @@
 			{:else if phase === 'waiting' && plan}
 				<p class="text-xs font-semibold tracking-wide text-stone-500 uppercase">Update</p>
 				<h2 id="update-title" class="text-lg font-semibold text-stone-100">
-					Something new to fetch: {int(totals.added)} new print{totals.added === 1 ? '' : 's'}
+					Something new to fetch: {[
+						...(totals.backfill ? [`${int(totals.added)} new print${totals.added === 1 ? '' : 's'}`] : []),
+						...(totals.waiting ? [`${int(totals.waiting)} upload${totals.waiting === 1 ? '' : 's'} waiting`] : [])
+					].join(', ') || 'new names to put on uploads'}
 				</h2>
 				<p class="text-xs text-stone-500">Sources checked {ago(now - plan.checkedAt)}</p>
 			{:else}
@@ -273,7 +280,7 @@
 	</div>
 
 	{#if !live && plan?.sources.length}
-		<!-- Where the prints come from: one row per source (uploads, arriving through the site, would be one more). -->
+		<!-- Where the prints come from: one row per source; a source whose cursor isn't a commit (uploads) words its own line. -->
 		<ul class="mt-3 divide-y divide-stone-800/70 rounded-md border border-stone-800 bg-stone-950/60 text-sm" aria-label="Sources">
 			{#each plan.sources as p (p.site)}
 				{@const state = sourceState(p)}
@@ -284,7 +291,11 @@
 							{#if p.kind}<span class="text-stone-500"> · {p.kind}</span>{/if}
 						</p>
 						<p class="text-xs text-stone-500">
-							{#if sourceMoved(p)}
+							{#if p.error}
+								{p.error}
+							{:else if p.position}
+								{p.position}
+							{:else if sourceMoved(p)}
 								this machine <code>{shortCommit(p.from.id)}</code> ({when(p.from.date, now, timeZone)}) · latest <code>{shortCommit(p.to.id)}</code>
 								({when(p.to.date, now, timeZone)})
 							{:else}

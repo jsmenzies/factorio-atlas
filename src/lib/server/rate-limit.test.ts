@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { isSearch, rateLimited, visitorKey, type Limiter } from './rate-limit.js';
+import { isAuth, isSearch, isUpload, rateLimited, visitorKey, type Limiter } from './rate-limit.js';
 
 describe('visitorKey', () => {
 	for (const [ip, key] of [
@@ -26,6 +26,34 @@ describe('isSearch', () => {
 		expect(
 			isSearch('/quality-levels', new URL('https://example.com/quality-levels?uses=entity:beacon&filter=uses&value=entity:beacon'))
 		).toBe(true));
+});
+
+describe('isAuth', () => {
+	test('every sign-in step, whatever the method', () => {
+		for (const route of ['/auth/[provider]', '/auth/[provider]/callback', '/auth/dev']) expect(isAuth(route, 'GET')).toBe(true);
+	});
+	test('account changes, not account views', () => {
+		expect(isAuth('/account', 'POST')).toBe(true);
+		expect(isAuth('/account', 'GET')).toBe(false);
+		expect(isAuth('/account', 'HEAD')).toBe(false);
+	});
+	test('other routes, and none', () => {
+		for (const route of ['/', '/login', '/me', '/prints/[id]', '/authors', '/upload']) expect(isAuth(route, 'POST')).toBe(false);
+		expect(isAuth(null, 'POST')).toBe(false);
+	});
+});
+
+describe('isUpload', () => {
+	test('sending an upload, or an edit or delete of one', () => {
+		expect(isUpload('/upload', 'POST')).toBe(true);
+		expect(isUpload('/uploads/[id]', 'POST')).toBe(true);
+	});
+	test('not looking at the forms, nor other routes', () => {
+		expect(isUpload('/upload', 'GET')).toBe(false);
+		expect(isUpload('/uploads/[id]', 'GET')).toBe(false);
+		expect(isUpload('/account', 'POST')).toBe(false);
+		expect(isUpload(null, 'POST')).toBe(false);
+	});
 });
 
 describe('rateLimited', () => {
@@ -64,6 +92,18 @@ describe('rateLimited', () => {
 		const search = limiter(0);
 		expect((await rateLimited(req(url.href), '/quality-levels', url, { PAGE_LIMIT: limiter(1), SEARCH_LIMIT: search }))?.status).toBe(429);
 		expect(search.keys.length).toBe(1);
+	});
+	test('sign-in steps and sent uploads have their own limits', async () => {
+		const post = (url: URL) => new Request(url, { method: 'POST', headers: { 'cf-connecting-ip': '203.0.113.7' } });
+		const auth = limiter(0);
+		const upload = limiter(0);
+		const limiters = { PAGE_LIMIT: limiter(10), AUTH_LIMIT: auth, UPLOAD_LIMIT: upload };
+		const callback = new URL('https://example.com/auth/github/callback?code=c');
+		expect((await rateLimited(req(callback.href), '/auth/[provider]/callback', callback, limiters))?.status).toBe(429);
+		const form = new URL('https://example.com/upload');
+		expect(await rateLimited(req(form.href), '/upload', form, limiters)).toBe(null);
+		expect((await rateLimited(post(form), '/upload', form, limiters))?.status).toBe(429);
+		expect([auth.keys.length, upload.keys.length]).toEqual([1, 1]);
 	});
 	test('pages do not use the search limit', async () => {
 		const url = new URL('https://example.com/prints/x');

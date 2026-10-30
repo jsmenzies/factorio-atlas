@@ -4,6 +4,7 @@
 	import { SvelteSet } from 'svelte/reactivity';
 	import { page as route } from '$app/state';
 	import PageMeta from '#lib/components/PageMeta.svelte';
+	import OwnerLinks from '#lib/components/upload/OwnerLinks.svelte';
 	import BookScope from '#lib/components/print/BookScope.svelte';
 	import PagesSection, { type PageFilter } from '#lib/components/print/PagesSection.svelte';
 	import AboutTab from '#lib/components/print/AboutTab.svelte';
@@ -231,6 +232,9 @@
 	oncopy={() => copy('book')}
 	icons={data.icons}
 />
+
+<!-- The owner's Edit link comes from the browser (OwnerLinks asks /me), never this cached load. -->
+<div class="mt-4 empty:hidden"><OwnerLinks printId={p.id} /></div>
 
 {#if copyOf}
 	<p class="mb-6 rounded border border-stone-800 bg-stone-900/60 px-4 py-3 text-sm text-stone-300">

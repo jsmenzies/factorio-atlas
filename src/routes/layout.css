@@ -10,3 +10,9 @@
 	background-color: var(--color-stone-700);
 	color: var(--color-stone-50);
 }
+
+/* Sign in or Account in the header (AccountLink.svelte); <html data-auth>, set by app.html from the hint cookie, picks one. */
+:root:not([data-auth='in']) .auth-in,
+:root[data-auth='in'] .auth-out {
+	display: none;
+}

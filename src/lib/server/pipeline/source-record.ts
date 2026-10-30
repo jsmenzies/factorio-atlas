@@ -101,6 +101,38 @@ export const toPipelineText = (r: SourceRecord): string => {
 	});
 };
 
+/**
+ * The SourceRecord a pipeline text from another site was made from: `toPipelineText` turned back, for
+ * records whose only copy is that text in RAW (uploads; a hand-over to another site's source). Null when
+ * the text isn't one (not JSON, no `source`, no string).
+ */
+export const fromPipelineText = (text: string): SourceRecord | null => {
+	let r: Partial<FirebaseRecord>;
+	try {
+		r = JSON.parse(text) as Partial<FirebaseRecord>;
+	} catch {
+		return null;
+	}
+	const s = r.source;
+	if (!s || s.site === 'factorioprints' || typeof r.blueprintString !== 'string') return null;
+	return {
+		site: s.site,
+		siteId: s.siteId,
+		url: s.url,
+		title: r.title ?? null,
+		description: r.descriptionMarkdown ?? null,
+		author: s.author ?? null,
+		blueprintString: r.blueprintString,
+		...(s.versions?.length ? { versions: s.versions } : {}),
+		image: s.image ?? null,
+		uploadedAt: s.uploadedAt ?? null,
+		updatedAt: s.updatedAt ?? null,
+		favorites: r.numberOfFavorites ?? null,
+		tags: r.tags ?? [],
+		sourceHints: s.sourceHints ?? []
+	};
+};
+
 /** The text to ingest a record from: factorioprints' own (sanitised), anything else's `toPipelineText`. */
 export const pipelineText = (r: SourceRecord): string => {
 	if (r.site !== 'factorioprints') return toPipelineText(r);

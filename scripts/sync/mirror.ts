@@ -217,8 +217,11 @@ export const pullMirror = async (clone: string, commit: string, signal?: AbortSi
 /** A print source for the update's fetch step: say what's new (plan), then bring the local copy to it (apply). */
 export interface SourceAdapter {
 	site: string;
+	/** Its apply ingests its records itself (uploads): none of the backfill's work (SourcePlan.ingestsItself). */
+	ingestsItself?: boolean;
 	plan(o: PlanOptions): Promise<SourcePlan>;
-	apply(plan: SourcePlan, signal?: AbortSignal): Promise<SourceCursor>;
+	/** Where the source stands after it, and how its records came out when it handles them itself (uploads). */
+	apply(plan: SourcePlan, signal?: AbortSignal): Promise<SourceCursor & { counts?: Record<string, number> }>;
 }
 
 export const mirrorSource = (clone: string): SourceAdapter => ({

@@ -10,10 +10,11 @@
  * 1. One D1 batch: (blocks,) the tombstone. From here a 'takedown' print's pages answer 410 on every
  *    cache miss (loadPrintDoc reads the tombstone), and the `prints_not_removed` trigger refuses its row.
  * 2. RAW: the analysis document first (the print, render and string pages read only R2), then the
- *    archived record and the viewer files.
+ *    archived record, the viewer files and the caller's `extraKeys` (an upload's pending screenshot).
  * 3. One D1 batch: the print's rows (prints, print_search, print_items, print_uses, print_renders,
  *    ingest_state), its fingerprints (its `print_sources` rows stay, marked gone: identity-db.ts), the
- *    screenshot's row when it goes, the tombstone again (an ingest that raced a 'gone' purge deletes it).
+ *    screenshot's row when it goes, the caller's `extra` statements (an upload's own rows), the tombstone
+ *    again (an ingest that raced a 'gone' purge deletes it).
  *    From here search and the sitemap drop it.
  * 4. RENDERS: every key under `<id>/` (overviews, tiles, sidecars, page data, thumbnails, indexes).
  * 5. SCREENSHOTS: the image's files and a 'removed' manifest, when the image goes: a takedown's image goes
@@ -30,6 +31,7 @@
  * The machine that renders still has its own copies and queue rows: `bun run removals` sweeps them,
  * from the tombstones.
  */
+import { siteOfPrintId } from '#lib/print-id.js';
 import { manifestKey, type ShotManifest } from '#lib/screenshots.js';
 import { bumpPageVersion } from './page-cache';
 import { fingerprintBlockValues, identityPurgeStatements, sourcesOf } from './pipeline/identity-db';
@@ -37,6 +39,7 @@ import { analysisKey } from './pipeline/print-doc';
 import { rawKeyFor } from './pipeline/source-record';
 import { insertBlocks, printBlocks, sourceBlock, type Block, type BlockRow } from './removal-blocks';
 import { removalRecordStatements, removedRowStatement } from './screenshot-flags';
+import { uploadPurgeExtras } from './uploads/uploads';
 
 export interface TakedownEnv {
 	readonly DB: D1Database;
@@ -57,6 +60,10 @@ export interface PurgeOptions {
 	readonly screenshotToo?: boolean;
 	/** What an earlier run of the same deletion couldn't purge from the edge cache: purged with this run's. */
 	readonly purgeAlso?: PurgeList;
+	/** More statements for the batch that deletes the print's rows (step 3): an upload's own rows. */
+	readonly extra?: (db: D1Database) => readonly D1PreparedStatement[];
+	/** More RAW keys to delete with the print's (step 2): an upload's pending screenshot. */
+	readonly extraKeys?: readonly string[];
 	readonly now?: number;
 }
 
@@ -200,7 +207,7 @@ async function purge(
 		// step 3 deleted the row, still finds that one).
 		await env.RAW.delete(analysisKey(printId));
 		const row = await db.prepare('SELECT raw_key FROM prints WHERE id = ?').bind(printId).first<{ raw_key: string | null }>();
-		const rawKeys = unique([rawKeyFor('factorioprints', printId), ...(row?.raw_key ? [row.raw_key] : [])]);
+		const rawKeys = unique([rawKeyFor('factorioprints', printId), ...(row?.raw_key ? [row.raw_key] : []), ...(options.extraKeys ?? [])]);
 		await env.RAW.delete(rawKeys);
 		const rawObjects = 1 + rawKeys.length + (await deletePrefix(env.RAW, `viewer/${printId}/`));
 
@@ -220,6 +227,7 @@ async function purge(
 			db.prepare('DELETE FROM ingest_state WHERE print_id = ?').bind(printId),
 			...shotRows,
 			...identityPurgeStatements(db, printId, now),
+			...(options.extra?.(db) ?? []),
 			tombstone(db, printId, options.kind, now)
 		]);
 		const d1Rows = results.reduce((sum, r) => sum + (r.meta.changes ?? 0), 0);
@@ -274,7 +282,9 @@ async function purge(
 
 /**
  * An approved removal: block the print (its id, its factorioprints source and, when it goes, its image),
- * then purge it. `reportId` is the request approved, null when an admin removed it.
+ * then purge it. `reportId` is the request approved, null when an admin removed it. An upload's print
+ * (`up-…`) takes its upload's rows and pending screenshot with it (`uploadPurgeExtras`); the account's
+ * daily upload counts stay as they are, so a takedown never gives an upload back.
  */
 export async function takedownPrint(
 	env: TakedownEnv,
@@ -294,5 +304,6 @@ export async function takedownPrint(
 		...hashes.map((value) => ({ kind: 'sha256' as const, value }))
 	];
 	const rows: BlockRow[] = blocks.map((b) => ({ ...b, print_id: printId, report_id: reportId, created_at: now }));
-	return purge(env, printId, { ...options, kind: 'takedown', now }, rows, fate);
+	const upload = siteOfPrintId(printId) === 'upload' ? await uploadPurgeExtras(env.DB, printId) : null;
+	return purge(env, printId, { ...options, kind: 'takedown', now, ...upload }, rows, fate);
 }

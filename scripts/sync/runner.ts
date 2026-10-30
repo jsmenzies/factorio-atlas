@@ -100,9 +100,9 @@ export function claimRun(
 
 // --- the ingest step's skip key
 
-/** What the ingest step's result depends on: the sources' digest and the pipeline's versions. */
-export const ingestKey = (digest: string, versions: Record<string, number>) =>
-	[digest, ...Object.entries(versions).map(([k, v]) => `${k} ${v}`)].join(' · ');
+/** What the ingest step's result depends on: the sources' digest, the pipeline's versions, and a stage's `meta.ingest_due` (one more run owed). */
+export const ingestKey = (digest: string, versions: Record<string, number>, ingestDue: string | null = null) =>
+	[digest, ...Object.entries(versions).map(([k, v]) => `${k} ${v}`), ...(ingestDue ? [`due ${ingestDue}`] : [])].join(' · ');
 
 /** The key of the latest update (newest first) whose ingest step ran to the end, if any. */
 export const lastIngestKey = (runs: readonly SyncRun[]) =>

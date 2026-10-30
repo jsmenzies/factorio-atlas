@@ -4,7 +4,13 @@
 declare global {
 	namespace App {
 		// interface Error {}
-		// interface Locals {}
+		interface Locals {
+			/**
+			 * The signed-in account, or null. Reads the session (one D1 read) the first time a route asks;
+			 * throws on the cached routes (lib/server/auth/locals.ts).
+			 */
+			account: import('#lib/server/auth/locals.js').AccountReader;
+		}
 		// interface PageData {}
 		// interface PageState {}
 	}

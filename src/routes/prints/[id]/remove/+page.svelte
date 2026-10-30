@@ -1,32 +1,15 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import PageMeta from '#lib/components/PageMeta.svelte';
+	import Turnstile from '#lib/components/Turnstile.svelte';
+	import { siteOfPrintId } from '#lib/print-id.js';
 	import { CONTACT_MAX, DETAILS_MAX, REMOVAL_REASONS } from '#lib/reports.js';
 	import { plainText } from '#lib/richtext.js';
 
 	let { data, form } = $props();
 
 	const title = $derived(plainText(data.title));
-	let widget: HTMLDivElement | undefined = $state();
-
-	type Turnstile = { render: (el: HTMLElement, options: { sitekey: string; theme: 'dark' }) => string };
-	const SCRIPT = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-
-	// Turnstile's widget, rendered explicitly so it also appears after a client-side navigation. It puts
-	// its token in a hidden `cf-turnstile-response` field inside the form. A plain POST (no enhance)
-	// reloads the page, which renders a fresh widget for another try.
-	onMount(() => {
-		const siteKey = data.siteKey;
-		if (!siteKey || !widget || form?.sent) return;
-		const el = widget;
-		const render = () => (window as unknown as { turnstile: Turnstile }).turnstile.render(el, { sitekey: siteKey, theme: 'dark' });
-		if ('turnstile' in window) return void render();
-		const script = document.createElement('script');
-		script.src = SCRIPT;
-		script.async = true;
-		script.onload = render;
-		document.head.appendChild(script);
-	});
+	// Copied from factorioprints.com, which keeps its own copy (uploads are only here).
+	const mirrored = $derived(siteOfPrintId(data.id) === 'factorioprints');
 </script>
 
 <PageMeta title="Request removal: {title} · Blueprint Atlas" description="Ask for {title} to be removed from Blueprint Atlas." noindex />
@@ -45,8 +28,8 @@
 		<div class="space-y-2 rounded-lg border border-emerald-800 bg-emerald-950/40 p-4 text-sm text-stone-200">
 			<p class="font-medium text-emerald-300">Thanks, we have your request.</p>
 			<p class="text-stone-400">
-				We’ll look at it soon. Blueprint Atlas copies prints from factorioprints.com, which keeps its own copy: to remove it there too, ask on
-				that site.
+				We’ll look at it soon.{#if mirrored}
+					Blueprint Atlas copies prints from factorioprints.com, which keeps its own copy: to remove it there too, ask on that site.{/if}
 			</p>
 		</div>
 	{:else if !data.siteKey}
@@ -87,7 +70,7 @@
 				/>
 			</label>
 
-			<div bind:this={widget} class="min-h-[65px]"></div>
+			<Turnstile siteKey={data.siteKey} />
 
 			{#if form?.error}<p class="text-sm text-red-400" role="alert">{form.error}</p>{/if}
 

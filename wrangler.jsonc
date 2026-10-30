@@ -40,12 +40,18 @@
 	],
 	// Requests per visitor (IP, or IPv6 /64) per 60 s, counted per Cloudflare location
 	// (src/lib/server/rate-limit.ts). Every request counts towards PAGE_LIMIT; searches towards
-	// SEARCH_LIMIT too. Periods can only be 10 or 60 s. namespace_id must be unique in the account.
+	// SEARCH_LIMIT too, sign-in steps and account changes towards AUTH_LIMIT, removal requests towards
+	// REPORT_LIMIT, uploads towards UPLOAD_LIMIT. Periods can only be 10 or 60 s. namespace_id must be
+	// unique in the account.
 	"ratelimits": [
 		{ "name": "PAGE_LIMIT", "namespace_id": "4101", "simple": { "limit": 150, "period": 60 } },
 		{ "name": "SEARCH_LIMIT", "namespace_id": "4102", "simple": { "limit": 40, "period": 60 } },
+		{ "name": "AUTH_LIMIT", "namespace_id": "4103", "simple": { "limit": 10, "period": 60 } },
 		// Removal requests sent (POST /prints/<id>/remove).
-		{ "name": "REPORT_LIMIT", "namespace_id": "4104", "simple": { "limit": 5, "period": 60 } }
+		{ "name": "REPORT_LIMIT", "namespace_id": "4104", "simple": { "limit": 5, "period": 60 } },
+		// Uploads and edits of them sent (POST /upload, POST /uploads/<id>). Per-account daily caps are in
+		// src/lib/server/uploads/uploads.ts.
+		{ "name": "UPLOAD_LIMIT", "namespace_id": "4105", "simple": { "limit": 10, "period": 60 } }
 	],
 	// One data point per print page view (src/routes/prints/[id]/view). Locally the writes go nowhere;
 	// alchemy.run.ts binds each stage's own dataset (viewsDataset in infra/databases.ts).
@@ -75,6 +81,12 @@
 		"TURNSTILE_SITE_KEY": "1x00000000000000000000AA",
 		// The zone whose edge cache a takedown purges (the renders and screenshots domains), with
 		// CACHE_PURGE_TOKEN as a secret; alchemy.run.ts sets it. Empty: the admin page lists what to purge.
-		"CACHE_ZONE_ID": ""
+		"CACHE_ZONE_ID": "",
+		// Sign-in apps' client ids (src/lib/server/auth/providers.ts; docs/deploy.md, "Sign-in"). Empty here;
+		// alchemy.run.ts sets them from .env, with each app's secret (<PROVIDER>_CLIENT_SECRET) as a Worker
+		// secret. Locally both come from .env, like the other values there. A provider without both is off.
+		"DISCORD_CLIENT_ID": "",
+		"GITHUB_CLIENT_ID": "",
+		"GOOGLE_CLIENT_ID": ""
 	}
 }

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import './layout.css';
+	import AccountLink from '#lib/components/AccountLink.svelte';
 	import RateToggle from '#lib/components/RateToggle.svelte';
 	import { readRateUnit } from '#lib/rate-unit.svelte.js';
 	import type { LayoutProps } from './$types';
@@ -19,6 +20,7 @@
 		<div class="mx-auto flex max-w-7xl items-center gap-6 px-4 py-3">
 			<a href="/" class="text-lg font-semibold tracking-tight text-amber-400">Blueprint Atlas</a>
 			<div class="ml-auto"><RateToggle /></div>
+			<AccountLink />
 			<a
 				href="https://github.com/jsmenzies/factorio-atlas"
 				class="text-stone-400 hover:text-amber-300"

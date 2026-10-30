@@ -10,7 +10,7 @@
  * totals page views into D1 daily (with ANALYTICS_API_TOKEN). Prod also owns the one sprites
  * bucket. A staging stage can be added to STAGES; it gets the same resources and links to prod's
  * sprites bucket.
- * Binding names (DB, RAW, RENDERS, SPRITES, SCREENSHOTS, VIEWS), the rate limits (PAGE_LIMIT, SEARCH_LIMIT), vars,
+ * Binding names (DB, RAW, RENDERS, SPRITES, SCREENSHOTS, VIEWS), the rate limits (PAGE_LIMIT, SEARCH_LIMIT, AUTH_LIMIT, UPLOAD_LIMIT), vars,
  * compatibility date and flags come from wrangler.jsonc,
  * which stays the config for local tooling (`vite dev`, `wrangler d1 --local`, `wrangler types`,
  * scripts/ingest.ts), so local and deployed Workers can't drift apart. Alchemy adds ASSETS.
@@ -44,7 +44,7 @@ const local: LocalConfig = unstable_readConfig({ config: 'wrangler.jsonc' }, { h
 const expected = {
 	d1: ['DB'],
 	r2: ['RAW', 'RENDERS', 'SPRITES', 'SCREENSHOTS'],
-	ratelimits: ['PAGE_LIMIT', 'SEARCH_LIMIT', 'REPORT_LIMIT'],
+	ratelimits: ['PAGE_LIMIT', 'SEARCH_LIMIT', 'AUTH_LIMIT', 'REPORT_LIMIT', 'UPLOAD_LIMIT'],
 	analytics: ['VIEWS']
 };
 const actual = {
@@ -267,8 +267,8 @@ export default Alchemy.Stack(
 			);
 		}
 
-		// Removal requests (docs/deploy.md, "Removal requests"): Turnstile on the form needs
-		// TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY (without them the form is off, never left unguarded);
+		// Removal requests and uploads (docs/deploy.md, "Removal requests"): Turnstile on their forms needs
+		// TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY (without them the forms are off, never left unguarded);
 		// a takedown purges the renders and screenshots domains' edge cache with CACHE_PURGE_TOKEN (Zone →
 		// Cache Purge on that zone; without it the admin page lists what to purge by hand).
 		const turnstileSiteKey = yield* optional('TURNSTILE_SITE_KEY');
@@ -276,7 +276,7 @@ export default Alchemy.Stack(
 		const turnstile = turnstileSiteKey !== undefined && turnstileSecret !== undefined;
 		if (!turnstile) {
 			yield* Effect.logWarning(
-				`removal requests are off on ${stage}: they need TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY (docs/deploy.md, "Removal requests")`
+				`removal requests and uploads are off on ${stage}: they need TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY (docs/deploy.md, "Removal requests")`
 			);
 		}
 		const purgeToken = Option.getOrUndefined(yield* Config.option(Config.Redacted('CACHE_PURGE_TOKEN')));
@@ -284,6 +284,23 @@ export default Alchemy.Stack(
 			yield* Effect.logWarning(
 				`takedowns won't purge the edge cache on ${stage}: it needs CACHE_PURGE_TOKEN (docs/deploy.md, "Removal requests")`
 			);
+		}
+
+		// Sign-in (docs/deploy.md, "Sign-in"; src/lib/server/auth/providers.ts): each provider's app client id and
+		// secret, the secret bound as a Worker secret. A provider missing either is off; with none, nobody can
+		// sign in. Each app's redirect URL is https://<SITE_DOMAIN_<STAGE>>/auth/<provider>/callback.
+		const signIn: Record<string, unknown> = {};
+		for (const provider of ['DISCORD', 'GITHUB', 'GOOGLE']) {
+			const id = yield* optional(`${provider}_CLIENT_ID`);
+			const secret = Option.getOrUndefined(yield* Config.option(Config.Redacted(`${provider}_CLIENT_SECRET`)));
+			if (id === undefined || secret === undefined) {
+				yield* Effect.logWarning(
+					`sign-in with ${provider.toLowerCase()} is off on ${stage}: it needs ${provider}_CLIENT_ID and ${provider}_CLIENT_SECRET`
+				);
+				continue;
+			}
+			signIn[`${provider}_CLIENT_ID`] = id;
+			signIn[`${provider}_CLIENT_SECRET`] = secret;
 		}
 
 		const worker = yield* Cloudflare.Worker('Site', {
@@ -318,7 +335,8 @@ export default Alchemy.Stack(
 				TURNSTILE_SITE_KEY: turnstile ? turnstileSiteKey : '',
 				...(turnstile ? { TURNSTILE_SECRET_KEY: turnstileSecret } : {}),
 				CACHE_ZONE_ID: purgeToken !== undefined && cacheZoneId !== undefined ? cacheZoneId : '',
-				...(purgeToken !== undefined && cacheZoneId !== undefined ? { CACHE_PURGE_TOKEN: purgeToken } : {})
+				...(purgeToken !== undefined && cacheZoneId !== undefined ? { CACHE_PURGE_TOKEN: purgeToken } : {}),
+				...signIn
 			}
 		});
 

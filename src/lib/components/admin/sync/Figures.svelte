@@ -113,18 +113,24 @@
 	<section class={card}>
 		<p class={label}>Sources</p>
 		{#if plan && plan.sources.length}
-			{#each plan.sources as source (source.site)}
-				<p class="text-2xl font-semibold text-stone-100"><code>{shortCommit(source.from.id)}</code></p>
-				<p class="text-xs text-stone-500">{source.site}, from {when(source.from.date, now, timeZone)}</p>
-				<dl class="mt-2 space-y-0.5">
-					<div class={row}><dt class="text-stone-500">Latest</dt><dd><code>{shortCommit(source.to.id)}</code></dd></div>
-					<div class={row}>
-						<dt class="text-stone-500">Waiting</dt>
-						<dd class="tabular-nums {source.blocked ? 'text-rose-300' : source.added || source.edited ? 'text-amber-200' : 'text-emerald-300'}">
-							{source.blocked ? 'held back' : !sourceMoved(source) ? 'nothing' : `${int(source.added)} new, ${int(source.edited)} edited`}
-						</dd>
-					</div>
-				</dl>
+			{#each plan.sources as source, i (source.site)}
+				{#if source.error || source.position}
+					<!-- A source whose cursor isn't a commit (uploads): what waits, in its own words. -->
+					<p class="text-2xl font-semibold text-stone-100 {i ? 'mt-3' : ''}">{source.error ? '?' : int(source.added)}</p>
+					<p class="text-xs text-stone-500">{source.site} waiting · {source.error ? `couldn’t check: ${source.error}` : source.position}</p>
+				{:else}
+					<p class="text-2xl font-semibold text-stone-100"><code>{shortCommit(source.from.id)}</code></p>
+					<p class="text-xs text-stone-500">{source.site}, from {when(source.from.date, now, timeZone)}</p>
+					<dl class="mt-2 space-y-0.5">
+						<div class={row}><dt class="text-stone-500">Latest</dt><dd><code>{shortCommit(source.to.id)}</code></dd></div>
+						<div class={row}>
+							<dt class="text-stone-500">Waiting</dt>
+							<dd class="tabular-nums {source.blocked ? 'text-rose-300' : source.added || source.edited ? 'text-amber-200' : 'text-emerald-300'}">
+								{source.blocked ? 'held back' : !sourceMoved(source) ? 'nothing' : `${int(source.added)} new, ${int(source.edited)} edited`}
+							</dd>
+						</div>
+					</dl>
+				{/if}
 			{/each}
 			<p class="mt-1 text-xs text-stone-500">Checked {ago(now - plan.checkedAt)}</p>
 		{:else}

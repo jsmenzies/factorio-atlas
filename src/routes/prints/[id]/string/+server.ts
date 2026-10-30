@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { loadPageString, loadString, takenDown } from '#lib/server/print-pages.js';
+import { goneReason, loadPageString, loadString } from '#lib/server/print-pages.js';
 import type { RequestHandler } from './$types';
 
 /**
@@ -10,12 +10,13 @@ export const GET: RequestHandler = async ({ params, url }) => {
 	const path = url.searchParams.get('page');
 	// Not for search engines (robots.txt disallows it too).
 	const headers = { 'cache-control': 'public, max-age=300', 'x-robots-tag': 'noindex' };
-	// A print taken down on request answers 410, whatever R2 still holds (print-pages.ts, loadPrintDoc).
-	const [body, removed] = await Promise.all([
+	// A print taken down on request, or an upload its owner deleted, answers 410, whatever R2 still holds
+	// (print-pages.ts, loadPrintDoc).
+	const [body, gone] = await Promise.all([
 		path === null || path === '' ? loadString(params.id) : loadPageString(params.id, path),
-		takenDown(params.id)
+		goneReason(params.id)
 	]);
-	if (removed) error(410, 'Removed on request');
+	if (gone) error(410, gone);
 	if (body === null) error(404, path ? 'No such page' : 'Not in raw store');
 	return new Response(body, { headers });
 };

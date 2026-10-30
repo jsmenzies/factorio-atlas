@@ -5,7 +5,9 @@
 	 * What the site collects and keeps, in plain words. Static: no load, no cookies or locals, so it is safe
 	 * to cache. Keep it in step with the code: page views (lib/server/views.ts), browser storage (app.html,
 	 * lib/rate-unit.svelte.ts, SearchBox, the print page's view fetch), screenshots (lib/screenshots.ts),
-	 * removal requests (lib/reports.ts, lib/server/turnstile.ts). Change the date when the text changes.
+	 * removal requests (lib/reports.ts, lib/server/turnstile.ts), accounts (lib/server/auth/: providers'
+	 * scopes, cookies, sessions, name holds) and uploads (lib/server/uploads/). Change the date when the
+	 * text changes.
 	 */
 	const UPDATED = '30 October 2026';
 	const REPO = 'https://github.com/jsmenzies/factorio-atlas';
@@ -29,7 +31,10 @@
 			Blueprint Atlas is a free, non-commercial hobby project for searching Factorio blueprints, run by one person. It is not affiliated
 			with Wube Software or factorioprints.com. Its <a class={link} href={REPO}>source code is public</a>, so you can check what it does.
 		</p>
-		<p>There are no ads, no accounts and no advertising or tracking cookies. This page says what the site does collect, and why.</p>
+		<p>
+			There are no ads and no advertising or tracking cookies. You can browse without an account; you need one only to upload blueprints.
+			This page says what the site does collect, and why.
+		</p>
 	</section>
 
 	<section class="space-y-3">
@@ -69,8 +74,9 @@
 	<section class="space-y-3">
 		<h2 class="border-b border-stone-800 pb-2 text-lg font-semibold text-stone-100">In your browser</h2>
 		<p>
-			The site itself sets no cookies; the only one you may get is Cloudflare’s bot check above. It keeps three small things in your
-			browser’s own storage, which are never sent to the site:
+			Unless you sign in, the site itself sets no cookies; the only one you may get is Cloudflare’s bot check above. Signing in adds the
+			cookies described under “Accounts and uploads”. The site keeps three small things in your browser’s own storage, which are never sent
+			to the site:
 		</p>
 		<ul class="list-disc space-y-1 pl-5">
 			<li><code class="text-stone-100">atlas.rate</code> (local storage): whether you show rates per second or per minute.</li>
@@ -113,15 +119,51 @@
 		</p>
 	</section>
 
-	<!--
-		Accounts and uploads: a section goes here once sign-in is live (sign-in with Discord, GitHub or Google
-		stores only the provider's account id and a display name, no email or password; a session cookie).
-		Not written yet: the feature isn't deployed. Update "no accounts" and "sets no cookies" above with it.
-	-->
+	<section class="space-y-3">
+		<h2 class="border-b border-stone-800 pb-2 text-lg font-semibold text-stone-100">Accounts and uploads</h2>
+		<p>
+			<strong class="font-medium text-stone-100">Signing in.</strong> You sign in with Discord, GitHub or Google; the site has no passwords
+			of its own. That service tells the site only your account’s id there, and for Discord and GitHub your user name, which the site
+			suggests as your display name. Google’s accounts get a made-up name such as “Engineer 4821” instead. The site never asks for or
+			stores your email address, and keeps no access to your account at that service. The service itself knows that you signed in to
+			Blueprint Atlas, under its own privacy policy.
+		</p>
+		<p>
+			<strong class="font-medium text-stone-100">What the site keeps.</strong> Your account’s id at the service you used, your display name
+			(which you can change) and when the account was made. Your display name is shown with every blueprint you upload. When you give up a
+			name, by changing it or deleting your account, the site keeps it with your account’s id for 30 days so that nobody else can take it
+			straight away.
+		</p>
+		<p>
+			<strong class="font-medium text-stone-100">Cookies.</strong> Signing in sets
+			<code class="text-stone-100">__Host-atlas_session</code>, which keeps you signed in for 30 days, renewed when you come back. It holds a random
+			key; the site stores only a scrambled form of it (a hash), with your account and when it expires. Beside it,
+			<code class="text-stone-100">atlas_signed_in</code> holds nothing but “1”, so pages can show “Account” rather than “Sign in” before they
+			have asked who you are. While you sign in, <code class="text-stone-100">__Host-atlas_oauth</code> remembers the sign-in for up to
+			ten minutes, then goes. Signing out deletes all of them.
+		</p>
+		<p>
+			<strong class="font-medium text-stone-100">Uploads.</strong> A blueprint you upload (its string, title and description) is shown to
+			everyone with your display name, as soon as you send it. A screenshot you add is kept private until a person has checked it, and is
+			shown only if they approve it. The site counts how many uploads, edits and screenshots each account sends per day, to keep a daily
+			limit, and deletes those counts after a day or two. The upload form uses Cloudflare Turnstile, as removal requests do.
+		</p>
+		<p>
+			<strong class="font-medium text-stone-100">Deleting.</strong> You can delete any of your uploads, or your whole account, from your
+			account page. Deleting an upload deletes its blueprint, screenshot and renders here, unless the same blueprint is also on another
+			site the Atlas copies from, in which case only your copy and your name go. Deleting your account deletes all your uploads in the same
+			way, your sign-ins, your sessions and your daily counts; only the 30-day hold on your display name stays until it ends. A screenshot
+			another upload also uses stays with that upload, without your account. With many uploads, deleting them takes a few steps: keep the
+			page open until it signs you out, or sign in again later to let it finish.
+		</p>
+	</section>
 
 	<section class="space-y-3">
 		<h2 class="border-b border-stone-800 pb-2 text-lg font-semibold text-stone-100">Seeing, correcting or deleting your information</h2>
-		<p>Anyone can ask to see, correct or delete what the site holds about them.</p>
+		<p>
+			Anyone can ask to see, correct or delete what the site holds about them. If you have an account, your account page shows your display
+			name and uploads, and lets you change or delete them.
+		</p>
 		<ul class="list-disc space-y-1 pl-5">
 			<li>
 				About a print or its screenshot, including the author name shown on it: use “Request removal” on that print’s page, and say what you

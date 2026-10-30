@@ -33,10 +33,15 @@ export const updateState = (run: SyncRun | null, plan: SyncPlan | null, now: num
 /** The mirror's plan (the first source today), for the lines that name its commits. */
 export const mirrorPlan = (plan: SyncPlan | null) => plan?.sources[0] ?? null;
 
-/** A source's line in the Overview's list: held back, behind (and by how much), or up to date. */
+/**
+ * A source's line in the Overview's list: held back, behind (and by how much), or up to date. A source
+ * whose cursor isn't a commit (uploads) says what waits in its own words (`stateText`).
+ */
 export const sourceState = (p: SourcePlan): { text: string; tone: 'ok' | 'warn' | 'bad' } => {
+	if (p.error) return { text: 'couldn’t check', tone: 'bad' };
 	if (p.blocked) return { text: 'held back', tone: 'bad' };
 	if (!sourceMoved(p)) return { text: 'up to date', tone: 'ok' };
+	if (p.stateText) return { text: p.stateText, tone: 'warn' };
 	const behind = p.behind ? `${int(p.behind)} commit${p.behind === 1 ? '' : 's'} behind` : 'behind';
 	return { text: `${behind} · ${int(p.added)} new, ${int(p.edited)} edited`, tone: 'warn' };
 };
@@ -76,22 +81,29 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 	const held = heldBack(plan);
 	const prints = renderWork(plan, union.left, settings);
 	const capped = settings.perUpdate !== null && prints === settings.perUpdate;
+	// Uploads waiting are admitted in the fetch step (their own source), never by the ingest step's backfill.
+	const fetches = [
+		...(t.backfill
+			? [`+${int(t.added)} new, ${int(t.edited)} edited, ${int(t.favourites)} only favourite counts changed, ${int(t.deleted)} deleted`]
+			: []),
+		...(plan?.sources ?? [])
+			.filter((p) => p.ingestsItself && sourceMoved(p) && !p.blocked)
+			.map((p) => `${p.site}: ${p.stateText ?? 'something waiting'}`)
+	];
 	return [
 		{ id: 'removals', text: "sweep this machine's copies of prints removed on the site (renders, thumbnails, screenshots)" },
 		{
 			id: 'fetch',
 			text:
-				(moved
-					? `+${int(t.added)} new, ${int(t.edited)} edited, ${int(t.favourites)} only favourite counts changed, ${int(t.deleted)} deleted`
-					: 'nothing new to fetch') + (held.length ? `; ${held.map((p) => p.site).join(', ')} held back` : ''),
+				(moved ? fetches.join('; ') : 'nothing new to fetch') + (held.length ? `; ${held.map((p) => p.site).join(', ')} held back` : ''),
 			idle: !moved
 		},
 		{
 			id: 'ingest',
-			text: moved
+			text: t.backfill
 				? `analyse ${int(t.added + t.edited)} new and edited prints; ${int(t.favourites)} favourite counts are one row each`
 				: 'skipped when nothing changed since the last update that ran it',
-			idle: !moved
+			idle: !t.backfill
 		},
 		settings.authors
 			? { id: 'authors', text: `their records first, then Firebase for up to ${int(settings.authorLimit)}` }
@@ -100,7 +112,7 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 			? {
 					id: 'screenshots',
 					text:
-						(moved ? `copy up to ${int(t.added)} new screenshots from Imgur, upload them` : 'copy any new screenshots from Imgur') +
+						(t.backfill ? `copy up to ${int(t.added)} new screenshots from Imgur, upload them` : 'copy any new screenshots from Imgur') +
 						(settings.imgurRecheck === 'weekly' ? '; recheck Imgur for deletions if a week has passed' : '')
 				}
 			: { id: 'screenshots', text: 'off in the settings', idle: true },

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { ScopeFigures } from '#lib/server/admin/render-scope.js';
 import { DEFAULT_SETTINGS, freshSteps, type SourcePlan, type SyncPlan, type SyncRun } from '#lib/sync.js';
-import { previewSteps, renderWork, updateState } from './view';
+import { previewSteps, renderWork, sourceState, updateState } from './view';
 
 const source = (over: Partial<SourcePlan> = {}): SourcePlan => ({
 	site: 'factorioprints',
@@ -77,5 +77,41 @@ describe('previewSteps', () => {
 		expect(previewSteps(plan({ blocked: 'too much' }), union(0), DEFAULT_SETTINGS)[1].text).toBe(
 			'nothing new to fetch; factorioprints held back'
 		);
+	});
+});
+
+describe('a source whose cursor isn’t a commit (uploads)', () => {
+	const uploads = (added: number): SourcePlan =>
+		source({
+			site: 'uploads',
+			kind: 'uploads on the site',
+			ingestsItself: true,
+			from: { id: 'none', date: 0 },
+			to: added ? { id: `${added}-abc`, date: 0 } : { id: 'none', date: 0 },
+			added,
+			edited: 0,
+			favourites: 0,
+			deleted: [],
+			modern: 0,
+			position: added ? `${added} waiting, oldest 30 Oct, 11:02` : 'none waiting',
+			stateText: added ? `${added} waiting` : undefined
+		});
+	test('says what waits in its own words; the mirror reads as before', () => {
+		expect(sourceState(uploads(3))).toEqual({ text: '3 waiting', tone: 'warn' });
+		expect(sourceState(uploads(0))).toEqual({ text: 'up to date', tone: 'ok' });
+		expect(sourceState(source({ behind: 2 }))).toEqual({ text: '2 commits behind · 46 new, 4 edited', tone: 'warn' });
+		expect(sourceState({ ...uploads(0), error: 'the prod D1 database has no uploads table' })).toEqual({
+			text: 'couldn’t check',
+			tone: 'bad'
+		});
+	});
+	test('waiting uploads are fetch work, never prints for the ingest step to analyse', () => {
+		const steps = previewSteps(plan(level, [uploads(3)]), union(0), DEFAULT_SETTINGS);
+		expect(steps[1]).toEqual({ id: 'fetch', text: 'uploads: 3 waiting', idle: false });
+		expect(steps[2].idle).toBe(true);
+		expect(steps[4].text).toBe('copy any new screenshots from Imgur');
+		const both = previewSteps(plan({}, [uploads(3)]), union(0), DEFAULT_SETTINGS);
+		expect(both[1].text).toBe('+46 new, 4 edited, 212 only favourite counts changed, 1 deleted; uploads: 3 waiting');
+		expect(both[2].text).toContain('analyse 50 new and edited prints');
 	});
 });

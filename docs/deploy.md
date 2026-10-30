@@ -254,7 +254,9 @@ Two layers keep one visitor from running up the bill:
 - **In the Worker** (`src/lib/server/rate-limit.ts`, run from `hooks.server.ts`): the Workers Rate
   Limiting bindings declared in `wrangler.jsonc` (`ratelimits`). Every request counts towards
   `PAGE_LIMIT` (150 per 60 s) and every search, the home page with a query string, towards
-  `SEARCH_LIMIT` (40 per 60 s) as well. A visitor is the client's IPv4 address or IPv6 /64, and
+  `SEARCH_LIMIT` (40 per 60 s) as well, and every sign-in step (`/auth/…`) and account change
+  towards `AUTH_LIMIT` (10 per 60 s), and every upload, edit or delete of one towards `UPLOAD_LIMIT`
+  (10 per 60 s). A visitor is the client's IPv4 address or IPv6 /64, and
   counts are kept per Cloudflare location and are approximate. Over a limit the answer is a `429`
   with `Retry-After: 60`. `/admin` is exempt, and `bun run dev` has no limits (`bun run preview`
   does). Periods can only be 10 or 60 s; `namespace_id` must be unique in the account.
@@ -655,6 +657,87 @@ hostname `factorio-prints-<stage>.<account-subdomain>.workers.dev`, path `admin*
 policy with an **Emails** rule for your address, then pass its **Application Audience (AUD)
 Tag** to the Worker as `ACCESS_AUD` in `alchemy.run.ts`. Don't use the Worker's own "Enable
 Cloudflare Access" toggle: it protects the whole Worker, not just /admin.
+
+## Sign-in
+
+People sign in with Discord, GitHub or Google (`src/lib/server/auth/`, `src/routes/auth/`): an OAuth
+authorization-code flow with PKCE, run by the Worker. The site keeps the provider's user id and a
+display name in D1 (`users`, `user_identities`, migration 0023), never an email address, password or
+provider token. A session is a random token in an HttpOnly `__Host-` cookie, stored only as its
+SHA-256 (`sessions`), for 30 days and extended when used; an account keeps at most 20, and signing in
+again ends the browser's previous one. The daily cron Worker deletes expired sessions. Cached pages
+never read the session (a cached route that asks throws): the header asks `/me` for the name, and a
+readable `atlas_signed_in` cookie with no secret in it lets the page show "Account" before it has the
+answer.
+
+Each provider needs an app, its client id and secret in `.env`, and the redirect URL
+`https://example.com/auth/<provider>/callback`. A provider without both values is off and its
+button doesn't show; with none, nobody can sign in. The deploy binds each secret as a Worker
+secret, and warns about each provider that's off.
+
+- **Discord:** <https://discord.com/developers/applications> → New Application → OAuth2: copy the
+  Client ID and reset the Client Secret, add the redirect. Scope used: `identify`. A new account is
+  named after the Discord username.
+- **GitHub:** Settings → Developer settings → OAuth Apps → New OAuth App: homepage
+  `https://example.com`, callback URL as above; generate a client secret. No scopes (public
+  profile). A new account is named after the GitHub login. An OAuth app takes one callback URL, so
+  local development needs a second app with the local callback.
+- **Google:** Google Cloud console → APIs & Services → OAuth consent screen (External; app name,
+  support email, the site's domain), then Credentials → Create credentials → OAuth client ID → Web
+  application, with the redirect as an authorised redirect URI. Scope used: `openid` only (the user
+  id), which needs no verification by Google. Google names are often people's real names, so a new
+  account is named "Engineer" and four random digits until its owner changes it.
+
+All three get a PKCE challenge; GitHub and Discord accepting it hasn't been tried against the real
+services yet, so check a first sign-in with each after setting the apps up.
+
+Locally (`bun run dev`), `.env` is read too; register apps with
+`http://127.0.0.1:5173/auth/<provider>/callback`, or use **Test account (vite dev only)** on the
+sign-in page (`/auth/dev?as=<name>`), which is a 404 in every build.
+
+Account names use only letters A–Z, digits, spaces, dots, dashes and underscores, start with a letter
+or digit, and are unique ignoring case. They can't be a factorioprints author's name (compared after
+stripping the author's name to the same characters), and a name given up by a rename or a deleted
+account is held for 30 days, during which only its old account can take it back. To ban an account:
+`UPDATE users SET banned_at = <unix ms>, ban_reason = '…' WHERE id = '…'`; its sessions stop at once
+and it can't sign in again.
+
+## Uploads
+
+A signed-in account uploads a blueprint at `/upload` (string, title, Markdown description, optional
+screenshot) and edits or deletes it at `/uploads/<id>` (linked from `/account`; the print page shows
+its owner an Edit link from `/me`, never from the cached page). An upload is a print of the source
+site `upload`, id `up-` and 10 random base62 characters (`src/lib/server/uploads/`, migration 0024).
+Its record is kept only in the RAW bucket at `upload/<10 characters>.json`, as the pipeline's own text
+for it (the same text the ingest archives there). It goes through the same gate and ingest as every
+other source (`admitRecord`, `ingestRecord`), with the upload's own row in the same D1 batch as the
+print's.
+
+- New uploads need Turnstile (`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`); every upload, edit and
+  delete counts towards `UPLOAD_LIMIT` (10 per 60 s), and each account may upload 20 blueprints, save
+  50 edits and add 10 screenshots per UTC day (`upload_quota`: reserved in one statement before
+  anything is written, given back when the upload is refused, never reset by deleting an upload).
+  Strings are at most 12 MB, screenshots 8 MB (PNG, JPEG, WebP or GIF, checked from the file's bytes).
+- An upload goes on the site at once, unless it is over the Worker's size cap (512 KB of string or
+  150,000 entities and tiles): then it waits as **processing** (`uploads.state`) for the next update,
+  at most 5 per account. The update's fetch step admits it (`bun run uploads --stage <stage>`, the
+  `uploads` source); one that fails 3 times is marked **failed**, and its owner sees why. An exact copy
+  of a print already on the site is refused with a link to it. Every upload or edit that goes on the
+  site bumps the page cache.
+- A new display name goes onto the account's uploads (record, document, search row) as the account
+  page saves it, for up to 10 s; the update's `uploads` source does any left. Until then the old name
+  stays taken.
+- Screenshots stay private in RAW (`upload-images/<16 hex>.<ext>`) until an admin approves them.
+- Deleting an upload removes its source; the print goes unless another site also has it (then it
+  stays at its URL, showing that site's record). Deleting an account deletes its uploads first, about
+  15 s of them per request (each is about 20 D1 and R2 calls): the account page asks again until none
+  are left, then deletes the account. Until then the account can't upload, edit or rename, and its
+  owner, signing in again, lands on the page that carries on. If the next source of a print can't be
+  re-ingested in the Worker when an upload goes, the print is purged and `meta.ingest_due` makes the
+  next update run its ingest step, which admits that source again.
+- A takedown of an upload's print (an approved removal request) also deletes its upload row and its
+  pending screenshot, and blocks the content like any other takedown; the account's daily counts
+  stay.
 
 ## Monitoring
 

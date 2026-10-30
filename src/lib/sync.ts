@@ -167,11 +167,21 @@ export interface SourceRun {
 	deleted?: string[];
 	/** Why the fetch held it back, if it did. */
 	blocked?: string;
+	/** How the source's records came out, for a source whose fetch handles them itself (uploads: admitted, duplicate, …, left). */
+	counts?: Record<string, number>;
+	/** Its fetch ingests its records itself (uploads, through the gate): nothing for the backfill, so not in `sourceDigest`. */
+	ingestsItself?: boolean;
+	/** The source's `meta.ingest_due` (SourcePlan.ingestDue). */
+	ingestDue?: string;
 }
 
-/** A fingerprint of what the sources held after the fetch: the ingest step is skipped when it and the versions match. */
+/**
+ * A fingerprint of what the backfill's sources held after the fetch: the ingest step is skipped when it
+ * and the versions match. Sources that ingest their own records in the fetch (`ingestsItself`) are left out.
+ */
 export const sourceDigest = (sources: readonly SourceRun[]) =>
 	sources
+		.filter((s) => !s.ingestsItself)
 		.map((s) => `${s.site}@${s.to?.id ?? '?'}`)
 		.sort()
 		.join(' ');
@@ -232,6 +242,22 @@ export interface SourcePlan {
 	modern: number;
 	/** Why the fetch would hold this source back (too many changes at once, a rewritten history), if it would. */
 	blocked: string | null;
+	/**
+	 * Its fetch ingests its records itself (uploads, admitted through the gate): `added` counts records waiting
+	 * for that, not prints for the backfill, which neither the ingest preview nor the ingest key counts.
+	 */
+	ingestsItself?: boolean;
+	/** The Overview's line for where the source stands, when its cursors aren't commits ("3 waiting, oldest …"). */
+	position?: string;
+	/** The Overview's state for it when it has something new ("3 waiting"), in place of commits behind. */
+	stateText?: string;
+	/**
+	 * `meta.ingest_due` on the stage (uploads/gate.ts): set when a hand-over had to purge a print another
+	 * source still has. Part of the ingest key, so the next update runs the backfill that admits it again.
+	 */
+	ingestDue?: string | null;
+	/** Why the source couldn't be checked (`sync --plan` goes on with the others); the update's fetch tries it again. */
+	error?: string;
 }
 
 /** What an update would do now, from the last check of every source (`bun run sync --plan`). */
@@ -246,14 +272,22 @@ export const sourceMoved = (p: SourcePlan) => p.from.id !== p.to.id;
 /** The plan's counts over the sources that would be fetched (moved and not held back). */
 export const planTotals = (plan: SyncPlan | null) => {
 	const fetched = (plan?.sources ?? []).filter((p) => sourceMoved(p) && !p.blocked);
-	const sum = (f: (p: SourcePlan) => number) => fetched.reduce((n, p) => n + f(p), 0);
+	const backfilled = fetched.filter((p) => !p.ingestsItself);
+	const sum = (f: (p: SourcePlan) => number, of = backfilled) => of.reduce((n, p) => n + f(p), 0);
 	return {
 		moved: fetched.length > 0,
+		/** A source the backfill reads has something new: the ingest step has work. */
+		backfill: backfilled.length > 0,
 		added: sum((p) => p.added),
 		edited: sum((p) => p.edited),
 		favourites: sum((p) => p.favourites),
 		deleted: sum((p) => p.deleted.length),
-		modern: sum((p) => p.modern)
+		modern: sum((p) => p.modern),
+		/** Records waiting for a source that admits them itself (uploads). */
+		waiting: sum(
+			(p) => p.added,
+			fetched.filter((p) => p.ingestsItself)
+		)
 	};
 };
 
