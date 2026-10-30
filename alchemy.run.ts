@@ -303,6 +303,15 @@ export default Alchemy.Stack(
 			signIn[`${provider}_CLIENT_SECRET`] = secret;
 		}
 
+		// What a purge (src/lib/server/takedown.ts) needs, for the site Worker and the cron's deletions: the
+		// domains whose edge cache it purges, and the zone and token to purge with.
+		const purgeEnv = {
+			RENDERS_URL: rendersDomain === undefined ? '' : `https://${rendersDomain}`,
+			SCREENSHOTS_URL: screenshotsDomain === undefined ? '' : `https://${screenshotsDomain}`,
+			CACHE_ZONE_ID: purgeToken !== undefined && cacheZoneId !== undefined ? cacheZoneId : '',
+			...(purgeToken !== undefined && cacheZoneId !== undefined ? { CACHE_PURGE_TOKEN: purgeToken } : {})
+		};
+
 		const worker = yield* Cloudflare.Worker('Site', {
 			name,
 			// Built by `vite build` (adapter-cloudflare), then bundled by Alchemy as wrangler would.
@@ -326,24 +335,23 @@ export default Alchemy.Stack(
 				),
 				...vars,
 				SPRITES_URL: spritesDomain === undefined ? '' : `https://${spritesDomain}`,
-				RENDERS_URL: rendersDomain === undefined ? '' : `https://${rendersDomain}`,
-				SCREENSHOTS_URL: screenshotsDomain === undefined ? '' : `https://${screenshotsDomain}`,
+				...purgeEnv,
 				// Empty (in wrangler.jsonc) means /admin is a 404 on this stage.
 				ACCESS_TEAM_DOMAIN: admin ? (teamDomain ?? '') : '',
 				ACCESS_AUD: admin ? admin.aud : '',
 				// Never wrangler.jsonc's test key in a deployed stage.
 				TURNSTILE_SITE_KEY: turnstile ? turnstileSiteKey : '',
 				...(turnstile ? { TURNSTILE_SECRET_KEY: turnstileSecret } : {}),
-				CACHE_ZONE_ID: purgeToken !== undefined && cacheZoneId !== undefined ? cacheZoneId : '',
-				...(purgeToken !== undefined && cacheZoneId !== undefined ? { CACHE_PURGE_TOKEN: purgeToken } : {}),
 				...signIn
 			}
 		});
 
-		// The daily views rollup (src/cron/views.ts): its own Worker, since the site's adapter-cloudflare
-		// Worker has no scheduled handler. Reads the dataset through the Analytics Engine SQL API, so it
+		// The daily jobs (src/cron/views.ts): its own Worker, since the site's adapter-cloudflare Worker has
+		// no scheduled handler. The views rollup reads the dataset through the Analytics Engine SQL API, so it
 		// needs ANALYTICS_API_TOKEN (Account Analytics: Read; docs/deploy.md, "Page views"), bound as a
-		// secret. Unset, there is no cron and `bun run views:sync` does it by hand.
+		// secret. Unset, there is no cron and `bun run views:sync` does it by hand. It also finishes account
+		// deletions their owners left part-way, through the site's own gate and purge: the same buckets, vars,
+		// compatibility flags and purge token as the site Worker.
 		const analyticsToken = Option.getOrUndefined(yield* Config.option(Config.Redacted('ANALYTICS_API_TOKEN')));
 		if (analyticsToken === undefined) {
 			yield* Effect.logWarning(`the daily views rollup is off on ${stage}: it needs ANALYTICS_API_TOKEN (docs/deploy.md, "Page views")`);
@@ -352,11 +360,22 @@ export default Alchemy.Stack(
 			yield* Cloudflare.Worker('ViewsCron', {
 				name: `${name}-views-cron`,
 				main: './src/cron/views.ts',
-				compatibility: { date: local.compatibility_date },
+				compatibility: { date: local.compatibility_date, flags: local.compatibility_flags },
 				workersDev: { enabled: false, previewsEnabled: false },
 				// 04:17 UTC daily.
 				crons: ['17 4 * * *'],
-				env: { DB: db, ANALYTICS_API_TOKEN: analyticsToken, ACCOUNT_ID: accountId, VIEWS_DATASET: viewsDataset(stage as Stage) }
+				env: {
+					DB: db,
+					ANALYTICS_API_TOKEN: analyticsToken,
+					ACCOUNT_ID: accountId,
+					VIEWS_DATASET: viewsDataset(stage as Stage),
+					RAW: raw,
+					RENDERS: renders,
+					SCREENSHOTS: screenshots,
+					MIRROR_BASE_URL: vars.MIRROR_BASE_URL,
+					FIREBASE_BASE_URL: vars.FIREBASE_BASE_URL,
+					...purgeEnv
+				}
 			});
 		}
 

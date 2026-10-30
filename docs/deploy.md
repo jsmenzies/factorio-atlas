@@ -26,7 +26,7 @@ The stage gets:
 | Cache    | the zone's cache rules                |                                              | prod, with a sprites, renders or screenshots domain; see "Edge cache" |
 | Limits   | three Workers rate limits             | `PAGE_LIMIT`, `SEARCH_LIMIT`, `REPORT_LIMIT` | per visitor; see "Rate limits" and "Removal requests"                 |
 | Views    | `factorio_prints_<stage>_views`       | `VIEWS`                                      | Analytics Engine dataset; see "Page views"                            |
-| Worker   | `factorio-prints-<stage>-views-cron`  |                                              | daily views rollup into D1, with `ANALYTICS_API_TOKEN`                |
+| Worker   | `factorio-prints-<stage>-views-cron`  |                                              | daily jobs: views rollup (`ANALYTICS_API_TOKEN`), abandoned deletions |
 | WAF      | the zone's rate-limiting rules        |                                              | prod, with a site domain; see "Rate limits"                           |
 | Bots     | the zone's Bot Fight Mode             |                                              | prod, with a site domain; see "Rate limits"                           |
 
@@ -732,7 +732,10 @@ print's.
   stays at its URL, showing that site's record). Deleting an account deletes its uploads first, about
   15 s of them per request (each is about 20 D1 and R2 calls): the account page asks again until none
   are left, then deletes the account. Until then the account can't upload, edit or rename, and its
-  owner, signing in again, lands on the page that carries on. If the next source of a print can't be
+  owner, signing in again, lands on the page that carries on. A deletion its owner left part-way for
+  over an hour is finished by the daily cron Worker (`src/lib/server/uploads/abandoned.ts`), at most
+  200 uploads or 5 minutes a day, through the same path; so that Worker has the RAW, RENDERS and
+  SCREENSHOTS buckets and the purge token too. If the next source of a print can't be
   re-ingested in the Worker when an upload goes, the print is purged and `meta.ingest_due` makes the
   next update run its ingest step, which admits that source again.
 - A takedown of an upload's print (an approved removal request) also deletes its upload row and its

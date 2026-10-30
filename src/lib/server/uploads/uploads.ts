@@ -517,22 +517,33 @@ export const deleteUpload = async (deps: Pick<UploadDeps, 'db' | 'raw' | 'gate'>
  */
 export const ACCOUNT_DELETE_BUDGET_MS = 15_000;
 
+/** How long and how many uploads one call of deleteAccountUploads may spend. */
+export interface AccountDeleteOptions {
+	budgetMs?: number;
+	clock?: () => number;
+	/** At most this many uploads tried (deleted or failed), for a caller with a bound of its own (the cron). */
+	maxUploads?: number;
+}
+
 /**
- * An account's uploads, oldest first, for as long as `budgetMs` allows, before the account itself goes
- * (users.ts deleteAccount, once none are left). One that fails is left for the next call; the rest go on.
+ * An account's uploads, oldest first, for as long as `budgetMs` allows (and at most `maxUploads` of them),
+ * before the account itself goes (users.ts deleteAccount, once none are left). One that fails is left for
+ * the next call; the rest go on.
  */
 export const deleteAccountUploads = async (
 	deps: Pick<UploadDeps, 'db' | 'raw' | 'gate'>,
 	userId: string,
-	{ budgetMs = ACCOUNT_DELETE_BUDGET_MS, clock = Date.now }: { budgetMs?: number; clock?: () => number } = {}
+	{ budgetMs = ACCOUNT_DELETE_BUDGET_MS, clock = Date.now, maxUploads = Infinity }: AccountDeleteOptions = {}
 ) => {
 	const started = clock();
 	const ids = (
 		await deps.db.prepare(`SELECT print_id FROM uploads WHERE user_id = ? ORDER BY created_at`).bind(userId).all<{ print_id: string }>()
 	).results;
 	let deleted = 0;
+	let tried = 0;
 	for (const { print_id } of ids) {
-		if (clock() - started >= budgetMs) break;
+		if (clock() - started >= budgetMs || tried >= maxUploads) break;
+		tried++;
 		try {
 			if (await deleteUpload(deps, userId, print_id)) deleted++;
 		} catch (e) {
@@ -543,17 +554,13 @@ export const deleteAccountUploads = async (
 };
 
 /**
- * One step of deleting an account, the one path for its owner (routes/account) and an admin
- * (routes/admin/accounts/[id]): marks it deleting (from then on it can't upload, edit or rename; a step
+ * One step of deleting an account, the one path for its owner (routes/account), an admin
+ * (routes/admin/accounts/[id]) and the daily cron for deletions left part-way (abandoned.ts): marks it deleting (from then on it can't upload, edit or rename; a step
  * cut short leaves an account that can only go on deleting), deletes as many of its uploads as one request
  * has time for, then the account once none are left (users.ts deleteAccount). Not `done`: post again for
  * the rest (`left` is then at least 1).
  */
-export const deleteAccountStep = async (
-	deps: Pick<UploadDeps, 'db' | 'raw' | 'gate'>,
-	userId: string,
-	options?: { budgetMs?: number; clock?: () => number }
-) => {
+export const deleteAccountStep = async (deps: Pick<UploadDeps, 'db' | 'raw' | 'gate'>, userId: string, options?: AccountDeleteOptions) => {
 	await markDeleting(deps.db, userId);
 	const { deleted, left } = await deleteAccountUploads(deps, userId, options);
 	const done = left === 0 && (await deleteAccount(deps.db, userId));

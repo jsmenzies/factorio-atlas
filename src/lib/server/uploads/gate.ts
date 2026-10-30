@@ -10,14 +10,14 @@ import { Effect, Layer } from 'effect';
 import type { Site } from '#lib/print-id.js';
 import { admitRecord, WORKER_LIMITS, type Admission, type AdmitLimits, type Suggestion } from '../pipeline/admit';
 import { sourcesOf, type PrintSourceRow } from '../pipeline/identity-db';
-import { pipelineLayer } from '../pipeline/layers';
+import { pipelineLayer, type PipelineEnv } from '../pipeline/layers';
 import { ingestRecord, syncFold } from '../pipeline/pipeline';
 import { RawStoreR2 } from '../pipeline/raw-store';
 import { PrintRepositoryD1 } from '../pipeline/repository';
 import { sourceGone } from '../pipeline/source-gone';
 import { PrintSource } from '../pipeline/source';
 import { fromFactorioprints, fromPipelineText, rawKeyFor, type SourceRecord } from '../pipeline/source-record';
-import { purgePrintData } from '../takedown';
+import { purgePrintData, type TakedownEnv } from '../takedown';
 
 export type { SourceRecord, Suggestion };
 
@@ -156,8 +156,11 @@ export const markIngestDue = (db: D1Database, now = Date.now()) =>
 export const ingestDue = async (db: D1Database) =>
 	(await db.prepare(`SELECT value FROM meta WHERE key = '${INGEST_DUE}'`).first<{ value: string }>())?.value ?? null;
 
+/** What the gate needs: the pipeline's bindings and the purge's (the site Worker's env, or the cron Worker's). */
+export type GateEnv = PipelineEnv & TakedownEnv;
+
 /** The gate on this stage's bindings. */
-export const workerGate = (env: Env): UploadGate => {
+export const workerGate = (env: GateEnv): UploadGate => {
 	const layer = pipelineLayer(env);
 	const run = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof layer>>) => Effect.runPromise(Effect.provide(effect, layer));
 
