@@ -163,7 +163,7 @@ import { gaveUp, MAX_ATTEMPTS, renderQueue, type DeferredUpdate, type JobWrite, 
 import { favoritesCacheFile, favoritesDb, refreshFavorites, topIds, type FavoritesMeta } from './render/favorites.js';
 import { entityCount, PageCache, prepared, preparedSkipped, skipReason, type Prepared } from './render/prepare.js';
 import { renderProgress } from './render/progress.js';
-import { batchCandidates, byPrint, isModern, takesPrint, withTopFirst } from './render/scope.js';
+import { batchCandidates, byPrint, isModern, leftOutLine, takesPrint, withTopFirst } from './render/scope.js';
 import { blueprintPages, cloneSource, decode, diskSource, versionString, withStore, type RecordSource } from './render/source.js';
 import { recordsDir } from './records/store.js';
 import {
@@ -515,6 +515,8 @@ function trackPrint(id: string, queued: number) {
 const pageCache = new PageCache(PAGE_CACHE_BYTES);
 /** Prints with no 2.0+ page: no rows (nothing to render, and they are most of the mirror), only counted. */
 const preModern = { prints: 0, pages: 0 };
+/** Prints with no blueprint pages at all (planners only) left out the same way: counted apart from preModern. */
+let noPagesLeftOut = 0;
 /** Favourites with no 2.0+ page: queued like the rest. */
 const preModernFavorites = { prints: 0, pages: 0 };
 /** Pages rendered before page data existed (or an older PAGE_DATA_VERSION) that got it now, without redrawing. */
@@ -742,8 +744,10 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 	const favorite = favorites.has(id);
 	const modern = pages.some((p) => isModern(p.version));
 	if (!takesPrint({ modern, favorite })) {
-		preModern.prints++;
-		preModern.pages += pages.length;
+		if (pages.length) {
+			preModern.prints++;
+			preModern.pages += pages.length;
+		} else noPagesLeftOut++;
 		await forgetPrint(id, [...existing.values()]);
 		return { taken: false, queued: 0, modern };
 	}
@@ -1280,7 +1284,7 @@ try {
 	todo.sort((a, b) => b.entities - a.entities);
 	log(
 		`queued ${todo.length} pages of ${run.total} (${run.unchanged} unchanged, ${run.skipped} skipped, ${run.failed} failed) from ${taken} prints ` +
-			`in ${((Date.now() - enqueueStart) / 1000).toFixed(1)} s; ${preModern.prints} prints (${preModern.pages} pages) with no 2.0+ page left out` +
+			`in ${((Date.now() - enqueueStart) / 1000).toFixed(1)} s; ${leftOutLine(preModern, noPagesLeftOut)}` +
 			(preModernFavorites.prints
 				? `; ${preModernFavorites.prints} favourites (${preModernFavorites.pages} pages) with no 2.0+ page taken`
 				: '') +

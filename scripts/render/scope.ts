@@ -19,6 +19,16 @@ export const isModern = (version: Version) => !!version && version[0] >= 2;
  */
 export const takesPrint = (p: { modern: boolean; favorite: boolean }) => p.modern || p.favorite;
 
+/**
+ * The queueing log's "left out" part: prints taken for neither a 2.0+ page nor the favourites. Those
+ * with no blueprint pages at all (books of planners) are counted on their own, as they have no
+ * page of any version.
+ */
+export function leftOutLine(preModern: { prints: number; pages: number }, noPages: number): string {
+	const old = `${preModern.prints} prints (${preModern.pages} pages) with no 2.0+ page`;
+	return noPages ? `${old} and ${noPages} with no blueprint pages (planners only) left out` : `${old} left out`;
+}
+
 /** A page skipped for its version: 'pre-2.0' unless it is 2.0+ or the print is a favourite. */
 export const versionSkip = (version: Version, favorite: boolean): 'pre-2.0' | null => (favorite || isModern(version) ? null : 'pre-2.0');
 

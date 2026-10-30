@@ -64,7 +64,7 @@ const USAGE = 'usage: bun run removals --stage local|prod [--dry-run] [--yes] [-
 const JSON_OUT = process.argv.includes('--json');
 
 /** The `--json` result: the last stdout line, whatever the outcome. */
-interface RemovalsResult {
+export interface RemovalsResult {
 	ok: boolean;
 	/** The ✓ or ✗ line. */
 	summary: string;

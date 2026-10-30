@@ -103,6 +103,8 @@ import type { UploadRunResult } from './screenshots/run';
 import type { FromUploadsResult } from './screenshots/uploads';
 import type { FromSitesResult } from './screenshots/sites';
 import { screenshotBucketDetails } from './sync/screenshot-details';
+import { recordStoreFetch, removalsDetails, removalsSummary } from './sync/step-details';
+import type { RemovalsResult } from './removals';
 import {
 	backfillComplete,
 	backfillSummary,
@@ -171,6 +173,7 @@ let stopRequested = () => false;
 
 /** Polled sites (scripts/sync/polled.ts), one per POLLED_SITES entry. */
 const POLLED: PolledSite[] = [codexSite, fprintsSite];
+const POLLED_SITE_IDS = POLLED.map((p) => p.site);
 const polledSettings = (site: string) => settings.polled[site as keyof typeof settings.polled];
 
 /**
@@ -480,39 +483,9 @@ const steps: StepDef[] = [
 		id: 'removals',
 		async run(): Promise<Outcome> {
 			const r = await script(['scripts/removals.ts', '--stage', stage, '--yes', '--json']);
-			const result = lastJsonLine<{
-				ok: boolean;
-				summary: string;
-				stopped: boolean;
-				deleted: number;
-				takedowns: number;
-				newlySwept: number;
-				blocksAdded: number;
-				blocksDropped: number;
-				localRows: number;
-				diskPaths: number;
-				lateRenderFiles: number;
-				screenshots: number;
-			}>(r.tail);
-			const details: DetailGroup[] | undefined =
-				result === null
-					? undefined
-					: [
-							{
-								rows: [
-									...detail('deleted on the site', result.deleted, { always: true }),
-									...detail('taken down on request', result.takedowns),
-									...detail('swept for the first time', result.newlySwept),
-									...detail('blocks added', result.blocksAdded),
-									...detail('blocks dropped', result.blocksDropped),
-									...detail('render rows removed', result.localRows),
-									...detail('folders removed on disk', result.diskPaths),
-									...detail('late render files deleted', result.lateRenderFiles),
-									...detail('screenshots removed', result.screenshots)
-								]
-							}
-						];
-			if (r.code === 0 && result?.ok) return { status: 'done', summary: result.summary.replace(/^[✓✗]\s*/, ''), code: r.code, details };
+			const result = lastJsonLine<RemovalsResult>(r.tail);
+			const details: DetailGroup[] | undefined = result === null ? undefined : removalsDetails(result);
+			if (r.code === 0 && result?.ok) return { status: 'done', summary: removalsSummary(result), code: r.code, details };
 			if (result?.stopped) return { status: 'stopped', summary: result.summary.replace(/^[✓✗]\s*/, ''), code: r.code };
 			// Prod refuses removed prints itself (ingest checks its blocks), but this machine's copies
 			// weren't swept: the steps that could upload them again don't run.
@@ -591,9 +564,8 @@ const steps: StepDef[] = [
 			if (!stopping()) {
 				const r = await script(['scripts/records.ts', '--stage', stage, '--dir', records, '--json']);
 				store = lastJsonLine<RecordsResult>(r.tail);
-				const line = store?.summary.replace(/^[✓✗]\s*/, '') ?? failureLine(r.tail);
-				if (r.code === 0 && store?.ok) parts.push(`record store: ${line}`);
-				else errors.push(`record store: ${line}`);
+				if (r.code === 0 && store?.ok) parts.push(`record store: ${recordStoreFetch(store, POLLED_SITE_IDS).line}`);
+				else errors.push(`record store: ${store?.summary.replace(/^[✓✗]\s*/, '') ?? failureLine(r.tail)}`);
 			}
 			// The Overview compares each plan's two cursors: after the fetch, the fetched ones are level.
 			await writeMeta(db, 'plan', {
@@ -649,20 +621,7 @@ const steps: StepDef[] = [
 						]
 					};
 				});
-			if (store) {
-				const sites = Object.values(store.sites);
-				const sum = (k: 'added' | 'changed' | 'removed' | 'vanished' | 'failed') => sites.reduce((t, c) => t + c[k], 0);
-				details.push({
-					title: 'record store',
-					rows: [
-						...detail('records', store.total, { always: true }),
-						...detail('new', sum('added')),
-						...detail('changed', sum('changed')),
-						...detail('removed', sum('removed') + sum('vanished')),
-						...detail('failed, tried again next update', sum('failed'), { tone: 'bad' })
-					]
-				});
-			}
+			if (store) details.push(recordStoreFetch(store, POLLED_SITE_IDS).group);
 			for (const e of errors) details.push({ rows: [{ label: 'failed', value: e, tone: 'bad' }] });
 			return { status: errors.length ? 'failed' : plans.some((p) => p.blocked) ? 'warning' : 'done', summary, details };
 		}

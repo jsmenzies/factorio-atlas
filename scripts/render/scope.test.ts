@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { MAX_ATTEMPTS } from './queue.js';
-import { batchCandidates, byPrint, type BatchRow, type BatchState } from './scope.js';
+import { batchCandidates, byPrint, leftOutLine, type BatchRow, type BatchState } from './scope.js';
 import type { UploadRow } from './upload.js';
 
 const row = (print_id: string, over: Partial<BatchRow> = {}): BatchRow => ({
@@ -82,4 +82,15 @@ test('byPrint keeps the order rows came in', () => {
 	const m = byPrint([row('a', { path: '1' }), row('b'), row('a', { path: '2' })]);
 	expect([...m.keys()]).toEqual(['a', 'b']);
 	expect(m.get('a')!.map((r) => r.path)).toEqual(['1', '2']);
+});
+
+describe('leftOutLine', () => {
+	test('planner-only prints are counted apart from pre-2.0 ones', () => {
+		expect(leftOutLine({ prints: 4, pages: 196 }, 1)).toBe(
+			'4 prints (196 pages) with no 2.0+ page and 1 with no blueprint pages (planners only) left out'
+		);
+	});
+	test('without planner-only prints the line reads as before', () => {
+		expect(leftOutLine({ prints: 5, pages: 196 }, 0)).toBe('5 prints (196 pages) with no 2.0+ page left out');
+	});
 });
