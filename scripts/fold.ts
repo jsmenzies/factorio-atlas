@@ -44,9 +44,7 @@ await runOn(target, async () => {
 			`${n(changed.length)} rows to change (${n(changed.filter((m) => m.duplicateOf).length)} to fold, ${n(changed.filter((m) => !m.duplicateOf).length)} to unfold or clear)`
 	);
 	for (const m of changed.slice(0, 20)) {
-		console.log(
-			`  ${m.printId} → ${m.duplicateOf ? `folded into ${m.duplicateOf}` : m.identicalTo ? `identical to ${m.identicalTo}` : 'on its own'}`
-		);
+		console.log(`  ${m.printId} → ${m.duplicateOf ? `folded into ${m.duplicateOf}` : 'on its own'}`);
 	}
 	if (changed.length > 20) console.log(`  … and ${n(changed.length - 20)} more`);
 	if (flags['dry-run']) return console.log('dry run; nothing written');
@@ -56,7 +54,6 @@ await runOn(target, async () => {
 	}
 	await confirmProd(stage, flags.yes, 'Write these to PROD?');
 	const { documents } = await run(Effect.provide(refoldAll({ bump: true, recheck: flags.all }), layer));
-	await clearFoldDirty(db);
 	// Folded prints count in no facet (the unfiltered sidebar); rebuilding bumps the page cache again, harmlessly.
 	if (changed.length)
 		await run(
@@ -67,6 +64,8 @@ await runOn(target, async () => {
 				layer
 			)
 		);
+	// Only once the counts are right: a run that fails before leaves the folds dirty, so the next one finishes it.
+	await clearFoldDirty(db);
 	// Documents put right with no row to change still need the cached pages gone.
 	if (documents && !changed.length) await db.batch([bumpPageVersion(db)]);
 	console.log(

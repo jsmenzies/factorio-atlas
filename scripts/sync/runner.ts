@@ -130,6 +130,9 @@ export interface BackfillResult {
 	unchanged?: number;
 	/** Known failures, skipped until their record changes. */
 	skipped?: number;
+	/** The refold at the end: prints now folded into an earlier copy, and prints no longer folded. */
+	folded?: number;
+	unfolded?: number;
 	failures: Record<string, number>;
 }
 

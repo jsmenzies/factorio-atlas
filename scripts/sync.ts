@@ -422,7 +422,9 @@ const backfillStep = async (): Promise<Outcome> => {
 				...detail('failed', result.failed, { always: true, tone: 'bad' }),
 				...Object.entries(result.failures).flatMap(([k, v]) => detail(`${k} failures`, v, { tone: 'bad' })),
 				...detail('known failures skipped', result.skipped),
-				...detail('unchanged', result.unchanged)
+				...detail('unchanged', result.unchanged),
+				...detail('copies folded', result.folded),
+				...detail('copies unfolded', result.unfolded)
 			]
 		}
 	];

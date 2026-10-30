@@ -480,6 +480,8 @@ const processOne = async (entry: SourceEntry) => {
 // first print handed over until the refold succeeds, so a run that is quit or whose refold fails leaves it
 // for the next run (or `bun run fold`), and the run's failures say so ('storage': transient).
 let touchedFolds = false;
+/** What the refold changed: prints now folded into an earlier one, and prints no longer folded (for `--json`). */
+const foldChanges = { folded: 0, unfolded: 0 };
 let marking: Promise<unknown> = Promise.resolve();
 const foldLater = () => {
 	if (touchedFolds) return;
@@ -499,6 +501,8 @@ const refold = async () => {
 	const changed = result.success.members.filter((m) => m.changed);
 	if (changed.length) {
 		const folded = changed.filter((m) => m.duplicateOf).length;
+		foldChanges.folded = folded;
+		foldChanges.unfolded = changed.length - folded;
 		term.log(`folds: ${changed.length} prints changed (${folded} now folded into an earlier print)`);
 	}
 };
@@ -557,6 +561,7 @@ const finish = async (state: 'finished' | 'stopped' | 'failed', error: string | 
 				favorites: run.favorites,
 				unchanged: run.unchanged,
 				skipped: run.skipped_failed,
+				...foldChanges,
 				failures: run.failures
 			})
 		);
