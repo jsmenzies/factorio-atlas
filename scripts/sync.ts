@@ -241,7 +241,7 @@ if (flags.accept !== undefined) {
 }
 
 const figuresText = (f: SyncFigures) =>
-	`${f.stage}: ${n(f.prints)} prints, ${n(f.failed)} failed to read, ${n(f.rendered)} rendered, ${n(f.unnamed)} without an author name`;
+	`${f.stage}: ${n(f.prints)} prints, ${n(f.failed)} failed to read, ${n(f.rendered)} rendered, ${n(f.unnamed)} factorioprints prints without an author name`;
 
 if (flags.figures) {
 	const { readFigures } = await import('./sync/figures');
@@ -772,7 +772,7 @@ const steps: StepDef[] = [
 						{ label: 'prints', value: figures.prints },
 						{ label: 'failed to read', value: figures.failed },
 						{ label: 'with a render', value: figures.rendered },
-						{ label: 'without an author name', value: figures.unnamed }
+						{ label: 'factorioprints prints without an author name', value: figures.unnamed }
 					]
 				}
 			];

@@ -17,7 +17,8 @@ export async function readFigures(stage: Stage): Promise<SyncFigures> {
 			db.prepare('SELECT count(*) AS n FROM prints'),
 			db.prepare("SELECT analyzer_version AS k, count(*) AS n FROM ingest_state WHERE status = 'ok' GROUP BY analyzer_version"),
 			db.prepare("SELECT count(*) AS n FROM ingest_state WHERE status = 'failed'"),
-			db.prepare('SELECT count(*) AS n FROM prints WHERE author_name IS NULL'),
+			// Only factorioprints authors can be named (the authors step); other sites' anonymous posts never can.
+			db.prepare("SELECT count(*) AS n FROM prints WHERE author_name IS NULL AND source = 'factorioprints'"),
 			db.prepare('SELECT count(*) AS n FROM print_renders'),
 			db.prepare('SELECT state AS k, count(*) AS n FROM screenshots GROUP BY state')
 		]);
