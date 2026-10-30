@@ -2,7 +2,7 @@
 	import { deserialize } from '$app/forms';
 	import { invalidate } from '$app/navigation';
 	import { PIPELINE_DEP, poll, serverClock, syncTimeZone } from '#lib/components/admin/live.svelte.js';
-	import { clock as clockText, duration, int, percent } from '#lib/components/admin/metrics.js';
+	import { clock as clockText, int, percent } from '#lib/components/admin/metrics.js';
 	import FlowBoard from '#lib/components/admin/sync/FlowBoard.svelte';
 	import FlowSettings from '#lib/components/admin/sync/FlowSettings.svelte';
 	import FlowStrip from '#lib/components/admin/sync/FlowStrip.svelte';
@@ -127,15 +127,15 @@
 <svelte:head><title>Update · Admin · Blueprint Atlas</title></svelte:head>
 
 {#snippet renderProgress(id: SyncStepId)}
-	{@const r = view?.liveRender}
-	{#if id === 'render' && live && r && r.prints_total > 0}
-		<div class="mt-1.5 h-2 overflow-hidden rounded-full bg-stone-800">
-			<div class="h-full bg-amber-500" style="width: {percent(r.prints_done, r.prints_total)}"></div>
-		</div>
-		<p class="mt-1 text-xs text-stone-400 tabular-nums">
-			{int(r.prints_done)} of {int(r.prints_total)} prints · {int(r.rendered)} pages drawn · {int(r.uploaded)} uploaded · {int(r.failed)} failed{r.eta_seconds
-				? ` · about ${duration(r.eta_seconds * 1000)} left`
-				: ''}
+	{@const r = flow?.renderNow}
+	{#if id === 'render' && r && r.phase !== 'picking'}
+		{#if r.of !== null}
+			<div class="mt-1.5 h-2 overflow-hidden rounded-full bg-stone-800">
+				<div class="h-full bg-amber-500" style="width: {percent(r.value ?? 0, r.of)}"></div>
+			</div>
+		{/if}
+		<p class="mt-1 text-xs tabular-nums {r.warn ? 'text-amber-300' : 'text-stone-400'}">
+			<span class="text-stone-200">{r.label}</span>{r.of !== null ? `: ${int(r.value ?? 0)} of ${int(r.of)}${r.unit ? ` ${r.unit}` : ''}` : ''}{#each r.figs as f, i (i)}{` · ${typeof f.value === 'number' ? int(f.value) : f.value} ${f.label}`}{/each}
 		</p>
 	{/if}
 {/snippet}

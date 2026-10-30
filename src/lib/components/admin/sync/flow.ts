@@ -6,7 +6,7 @@
  * per source is shown once, on the shared stage, never split. Pure and browser-safe.
  */
 import type { RenderRun } from '#lib/server/admin/render.js';
-import type { LogProgress } from '#lib/sync-progress.js';
+import type { LogProgress, RenderLog, RenderLogPhase } from '#lib/sync-progress.js';
 import { recordsSeen } from '#lib/sync-progress.js';
 import { SOURCE_SITES } from '#lib/sources.js';
 import type { Site } from '#lib/print-id.js';
@@ -93,6 +93,8 @@ export interface Flow {
 	lanes: Lane[];
 	shots: { stage: Stage; inputs: ShotInput[]; sizing: Stage };
 	render: Stage;
+	/** While the render step runs: its run's phase and progress, for the board, the step's row and the sentence. */
+	renderNow: RenderNow | null;
 	/** Prints the gate made new on the site in this (or the last) update, as far as recorded. */
 	newPrints: number;
 }
@@ -342,21 +344,108 @@ function shotsStages(run: SyncRun | null, progress: LogProgress | null): Flow['s
 	};
 }
 
-function renderStage(run: SyncRun | null, liveRender: RenderRun | null): Stage {
+/** What the render step is doing now, and how far it is. */
+export interface RenderNow {
+	phase: RenderLogPhase | 'picking';
+	/** "Drawing prints", "Making thumbnails", … (the step row's lead). */
+	label: string;
+	/** The board's few words under the count. */
+	text: string;
+	/** Its count, when it has one ("37 of 50 prints"). */
+	value: number | null;
+	of: number | null;
+	unit: string;
+	/** The pages so far: drawn, uploaded, failed (the live run's, else its end line's). */
+	figs: Fig[];
+	/** The sentence at the top. */
+	sentence: string;
+	/** `--flags` failed: the step goes on to end with a warning. */
+	warn: boolean;
+}
+
+/**
+ * The render step's phase: the render run's row while it draws (prints finished of its picks), then the log's
+ * phase lines (#lib/sync-progress.js) for what comes after the last page, when every count reads "done" but the
+ * run still makes and uploads thumbnails, deletes replaced files and sets the stage's search flags.
+ */
+export function renderNow(liveRender: RenderRun | null, log: RenderLog | null): RenderNow {
+	const r = liveRender;
+	const ended = log?.ended ?? null;
+	const figs = r
+		? some(fig('pages drawn', r.rendered), fig('uploaded', r.uploaded), fig('failed', r.failed, 'bad'))
+		: ended
+			? some(fig('pages drawn', ended.rendered), fig('uploaded', ended.uploaded), fig('failed', ended.failed, 'bad'))
+			: [];
+	const base = { value: null, of: null, unit: '', figs, warn: false };
+	const words = (phase: RenderNow['phase'], label: string, sentence = `${label}.`): RenderNow => ({
+		...base,
+		phase,
+		label,
+		text: label.toLowerCase(),
+		sentence
+	});
+	const picking = words('picking', 'Picking the prints with work', 'Picking the prints to render.');
+	switch (log?.phase ?? 'drawing') {
+		case 'drawing':
+			if (!r?.prints_total) return picking;
+			return {
+				...base,
+				phase: 'drawing',
+				label: 'Drawing prints',
+				text: 'prints drawn',
+				value: r.prints_done,
+				of: r.prints_total,
+				figs: [...figs, ...(r.eta_seconds ? [{ label: 'left', value: `≈ ${duration(r.eta_seconds * 1000)}` }] : [])],
+				sentence: `Drawing prints: ${int(r.prints_done)} of ${int(r.prints_total)}.`
+			};
+		case 'thumbnails': {
+			const t = log?.thumbs;
+			const label = t?.upload === false ? 'Making thumbnails' : 'Making and uploading thumbnails';
+			if (!t) return words('thumbnails', label);
+			return {
+				...base,
+				phase: 'thumbnails',
+				label,
+				text: t.upload ? 'prints’ thumbnails made and uploaded' : 'prints’ thumbnails made',
+				value: t.done,
+				of: t.of,
+				unit: 'prints',
+				sentence: `${label}: ${int(t.done)} of ${int(t.of)} prints.`
+			};
+		}
+		case 'uploads': {
+			const left = r?.uploads_pending ?? log?.uploadsLeft ?? null;
+			return {
+				...words('uploads', 'Uploading the last pages', left ? `Uploading the last ${int(left)} page${left === 1 ? '' : 's'}.` : undefined),
+				figs: [...figs, ...fig('to go', left)]
+			};
+		}
+		case 'deletions':
+			return words('deletions', 'Removing replaced files', 'Removing replaced files from the bucket.');
+		case 'finishing':
+			return words('finishing', 'Saving the render run');
+		case 'flags': {
+			const stage = log?.flags?.stage ?? 'the stage';
+			if (!log?.flags?.failed) return words('flags', `Updating search flags on ${stage}`);
+			return {
+				...words('flags', `Search flags on ${stage} failed`, `Setting the search flags on ${stage} failed: run render:flags by hand.`),
+				text: `search flags on ${stage} failed: run render:flags by hand`,
+				warn: true
+			};
+		}
+	}
+}
+
+function renderStage(run: SyncRun | null, now: RenderNow | null): Stage {
 	const step = stepOf(run, 'render');
 	if (!run || !step || step.status === 'pending') return { state: 'todo' };
 	if (step.status === 'running') {
-		if (!liveRender || !liveRender.prints_total) return { state: 'active', text: 'picking the prints with work' };
+		if (!now || now.phase === 'picking') return { state: 'active', text: 'picking the prints with work' };
 		return {
-			state: 'active',
-			value: liveRender.prints_done,
-			of: liveRender.prints_total,
-			figs: some(
-				fig('pages drawn', liveRender.rendered),
-				fig('uploaded', liveRender.uploaded),
-				fig('failed', liveRender.failed, 'bad'),
-				liveRender.eta_seconds ? [{ label: 'left', value: `≈ ${duration(liveRender.eta_seconds * 1000)}` }] : []
-			)
+			state: now.warn ? 'warn' : 'active',
+			...(now.of !== null ? { value: now.value, of: now.of } : {}),
+			text: now.text,
+			...(now.figs.length ? { figs: now.figs } : {})
 		};
 	}
 	if (step.status === 'skipped' || step.status === 'stopped') return skipped(step);
@@ -412,13 +501,15 @@ export function buildFlow(o: {
 		};
 	});
 	const newPrints = lanes.reduce((n, l) => n + (l.gate.outcome?.new ?? 0), 0);
+	const rendering = current === 'render' ? renderNow(o.liveRender, progress?.step === 'render' ? progress.render : null) : null;
 	return {
 		live,
 		current,
 		caption: !run ? null : live ? 'This update' : `Last update · ${run.state} ${o.clock(run.finished_at ?? run.updated_at)}`,
 		lanes,
 		shots: shotsStages(run, progress),
-		render: renderStage(run, live ? o.liveRender : null),
+		render: renderStage(run, rendering),
+		renderNow: rendering,
 		newPrints
 	};
 }
@@ -452,9 +543,7 @@ export function nowSentence(
 				return s?.of ? `Copying other sites’ screenshots: ${int(s.value ?? 0)} of ${int(s.of)}.` : 'Copying screenshots.';
 			}
 			case 'render':
-				return o.liveRender?.prints_total
-					? `Drawing prints: ${int(o.liveRender.prints_done)} of ${int(o.liveRender.prints_total)}.`
-					: 'Picking the prints to render.';
+				return flow.renderNow?.sentence ?? 'Picking the prints to render.';
 			case 'figures':
 				return 'Counting what the site has.';
 			default:

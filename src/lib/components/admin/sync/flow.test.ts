@@ -167,4 +167,91 @@ describe('the flow while an update runs', () => {
 		expect(f.render).toMatchObject({ state: 'active', value: 12, of: 28 });
 		expect(f.render.figs?.some((x) => x.label === 'pages drawn' && x.value === 70)).toBe(true);
 	});
+
+	describe('render: after the last page, the phase the log names', () => {
+		const running = () => {
+			const r = structuredClone(RUN);
+			r.state = 'running';
+			r.steps = r.steps.map((s) =>
+				s.id === 'render'
+					? { ...s, status: 'running', summary: undefined, details: undefined }
+					: s.id === 'figures'
+						? { id: s.id, status: 'pending' }
+						: s
+			);
+			return r;
+		};
+		// The run of 2026-10-30 22:46: every page drawn and uploaded, thumbnails still going.
+		const allDrawn = {
+			prints_total: 50,
+			prints_done: 50,
+			rendered: 451,
+			uploaded: 451,
+			failed: 0,
+			uploads_pending: 0,
+			eta_seconds: null
+		} as RenderRun;
+		const LOG = `== Render and upload
+run 2026-10-30T22:46:02Z-es1r: --next 50 --top 1000 --upload prod --flags --workers 4
+queued 451 pages of 454 (0 unchanged, 3 skipped, 0 failed) from 52 prints in 6.9 s
+`;
+		const at = (lines: string, liveRender: RenderRun | null = allDrawn) => {
+			const run = running();
+			const progress = logProgress(LOG + lines);
+			const f = flowOf({ run, phase: 'running', liveRender, progress });
+			return { f, sentence: nowSentence(f, { plan: BEFORE, run, phase: 'running', liveRender }) };
+		};
+
+		test('drawing: the run row, as before (the log has said nothing more yet)', () => {
+			const { f, sentence } = at('', { ...allDrawn, prints_done: 31 });
+			expect(f.renderNow).toMatchObject({ phase: 'drawing', value: 31, of: 50 });
+			expect(sentence).toBe('Drawing prints: 31 of 50.');
+		});
+
+		test('thumbnails: prints made and uploaded of those offered, not the finished-looking page counts', () => {
+			const { f, sentence } = at(
+				"rendering done; bringing 13 prints' thumbnails up to date\nthumbnails: 37 of 50 prints made and uploaded\n"
+			);
+			expect(f.render).toMatchObject({ state: 'active', value: 37, of: 50, text: 'prints’ thumbnails made and uploaded' });
+			expect(f.render.figs).toEqual([
+				{ label: 'pages drawn', value: 451 },
+				{ label: 'uploaded', value: 451 }
+			]);
+			expect(f.renderNow).toMatchObject({ label: 'Making and uploading thumbnails', unit: 'prints' });
+			expect(sentence).toBe('Making and uploading thumbnails: 37 of 50 prints.');
+		});
+
+		test('the last uploads, then deletions', () => {
+			expect(at('rendering done; waiting for 3 pages to upload\n', { ...allDrawn, uploads_pending: 2 }).sentence).toBe(
+				'Uploading the last 2 pages.'
+			);
+			const { f, sentence } = at('deletions: deleting replaced files whose grace period is over\n');
+			expect(f.render).toMatchObject({ state: 'active', text: 'removing replaced files' });
+			expect(f.render.of).toBeUndefined();
+			expect(sentence).toBe('Removing replaced files from the bucket.');
+		});
+
+		test('flags: the run row is final (no live run), its end line gives the figures', () => {
+			const end =
+				'finished: 454/454 pages (50/50 prints), 451 rendered, 0 unchanged, 3 skipped, 0 failed; 21814 files, 1043.2 MB in 1820 s\n' +
+				'uploads: 451 pages, 21814 files, 1043.2 MB, 0 deleted; 0 deletions scheduled / 0 pending; 0 pages still to upload\n';
+			const { f, sentence } = at(end + 'flags: render:flags --stage prod, and a page-cache bump\n', null);
+			expect(f.render).toMatchObject({ state: 'active', text: 'updating search flags on prod' });
+			expect(f.render.figs).toEqual([
+				{ label: 'pages drawn', value: 451 },
+				{ label: 'uploaded', value: 451 }
+			]);
+			expect(sentence).toBe('Updating search flags on prod.');
+			const failed = at(end + 'flags: render:flags --stage prod\nflags: failed: remote /d1: Network connection lost.\n', null);
+			expect(failed.f.render.state).toBe('warn');
+			expect(failed.sentence).toBe('Setting the search flags on prod failed: run render:flags by hand.');
+		});
+
+		test('no render run yet: picking', () => {
+			const run = running();
+			const f = flowOf({ run, phase: 'running', progress: logProgress('== Render and upload\n$ bun scripts/render-scope.ts top 1000\n') });
+			expect(f.render).toMatchObject({ state: 'active', text: 'picking the prints with work' });
+			expect(nowSentence(f, { plan: BEFORE, run, phase: 'running', liveRender: null })).toBe('Picking the prints to render.');
+		});
+	});
 });

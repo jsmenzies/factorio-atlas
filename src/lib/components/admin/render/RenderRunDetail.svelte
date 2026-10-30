@@ -59,6 +59,10 @@
 	const up = $derived(uploadProgress(run));
 	const took = $derived(elapsed(run, runState, now));
 	const prints = $derived(printProgress(run));
+	// After the last page (options written by the heartbeat): what the run does before it ends, and its thumbnails.
+	const phase = $derived(run.options.phase ?? null);
+	const thumbs = $derived(run.options.thumbs?.of ? run.options.thumbs : null);
+	const PHASE = { thumbnails: 'Every page drawn; making thumbnails', uploads: 'Uploading the last pages', deletions: 'Removing replaced files' } as const;
 	const avg = $derived(writtenAverages(run));
 	const speed = $derived(uploadSpeed(run, took, live && runState !== 'paused'));
 	const PACE = {
@@ -103,6 +107,13 @@
 					<span class="block text-sm text-stone-400 tabular-nums" title="A print is finished once every page of it is rendered, unchanged, skipped or failed">
 						<span class="text-stone-100">{int(prints.done)}</span> of {int(prints.total)} prints finished{#if prints.picking}<span class="text-stone-500">{` · picking${prints.goal ? `, up to ${int(prints.goal)}` : ''}`}</span>{:else if prints.pct !== null && prints.total > 0}<span class="text-stone-500">{` · ${Math.floor(prints.pct)}%`}</span>{/if}
 					</span>
+				{/if}
+				{#if thumbs}
+					<span class="block text-sm tabular-nums {live && phase ? 'text-sky-300' : 'text-stone-400'}">
+						{live && phase ? `${PHASE[phase]} · ` : ''}thumbnails: <span class="text-stone-100">{int(thumbs.done)}</span> of {int(thumbs.of)} prints
+					</span>
+				{:else if live && phase}
+					<span class="block text-sm text-sky-300">{PHASE[phase]}</span>
 				{/if}
 			</p>
 			{#if finish && finish.left > 0}

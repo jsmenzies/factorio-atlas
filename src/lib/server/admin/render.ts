@@ -10,6 +10,7 @@ import {
 	RENDER_STALE_MS,
 	type JobStatus,
 	type RenderJobRow,
+	type RenderRunPhase,
 	type RenderRunRow
 } from '#lib/server/render-queue.js';
 import { intParam, runControlActions } from './pipeline.js';
@@ -37,6 +38,9 @@ export interface RenderRunOptions {
 	topList?: { n: number; source: string; refreshed_at: number; refreshed: boolean; added: number } | null;
 	upload?: string | null;
 	resumedFrom?: string | null;
+	/** After the last page: what the run is doing before it ends; and the thumb step's prints done of those offered. */
+	phase?: RenderRunPhase | null;
+	thumbs?: { done: number; of: number } | null;
 	[key: string]: unknown;
 }
 

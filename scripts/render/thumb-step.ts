@@ -33,6 +33,8 @@ export interface ThumbStepOptions {
 	/** With `--upload`: the bucket's uploader, and a wait until the print's render files are up (or given up on for now). */
 	upload?: { uploader: ThumbUploader; renderFilesSettled: (id: string) => Promise<void> };
 	stopped: () => boolean;
+	/** After each print's thumbnails are done (made and, uploading, uploaded), or given up on. */
+	onPrintDone?: () => void;
 }
 
 export interface ThumbStepStats {
@@ -59,6 +61,8 @@ export function createThumbStep(opts: ThumbStepOptions) {
 	const stats: ThumbStepStats = { prints: 0, current: 0, pages: 0, failed: 0, files: 0, bytes: 0, removed: 0, cleared: 0 };
 	const queue: string[] = [];
 	const queued = new Set<string>();
+	/** Every print offered in the run, for "N of M prints". */
+	const offered = new Set<string>();
 	/** Prints being worked on, and those offered again meanwhile (worked on again after). */
 	const working = new Set<string>();
 	const again = new Set<string>();
@@ -121,6 +125,7 @@ export function createThumbStep(opts: ThumbStepOptions) {
 						queued.add(id);
 						queue.push(id);
 					}
+					opts.onPrintDone?.();
 					pump();
 					if (!active && (!queue.length || opts.stopped())) for (const w of idleWaiters.splice(0)) w();
 				});
@@ -131,6 +136,7 @@ export function createThumbStep(opts: ThumbStepOptions) {
 		stats,
 		/** Bring the print's thumbnails up to date, soon (once per print while it waits). */
 		offer(id: string) {
+			offered.add(id);
 			if (working.has(id)) {
 				again.add(id);
 				return;
@@ -143,6 +149,10 @@ export function createThumbStep(opts: ThumbStepOptions) {
 		/** Prints waiting or being worked on. */
 		get pending() {
 			return queue.length + active;
+		},
+		/** Prints offered in the run, and those of them done (none waiting or being worked on). */
+		get progress(): { done: number; of: number } {
+			return { done: offered.size - queue.length - active, of: offered.size };
 		},
 		/** Resolves once every print offered is done (or, after a stop, once those in hand are). */
 		drain(): Promise<void> {

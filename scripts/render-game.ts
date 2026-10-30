@@ -141,7 +141,7 @@ import { gameCatalog } from '#lib/viewer/catalog.server.js';
 import { overviewFile, PAGE_DATA_VERSION, pageBase } from '#lib/viewer/game-render.js';
 import { newRunId, type RunControl } from '#lib/server/pipeline/runs.js';
 import { loadRemovedPrintIds } from '#lib/server/removal-blocks.js';
-import { RENDER_HEARTBEAT_MS, type RenderJobRow } from '#lib/server/render-queue.js';
+import { RENDER_HEARTBEAT_MS, type RenderJobRow, type RenderRunPhase } from '#lib/server/render-queue.js';
 import type { PageJob, PageResult } from './render/draw.js';
 import {
 	commandLine,
@@ -391,7 +391,14 @@ const runOptions = {
 	workerd,
 	/** Everything `--resume` needs to start the same run again. */
 	args,
-	batch
+	batch,
+	/**
+	 * After the last page is drawn, what the run is doing before it ends (null while drawing, and once over),
+	 * and the thumb step's prints done of those offered: for /admin/render. The Update tab reads the same
+	 * from the log's phase lines (`thumbnails: N of M prints`, `deletions: …`, `flags: …`; #lib/sync-progress.js).
+	 */
+	phase: null as RenderRunPhase | null,
+	thumbs: null as { done: number; of: number } | null
 };
 const run: RunnerRun = {
 	id: newRunId(),
@@ -472,9 +479,33 @@ const thumbStep: ThumbStep | null = args.thumbs
 			planOnly,
 			log,
 			upload: uploader && thumbUploader ? { uploader: thumbUploader, renderFilesSettled: (id) => uploader.settled(id) } : undefined,
-			stopped: () => stopping
+			stopped: () => stopping,
+			onPrintDone: () => {
+				if (runOptions.phase === 'thumbnails') logThumbs();
+			}
 		})
 	: null;
+/**
+ * `thumbnails: N of M prints …` after the last page, as each print's thumbnails are done: at most one line a
+ * second, a held-back count written a second later (a big book next may take minutes), and always the last one.
+ */
+let thumbsLoggedAt = 0;
+let thumbsLater: ReturnType<typeof setTimeout> | null = null;
+function logThumbs() {
+	const p = thumbStep!.progress;
+	const wait = thumbsLoggedAt + 1000 - Date.now();
+	if (p.done < p.of && wait > 0) {
+		thumbsLater ??= setTimeout(() => {
+			thumbsLater = null;
+			logThumbs();
+		}, wait);
+		return;
+	}
+	if (thumbsLater) clearTimeout(thumbsLater);
+	thumbsLater = null;
+	thumbsLoggedAt = Date.now();
+	log(`thumbnails: ${p.done} of ${p.of} prints ${thumbUploader ? 'made and uploaded' : 'made'}`);
+}
 
 /** Upload rows of the target when the run started, by print: what enqueueing compares the rows with. */
 const uploadsAtStart = new Map<string, UploadRow[]>();
@@ -551,6 +582,7 @@ const deferred: DeferredUpdate[] = [];
 
 /** Options (a batch's picks change as it goes) and upload counts into the run row. */
 function syncRun() {
+	runOptions.thumbs = thumbStep && !planOnly ? thumbStep.progress : null;
 	run.options = JSON.stringify(runOptions);
 	run.prints_total = printsTracked.size;
 	run.prints_done = printsFinished.size;
@@ -1302,17 +1334,32 @@ try {
 		await heartbeat();
 		if (todo.length) await renderAll();
 	}
+	// After the last page: each phase says so in the log (the Update tab's progress reads these lines) and in the run's options.
 	if (thumbStep) {
-		if (!stopping && thumbStep.pending) log(`rendering done; bringing ${thumbStep.pending} prints' thumbnails up to date`);
+		if (!stopping && thumbStep.pending) {
+			log(`rendering done; bringing ${thumbStep.pending} prints' thumbnails up to date`);
+			if (!planOnly) {
+				runOptions.phase = 'thumbnails';
+				logThumbs();
+			}
+		}
 		await thumbStep.drain();
 	}
 	if (uploader) {
-		if (!stopping && (uploader.pending || uploader.inFlight)) log(`rendering done; waiting for ${uploader.pending} pages to upload`);
+		if (!stopping && (uploader.pending || uploader.inFlight)) {
+			log(`rendering done; waiting for ${uploader.pending} pages to upload`);
+			runOptions.phase = 'uploads';
+		}
 		await uploader.drain();
+		if (!stopping && !planOnly) {
+			log('deletions: deleting replaced files whose grace period is over');
+			runOptions.phase = 'deletions';
+		}
 		// Not after a stop (it does nothing then): what's due stays for the next run.
 		await uploader.processDeletes();
 		if (!stopping) await thumbUploader?.processDue();
 	}
+	runOptions.phase = null;
 	// A plan-only run leaves its pages pending: it ends 'stopped', not 'finished'.
 	run.state = stopping || planOnly ? 'stopped' : 'finished';
 } catch (e) {

@@ -40,8 +40,9 @@ test('makes, keeps, renews and clears thumbnails; uploads each print after its r
 				return true;
 			}
 		} as unknown as ThumbUploader;
-		const step = (planOnly = false) =>
-			createThumbStep({
+		const progress: { done: number; of: number }[] = [];
+		const step = (planOnly = false) => {
+			const made = createThumbStep({
 				rendersDir: renders,
 				thumbsDir: thumbs,
 				concurrency: 2,
@@ -55,8 +56,11 @@ test('makes, keeps, renews and clears thumbnails; uploads each print after its r
 								events.push(`settled ${id}`);
 							}
 						},
-				stopped: () => false
+				stopped: () => false,
+				onPrintDone: () => progress.push(made.progress)
 			});
+			return made;
+		};
 		await render(renders, 'a', '0123456789');
 		await render(renders, 'b', '0123456789');
 
@@ -69,11 +73,17 @@ test('makes, keeps, renews and clears thumbnails; uploads each print after its r
 		expect(existsSync(join(thumbs, 'a'))).toBe(false);
 
 		const first = step();
+		progress.length = 0;
 		first.offer('a');
 		first.offer('b');
+		expect(first.progress).toEqual({ done: 0, of: 2 });
 		// Offered again while being worked on: looked at once more afterwards, never twice at once.
 		first.offer('a');
 		await first.drain();
+		// Prints, not offers: `a` counts once, and is done only after its second look.
+		expect(progress.at(-1)).toEqual({ done: 2, of: 2 });
+		expect(progress.every((p) => p.of === 2 && p.done <= 2)).toBe(true);
+		expect(progress.length).toBe(3);
 		expect(first.stats).toMatchObject({ prints: 3, current: 1, pages: 4, failed: 0 });
 		const index = JSON.parse(await readFile(join(thumbs, 'a', 'thumbs.json'), 'utf8')) as ThumbsIndex;
 		expect(index.pages['1']).toEqual({ stamp: 'abcdef0123', w: 300, h: 600, sizes: [320, 640, 960] });
