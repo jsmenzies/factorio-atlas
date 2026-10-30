@@ -2,7 +2,7 @@
  * factoriobin.com post links: what a link someone shared names. Browser-safe (the admin page checks a
  * link as it is typed; the dev plugin before it runs a command).
  */
-import { siteUrl } from './sources';
+import { siteUrl } from './sources.js';
 
 /** A post id: letters and digits (6 on old posts, 8 now). */
 const POST_ID = /^[A-Za-z0-9]{4,16}$/;

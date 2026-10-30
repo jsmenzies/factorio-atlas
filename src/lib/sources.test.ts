@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { SITES } from './print-id';
-import { docSources, ownSource, siteUrl, SOURCE_SITES, sourcesOfPrint, sourceUrl, urlText } from './sources';
+import { anonymousOn, docSources, ownSource, siteUrl, SOURCE_SITES, sourcesOfPrint, sourceUrl, urlText } from './sources';
 
 const FP = '-KYpTULTDIvDOsJfgjeS';
 
@@ -21,6 +21,20 @@ describe('sources', () => {
 		);
 		expect(siteUrl('upload', 'abcdefghij')).toBeNull();
 		expect(urlText(siteUrl('codex', '492')!)).toBe('factoriocodex.com/blueprints/492');
+	});
+
+	test('a factoriobin print with no author name was posted anonymously; no other site says so', () => {
+		expect(anonymousOn('factoriobin', 'fbin-9grxah', null)).toBe('factoriobin.com');
+		expect(anonymousOn('factoriobin', 'fbin-9grxah', '  ')).toBe('factoriobin.com');
+		// A document from before `source`: the id's site.
+		expect(anonymousOn(undefined, 'fbin-9grxah', null)).toBe('factoriobin.com');
+		// A poster who gave a name keeps it.
+		expect(anonymousOn('factoriobin', 'fbin-9grxah', 'Ttmb')).toBeNull();
+		// fprints, codex, uploads and factorioprints keep their own wording.
+		expect(anonymousOn('fprints', 'fprints-ed43db36-b063', null)).toBeNull();
+		expect(anonymousOn('codex', 'codex-492', null)).toBeNull();
+		expect(anonymousOn('upload', 'up-abcdefghij', null)).toBeNull();
+		expect(anonymousOn('factorioprints', FP, null)).toBeNull();
 	});
 
 	test('a print id names the source it was first seen on', () => {

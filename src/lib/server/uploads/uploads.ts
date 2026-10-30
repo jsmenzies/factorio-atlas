@@ -14,11 +14,11 @@
  * back as it was).
  */
 import { printIdFor, siteOfPrintId } from '#lib/print-id.js';
-import { deleteAccount, markDeleting, type Account } from '../auth/users';
-import { bumpPageVersion } from '../page-cache';
-import { analysisKey, withAuthorName } from '../pipeline/print-doc';
-import { fromPipelineText, rawKeyFor, toPipelineText, type SourceRecord } from '../pipeline/source-record';
-import type { GateOutcome, PurgeExtras, Suggestion, UploadGate } from './gate';
+import { deleteAccount, markDeleting, type Account } from '../auth/users.js';
+import { bumpPageVersion } from '../page-cache.js';
+import { analysisKey, withAuthorName } from '../pipeline/print-doc.js';
+import { fromPipelineText, rawKeyFor, toPipelineText, type SourceRecord } from '../pipeline/source-record.js';
+import type { GateOutcome, PurgeExtras, Suggestion, UploadGate } from './gate.js';
 
 export const TITLE_MAX = 120;
 export const DESCRIPTION_MAX = 20_000;

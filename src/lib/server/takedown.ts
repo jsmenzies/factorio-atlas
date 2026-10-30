@@ -33,13 +33,13 @@
  */
 import { siteOfPrintId } from '#lib/print-id.js';
 import { manifestKey, type ShotManifest } from '#lib/screenshots.js';
-import { bumpPageVersion } from './page-cache';
-import { fingerprintBlockValues, identityPurgeStatements, sourcesOf } from './pipeline/identity-db';
-import { analysisKey } from './pipeline/print-doc';
-import { rawKeyFor } from './pipeline/source-record';
-import { FACTORIOPRINTS, insertBlocks, printBlocks, sourceBlock, type Block, type BlockRow } from './removal-blocks';
-import { removalRecordStatements, removedRowStatement } from './screenshot-flags';
-import { uploadPurgeExtras } from './uploads/uploads';
+import { bumpPageVersion } from './page-cache.js';
+import { fingerprintBlockValues, identityPurgeStatements, sourcesOf } from './pipeline/identity-db.js';
+import { analysisKey } from './pipeline/print-doc.js';
+import { rawKeyFor } from './pipeline/source-record.js';
+import { FACTORIOPRINTS, insertBlocks, printBlocks, sourceBlock, type Block, type BlockRow } from './removal-blocks.js';
+import { removalRecordStatements, removedRowStatement } from './screenshot-flags.js';
+import { uploadPurgeExtras } from './uploads/uploads.js';
 
 export interface TakedownEnv {
 	readonly DB: D1Database;

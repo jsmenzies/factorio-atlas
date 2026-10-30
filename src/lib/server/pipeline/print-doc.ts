@@ -4,10 +4,10 @@
  */
 import type { Site } from '#lib/print-id.js';
 import type { PrintSource } from '#lib/sources.js';
-import type { PrintAnalysis } from './analyze';
-import type { FoldState } from './fold';
-import type { FirebaseRecord } from './record';
-import { toEpochMs } from './record';
+import type { PrintAnalysis } from './analyze.js';
+import type { FoldState } from './fold.js';
+import type { FirebaseRecord } from './record.js';
+import { toEpochMs } from './record.js';
 
 export const analysisKey = (id: string) => `analysis/${id}.json`;
 

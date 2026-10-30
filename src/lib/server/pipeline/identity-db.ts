@@ -5,9 +5,9 @@
  */
 import type { Site } from '#lib/print-id.js';
 import { docSources, type PrintSource } from '#lib/sources.js';
-import { sourceBlock } from '../removal-blocks';
-import type { PrintFingerprint } from './identity';
-import type { SourceMeta } from './source-record';
+import { sourceBlock } from '../removal-blocks.js';
+import type { PrintFingerprint } from './identity.js';
+import type { SourceMeta } from './source-record.js';
 
 /** A match joins two prints only from this many entities + tiles (the whole print) up. */
 export const JOIN_MIN_SIZE = 50;

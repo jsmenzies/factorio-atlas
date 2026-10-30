@@ -17,11 +17,11 @@ import {
 	type SubjectKind
 } from '#lib/reports.js';
 import { Effect, Layer } from 'effect';
-import { identicalCopiesStatement, toIdenticalCopies, type IdenticalCopy } from './pipeline/identity-db';
-import { syncFold } from './pipeline/pipeline';
-import { RawStoreR2 } from './pipeline/raw-store';
-import { PrintRepositoryD1 } from './pipeline/repository';
-import { TakedownError, takedownPrint, type PurgeList, type TakedownEnv, type TakedownResult } from './takedown';
+import { identicalCopiesStatement, toIdenticalCopies, type IdenticalCopy } from './pipeline/identity-db.js';
+import { syncFold } from './pipeline/pipeline.js';
+import { RawStoreR2 } from './pipeline/raw-store.js';
+import { PrintRepositoryD1 } from './pipeline/repository.js';
+import { TakedownError, takedownPrint, type PurgeList, type TakedownEnv, type TakedownResult } from './takedown.js';
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 

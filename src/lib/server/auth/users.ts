@@ -6,7 +6,7 @@
  * name an account gives up (rename or deletion) is held for NAME_HOLD_DAYS before another can take it.
  * The owner changes it at routes/account.
  */
-import type { Profile, Provider } from './providers';
+import type { Profile, Provider } from './providers.js';
 
 export interface Account {
 	id: string;

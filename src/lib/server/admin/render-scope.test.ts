@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { d1FromSqlite } from '../pipeline/d1-sqlite';
-import { parseScopes, scopeStatements } from './render-scope';
+import { parseScopes, scopeStatements, STORE_WAITING_SQL, withStoreWaiting } from './render-scope';
 
 const ROOT = join(import.meta.dirname, '../../../..');
 
@@ -66,5 +66,40 @@ describe('render coverage by scope', () => {
 		expect(s.union).toEqual({ total: 8, rendered: 2, uploaded: 2, left: 4, none: 1, failed: 1, updated: 1 });
 		expect(s.former).toBe(1);
 		expect(s.favorites).toBeNull();
+	});
+});
+
+describe('record-store prints waiting to render (the Update tab)', () => {
+	test('never looked at: in scope and left; looked at with another record since: updated', async () => {
+		const { sqlite, db, seen, job } = setup();
+		const waiting = async () => (await db.prepare(STORE_WAITING_SQL).first<{ unseen: number; changed: number }>())!;
+		// No scan saved yet: nothing.
+		expect(await waiting()).toEqual({ unseen: 0, changed: 0 });
+		const store = {
+			at: 1,
+			modern: [
+				['codex-1', 'a'], // never looked at
+				['codex-2', 'a'], // looked at, same record, rendered
+				['fprints-x', 'b'], // record changed since it was rendered
+				['up-abcdefghij', 'c'], // looked at, same record, pending: left in the coverage already
+				['fbin-y', 'a'] // never looked at
+			],
+			older: 3,
+			unreadable: 0
+		};
+		sqlite.query(`INSERT INTO sync_meta (key, value, updated_at) VALUES ('store-prints', ?, 1)`).run(JSON.stringify(store));
+		seen.run('codex-2', 'a', 1, 10);
+		job.run('codex-2', '', 'done', null, null);
+		seen.run('fprints-x', 'a', 1, 10);
+		job.run('fprints-x', '', 'done', null, null);
+		seen.run('up-abcdefghij', 'c', 1, 10);
+		job.run('up-abcdefghij', '', 'pending', null, null);
+		const w = await waiting();
+		expect(w).toEqual({ unseen: 2, changed: 1 });
+
+		// The Update tab's coverage (syncOverview): the estimate (union.left) now has the 2 never drawn and the pending upload.
+		const scopes = withStoreWaiting(parseScopes(await db.batch(scopeStatements(db))), w);
+		expect(scopes.union).toEqual({ total: 5, rendered: 2, uploaded: 0, left: 3, none: 0, failed: 0, updated: 1 });
+		expect(scopes.modern).toEqual(scopes.union);
 	});
 });

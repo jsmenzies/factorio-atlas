@@ -11,7 +11,7 @@
  * - `screenshots: 749 images from other sites shown in prod: … to copy 716 → …`: other sites' images to copy, and
  *   `screenshots: codex.<hex> (<print>): fetched` or `: failed (…)` per image (scripts/screenshots/sites.ts).
  */
-import { SYNC_STEPS, type SyncStepId } from './sync';
+import { SYNC_STEPS, type SyncStepId } from './sync.js';
 
 export interface LogProgress {
 	/** The step whose part of the log was counted (its `== <label>` header), or null before the first. */

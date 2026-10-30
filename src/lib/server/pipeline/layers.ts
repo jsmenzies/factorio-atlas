@@ -1,7 +1,7 @@
 import { Layer } from 'effect';
-import { RawStoreR2 } from './raw-store';
-import { PrintRepositoryD1 } from './repository';
-import { PrintSourceLive } from './source';
+import { RawStoreR2 } from './raw-store.js';
+import { PrintRepositoryD1 } from './repository.js';
+import { PrintSourceLive } from './source.js';
 
 /** The bindings the pipeline reads: the site Worker's env, the cron Worker's, or a local platform proxy's. */
 export interface PipelineEnv {

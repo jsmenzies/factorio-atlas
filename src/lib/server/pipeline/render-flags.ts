@@ -9,9 +9,9 @@
  * and writes only the difference, so a second run writes nothing, and an FTS row that drifted
  * (e.g. written by an older build) is put right.
  */
-import { bumpPageVersion } from '../page-cache';
-import { addToken, hasToken, removeToken } from './facet-token';
-import { RENDER_TOKEN } from './repository';
+import { bumpPageVersion } from '../page-cache.js';
+import { addToken, hasToken, removeToken } from './facet-token.js';
+import { RENDER_TOKEN } from './repository.js';
 
 const HAS_TOKEN = hasToken(RENDER_TOKEN);
 

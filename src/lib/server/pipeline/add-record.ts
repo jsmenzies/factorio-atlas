@@ -31,13 +31,13 @@
  */
 import { Effect, Layer } from 'effect';
 import { printIdFor, type Site } from '#lib/print-id.js';
-import { bumpPageVersion } from '../page-cache';
-import { admitRecord, type Admission, type AdmitLimits, type Suggestion } from './admit';
-import { blockedBy, liveSources, sourcesOf, type PrintSourceRow } from './identity-db';
-import { ingestRecord, postedLater, syncSources } from './pipeline';
-import { RawStoreR2 } from './raw-store';
-import { PrintRepositoryD1 } from './repository';
-import { fromFactorioprints, fromPipelineText, rawKeyFor, toPipelineText, type SourceRecord } from './source-record';
+import { bumpPageVersion } from '../page-cache.js';
+import { admitRecord, type Admission, type AdmitLimits, type Suggestion } from './admit.js';
+import { blockedBy, liveSources, sourcesOf, type PrintSourceRow } from './identity-db.js';
+import { ingestRecord, postedLater, syncSources } from './pipeline.js';
+import { RawStoreR2 } from './raw-store.js';
+import { PrintRepositoryD1 } from './repository.js';
+import { fromFactorioprints, fromPipelineText, rawKeyFor, toPipelineText, type SourceRecord } from './source-record.js';
 
 export interface AddBindings {
 	readonly DB: D1Database;

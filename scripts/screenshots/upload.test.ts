@@ -105,6 +105,20 @@ describe('makeSizes', () => {
 	);
 
 	test(
+		"a tall 37 MP PNG, the shape of codex's largest image, gets every size and a scaled-down full one",
+		inDir(async () => {
+			const tall = await png(2949, 12446);
+			const made = await makeSizes(dir, 'codex.aaaaaaaaaaaaaaaa', 'png', tall);
+			expect(made).toMatchObject({ w: 2949, h: 12446 });
+			expect(Object.keys(made.bytes)).toContain('codex.aaaaaaaaaaaaaaaa.v1.full.webp');
+			const full = await sharp(join(dir, 'sizes/co/codex.aaaaaaaaaaaaaaaa.v1.full.webp')).metadata();
+			expect(full.width! * full.height! <= 3840 * 2160 && full.height! <= 8192).toBe(true);
+			const large = await sharp(join(dir, 'sizes/co/codex.aaaaaaaaaaaaaaaa.v1.l.avif')).metadata();
+			expect(Math.max(large.width!, large.height!)).toBe(2560);
+		})
+	);
+
+	test(
 		'decodes: a complete file does, a cut-off one does not',
 		inDir(async () => {
 			const ok = await png(300, 200);

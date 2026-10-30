@@ -8,8 +8,8 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { stripPrivateFields } from './pipeline/record';
-import { mirrorPath } from './pipeline/source';
+import { stripPrivateFields } from './pipeline/record.js';
+import { mirrorPath } from './pipeline/source.js';
 
 /** The mirror commit fixtures are read at. A fixture id must exist in the mirror at this commit. */
 export const FIXTURE_COMMIT = '96d6afacef10ace4589c838bb64e39c1d0ee84c4';

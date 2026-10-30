@@ -381,10 +381,23 @@ export interface SyncFigures {
 }
 
 /**
- * settings, plan, figures: above; imgur-recheck: when screenshots were last rechecked on Imgur (ms);
- * accept: a held-back source update to fetch anyway, by site (its `to` cursor id).
+ * The record store's prints (other sites and uploads) a render run would draw: those with a 2.0+ page, as
+ * `[print id, record file stamp]` (scripts/render/store-scope.ts). The Update tab counts those the render queue
+ * hasn't looked at at that stamp.
  */
-export type SyncMetaKey = 'settings' | 'plan' | 'figures' | 'imgur-recheck' | 'accept';
+export interface StorePrints {
+	at: number;
+	modern: [string, string][];
+	/** Records with no 2.0+ page (never rendered), and records that couldn't be decoded. */
+	older: number;
+	unreadable: number;
+}
+
+/**
+ * settings, plan, figures: above; imgur-recheck: when screenshots were last rechecked on Imgur (ms);
+ * accept: a held-back source update to fetch anyway, by site (its `to` cursor id); store-prints: above.
+ */
+export type SyncMetaKey = 'settings' | 'plan' | 'figures' | 'imgur-recheck' | 'accept' | 'store-prints';
 
 // --- estimates
 

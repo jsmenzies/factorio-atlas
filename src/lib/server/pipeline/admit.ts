@@ -25,10 +25,10 @@
  * write); the soft fold then hides the later one when the author is the same.
  */
 import { Effect } from 'effect';
-import { decodeExchangeString } from './decode';
-import { fingerprintPrint, type PrintFingerprint } from './identity';
-import { blockedBy, blockHashes, JOIN_MIN_SIZE, PAGE_MIN_SIZE } from './identity-db';
-import type { SourceRecord } from './source-record';
+import { decodeExchangeString } from './decode.js';
+import { fingerprintPrint, type PrintFingerprint } from './identity.js';
+import { blockedBy, blockHashes, JOIN_MIN_SIZE, PAGE_MIN_SIZE } from './identity-db.js';
+import type { SourceRecord } from './source-record.js';
 
 export interface AdmitLimits {
 	/** UTF-8 bytes of the exchange string. */

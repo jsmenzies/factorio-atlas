@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { toPipelineText, type SourceRecord } from '#lib/server/pipeline/source-record.js';
-import { allowedImageUrl, imageUrlOf, siteImage } from './site-images.js';
+import { allowedImageUrl, imageUrlOf, MAX_IMAGE_BYTES, siteImage } from './site-images.js';
 import { imageFetcher, planSiteImages, siteImageEntry } from './sites.js';
 import type { StateEntry } from './state.js';
 
@@ -8,6 +8,17 @@ import type { StateEntry } from './state.js';
 const PNG = new Uint8Array([
 	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 3, 0, 0, 0, 2, 8, 6, 0, 0, 0
 ]);
+/** A body of `n` chunks of `size` bytes, one buffer reused, with no Content-Length. */
+const chunked = (n: number, size: number) => {
+	const chunk = new Uint8Array(size);
+	let left = n;
+	return new ReadableStream<Uint8Array>({
+		pull(c) {
+			if (left-- > 0) c.enqueue(chunk);
+			else c.close();
+		}
+	});
+};
 const URL_A = 'https://factoriocodex.s3.us-west-000.backblazeb2.com/1793299168947779659-abc.png';
 const entry = (id: string, status: StateEntry['status'], file?: string): StateEntry => ({
 	id,
@@ -93,6 +104,11 @@ describe('site images', () => {
 		expect(siteImageEntry({ id: 'codex.eeeeeeeeeeeeeeee', prints: [] }, new Uint8Array([1, 2, 3]), 'now')).toMatchObject({
 			status: 'failed'
 		});
+		// A failed image (e.g. "over 30 MB" before the cap went up) is planned again on the next run.
+		expect(
+			planSiteImages([shown[3]], new Map([[shown[3].id, { ...entry(shown[3].id, 'failed'), reason: 'over 30 MB from x' }]]), () => true)
+				.todo
+		).toEqual([shown[3]]);
 	});
 
 	test('the fetch: a User-Agent, no Referer, retried on 5xx, 404 passed back', async () => {
@@ -102,7 +118,11 @@ describe('site images', () => {
 			new Response(PNG),
 			new Response('', { status: 404 }),
 			new Response('', { status: 302, headers: { location: 'https://elsewhere.example/x.png' } }),
-			new Response(new Uint8Array(31 * 1024 * 1024))
+			// Over the old 30 MB cap, under the 100 MB one: the size of codex's largest image (codex-487, 97,279,019 bytes).
+			new Response(chunked(1, 97_279_019)),
+			new Response(new Uint8Array(1), { headers: { 'content-length': String(MAX_IMAGE_BYTES + 1) } }),
+			// No length given: cut off by the running count once past the cap, never buffered whole.
+			new Response(chunked(101, 1024 * 1024))
 		];
 		const get = imageFetcher({
 			minIntervalMs: 0,
@@ -115,7 +135,9 @@ describe('site images', () => {
 		expect(await get(URL_A)).toEqual({ bytes: PNG });
 		expect(await get(URL_A)).toEqual({ status: 404, reason: 'HTTP 404' });
 		expect(await get(URL_A)).toMatchObject({ status: 302 });
-		expect(await get(URL_A)).toEqual({ status: 200, reason: 'over 30 MB' });
+		expect(((await get(URL_A)) as { bytes: Uint8Array }).bytes.length).toBe(97_279_019);
+		expect(await get(URL_A)).toEqual({ status: 200, reason: 'over 100 MB' });
+		expect(await get(URL_A)).toEqual({ status: 200, reason: 'over 100 MB' });
 		expect(new Headers(seen[0].headers).get('user-agent')).toContain('factorio-atlas');
 		expect(seen[0].referrerPolicy).toBe('no-referrer');
 		expect(seen[0].redirect).toBe('manual');

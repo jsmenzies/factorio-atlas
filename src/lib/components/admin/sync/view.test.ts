@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { ScopeFigures } from '#lib/server/admin/render-scope.js';
+import { withStoreWaiting, type ScopeFigures } from '#lib/server/admin/render-scope.js';
 import { DEFAULT_SETTINGS, freshSteps, type SourcePlan, type SyncPlan, type SyncRun } from '#lib/sync.js';
 import { polledFetchDetails, polledIngestDetails } from '../../../../../scripts/sync/polled';
 import { previewCost, previewSteps, renderWork, sourceRunRows, sourceState, unchecked, updateState, upToDateLine } from './view';
@@ -79,6 +79,24 @@ describe('previewSteps', () => {
 		expect(steps[1].idle).toBe(true);
 		expect(steps[2].idle).toBe(true);
 		expect(steps[5].idle).toBe(true);
+	});
+	test('nothing new anywhere but other sites’ prints waiting for their first render: a render, not a quick update', () => {
+		// The Overview's coverage with the record store's never-rendered prints added (withStoreWaiting): 590 waiting.
+		const scopes = withStoreWaiting(
+			{
+				modern: union(0),
+				top: { ...union(0), modern: 0, preModern: 0, unseen: 0 },
+				union: union(0),
+				former: 0,
+				favorites: null,
+				check: null
+			},
+			{ unseen: 590, changed: 0 }
+		);
+		const steps = previewSteps(plan(level), scopes.union, DEFAULT_SETTINGS);
+		expect(steps[5].idle).toBe(false);
+		expect(steps[5].text).toContain('render about 500 prints (the per-update limit)');
+		expect(previewCost(plan(level), scopes.union, DEFAULT_SETTINGS).pages).toBe(500 * 11);
 	});
 	test('a held-back source is named in the fetch line', () => {
 		expect(previewSteps(plan({ blocked: 'too much' }), union(0), DEFAULT_SETTINGS)[1].text).toBe(

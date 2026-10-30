@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Schema } from 'effect';
 import { isFactorioprintsId } from '#lib/print-id.js';
-import { FetchError, NotFoundError } from './errors';
+import { FetchError, NotFoundError } from './errors.js';
 
 export interface SourceConfig {
 	/** GitHub mirror of `/blueprints`, one JSON file per print. Bulk reads go here. */

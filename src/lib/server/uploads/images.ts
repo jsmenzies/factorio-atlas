@@ -17,10 +17,10 @@
  */
 import { imageSize, sniff } from '#lib/image-header.js';
 import { uploadImageId } from '#lib/screenshots.js';
-import { bumpPageVersion } from '../page-cache';
-import { insertBlocks } from '../removal-blocks';
-import type { UploadGate } from './gate';
-import { IMAGE_TYPES, imageKey, putRecord, readRecord, type ImageExt } from './uploads';
+import { bumpPageVersion } from '../page-cache.js';
+import { insertBlocks } from '../removal-blocks.js';
+import type { UploadGate } from './gate.js';
+import { IMAGE_TYPES, imageKey, putRecord, readRecord, type ImageExt } from './uploads.js';
 
 /** One upload that sent a pending image. */
 export interface ImageUpload {

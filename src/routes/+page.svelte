@@ -16,7 +16,7 @@
 	import { parseTag } from '#lib/tags.js';
 	import { MULTI_FILTERS } from '#lib/filters.js';
 	import { QUALITY_WORDS, splitQuality, takesQuality, withQualityValue, type QualityLevel } from '#lib/quality.js';
-	import { landingMeta, landingPath, searchPage, searchRel } from '#lib/search-seo.js';
+	import { defaultSort, landingMeta, landingPath, searchPage, searchRel } from '#lib/search-seo.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -99,12 +99,17 @@
 	const versionValue = $derived(versionInSelect ? (data.params.version[0] ?? '') : 'several');
 	/** One version set that isn't a choice (an old exact "2.1.21" link) stays shown as itself. */
 	const versionExtra = $derived(versionInSelect && versionValue && !data.versionChoices.includes(versionValue) ? versionValue : null);
-	/** The search with a new sort or version: a new order or filter starts again at the first page; other filters stay. */
+	/**
+	 * The search with a new sort or version: a new order or filter starts again at the first page; other filters stay.
+	 * The order the new search has anyway (defaultSort: newest first on the home page, most favourited with a filter)
+	 * leaves `sort` out, so it keeps its one URL.
+	 */
 	const pickSelect = (key: 'sort' | 'version', value: string) => {
 		const u = new URL(page.url.href);
 		u.searchParams.delete('p');
 		u.searchParams.delete(key);
 		if (value) u.searchParams.set(key, value);
+		if (u.searchParams.get('sort') === defaultSort(u.searchParams)) u.searchParams.delete('sort');
 		goto(`${u.pathname}${u.search}`, { reset: false });
 	};
 	/** The current search on results page `n` (page 1 has no `p`). */
@@ -192,7 +197,7 @@
 		const kind = searchPage(unpaged);
 		if (kind?.kind === 'home' && n > 1) {
 			return {
-				meta: { title: `Factorio blueprints, page ${n} · Blueprint Atlas`, description: `Factorio blueprints, most favourited first: page ${n}.`, noindex: true },
+				meta: { title: `Factorio blueprints, page ${n} · Blueprint Atlas`, description: `Factorio blueprints, newest first: page ${n}.`, noindex: true },
 				heading: `Factorio blueprints, page ${n}`,
 				style: 'hidden'
 			};

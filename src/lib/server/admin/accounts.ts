@@ -9,9 +9,9 @@
  *
  * Deleting an account goes through the owner's own path (uploads.ts deleteAccountStep).
  */
-import { isProvider, SPECS } from '../auth/providers';
-import { SESSION_DAYS } from '../auth/sessions';
-import { deleteAccountStep, uploadsOf, type UploadRow } from '../uploads/uploads';
+import { isProvider, SPECS } from '../auth/providers.js';
+import { SESSION_DAYS } from '../auth/sessions.js';
+import { deleteAccountStep, uploadsOf, type UploadRow } from '../uploads/uploads.js';
 
 export const ACCOUNTS_PAGE_SIZE = 100;
 /** Longest search text, so a pasted essay isn't a LIKE pattern. */

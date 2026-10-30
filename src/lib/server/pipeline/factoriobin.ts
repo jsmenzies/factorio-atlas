@@ -20,9 +20,9 @@
  * Works in the Worker and in Bun.
  */
 import { parsePostLink, postUrl, type PostLink } from '#lib/factoriobin-link.js';
-import type { AdmitLimits } from './admit';
-import { addRecord, knownSource, type AddBindings, type AddResult } from './add-record';
-import type { SourceRecord } from './source-record';
+import type { AdmitLimits } from './admit.js';
+import { addRecord, knownSource, type AddBindings, type AddResult } from './add-record.js';
+import type { SourceRecord } from './source-record.js';
 
 const CDN = 'https://cdn.factoriobin.com/';
 export const FACTORIOBIN_USER_AGENT = 'BlueprintAtlas/1.0 (+https://github.com/jsmenzies/factorio-atlas; adds posts shared by link)';

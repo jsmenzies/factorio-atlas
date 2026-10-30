@@ -9,6 +9,7 @@
 	import type { CardImage } from '#lib/screenshots.js';
 	import type { PrintCard } from '#lib/server/queries.js';
 	import { searchRel } from '#lib/search-seo.js';
+	import { anonymousOn } from '#lib/sources.js';
 
 	/**
 	 * One search result: picture, title, author and counts as a link to the print, then its version,
@@ -76,7 +77,7 @@
 		<div class="space-y-2 p-3">
 			<h3 class="leading-snug font-medium text-stone-100"><RichText text={p.title} {icons} size={18} /></h3>
 			<p class="text-xs text-stone-500">
-				{p.author_name ?? 'unknown author'}{#if showsFavourites(p.source, p.id)} · ★ {p.favorites}{/if} · {p.blueprint_count} blueprint{p.blueprint_count === 1 ? '' : 's'} · {p.entity_count} entities
+				{p.author_name ?? (anonymousOn(p.source, p.id, p.author_name) ? 'anonymous' : 'unknown author')}{#if showsFavourites(p.source, p.id)} · ★ {p.favorites}{/if} · {p.blueprint_count} blueprint{p.blueprint_count === 1 ? '' : 's'} · {p.entity_count} entities
 			</p>
 		</div>
 	</a>

@@ -1,6 +1,6 @@
 import type { Cookies } from '@sveltejs/kit';
-import { decodeFlow, encodeFlow, FLOW_MAX_AGE_S, type Flow } from './oauth';
-import { flowCookieName, HINT_COOKIE, sessionCookieName } from './sessions';
+import { decodeFlow, encodeFlow, FLOW_MAX_AGE_S, type Flow } from './oauth.js';
+import { flowCookieName, HINT_COOKIE, sessionCookieName } from './sessions.js';
 
 /**
  * The session and hint cookies (lib/server/auth/sessions.ts). SameSite=Lax so the provider's redirect

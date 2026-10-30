@@ -1,16 +1,16 @@
 import { Data, Effect, Schema } from 'effect';
-import { ANALYZER_VERSION, analyzePrint, claimedPlanets, claimedVersions, type PrintAnalysis } from './analyze';
-import { decodeExchangeString } from './decode';
+import { ANALYZER_VERSION, analyzePrint, claimedPlanets, claimedVersions, type PrintAnalysis } from './analyze.js';
+import { decodeExchangeString } from './decode.js';
 import { REMOVED_ABORT } from '#lib/server/removal-blocks.js';
-import { BlueprintDecodeError, RecordParseError, StorageError } from './errors';
-import { gameData } from './game-data';
-import type { Admission } from './admit';
-import { fingerprintPrint, type PrintFingerprint } from './identity';
-import type { FoldMember } from './fold';
-import { blockHashes, docSourcesOf, withSourceRow, type PrintSourceRow } from './identity-db';
-import { analysisKey, parsePrintDoc, toPrintDoc, withAuthorName, withFold, withSources } from './print-doc';
-import { RawStore } from './raw-store';
-import { FirebaseRecord, stripPrivateFields } from './record';
+import { BlueprintDecodeError, RecordParseError, StorageError } from './errors.js';
+import { gameData } from './game-data.js';
+import type { Admission } from './admit.js';
+import { fingerprintPrint, type PrintFingerprint } from './identity.js';
+import type { FoldMember } from './fold.js';
+import { blockHashes, docSourcesOf, withSourceRow, type PrintSourceRow } from './identity-db.js';
+import { analysisKey, parsePrintDoc, toPrintDoc, withAuthorName, withFold, withSources } from './print-doc.js';
+import { RawStore } from './raw-store.js';
+import { FirebaseRecord, stripPrivateFields } from './record.js';
 import {
 	authorIdOf,
 	INDEX_VERSION,
@@ -19,10 +19,10 @@ import {
 	type Identity,
 	type IngestState,
 	type StoredPrint
-} from './repository';
-import { PrintSource } from './source';
-import { pipelineText, rawKeyOfText, sourceMetaOf, sourceMetaOfRecord, type SourceRecord } from './source-record';
-import { buildViewerFilesEffect, deleteViewerFiles, putViewerFiles, VIEWER_VERSION, type ViewerFiles } from './viewer-files';
+} from './repository.js';
+import { PrintSource } from './source.js';
+import { pipelineText, rawKeyOfText, sourceMetaOf, sourceMetaOfRecord, type SourceRecord } from './source-record.js';
+import { buildViewerFilesEffect, deleteViewerFiles, putViewerFiles, VIEWER_VERSION, type ViewerFiles } from './viewer-files.js';
 
 const sha256 = (text: string) =>
 	Effect.promise(async () => {

@@ -4,7 +4,7 @@
  * Browser-safe; the server side is src/lib/server/reports.ts.
  */
 
-import { isPrintId } from './print-id';
+import { isPrintId } from './print-id.js';
 
 /** 'removal' (the print page's form); other kinds come later, so the column is open text. */
 export type ReportKind = 'removal' | (string & {});

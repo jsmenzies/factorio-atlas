@@ -8,17 +8,17 @@
  */
 import { Effect, Layer } from 'effect';
 import type { Site } from '#lib/print-id.js';
-import { admitRecord, WORKER_LIMITS, type Admission, type AdmitLimits, type Suggestion } from '../pipeline/admit';
-import { sourcesOf, type PrintSourceRow } from '../pipeline/identity-db';
-import { pipelineLayer, type PipelineEnv } from '../pipeline/layers';
-import { ingestRecord, syncFold, syncSources } from '../pipeline/pipeline';
-import { RawStoreR2 } from '../pipeline/raw-store';
-import { PrintRepositoryD1 } from '../pipeline/repository';
-import { sourceGone } from '../pipeline/source-gone';
-import { PrintSource } from '../pipeline/source';
-import { fromFactorioprints, fromPipelineText, rawKeyFor, type SourceRecord } from '../pipeline/source-record';
-import { purgePrintData, type TakedownEnv, type TakedownResult } from '../takedown';
-import { OFFLINE_MAX_INFLATED_BYTES } from '../pipeline/decode';
+import { admitRecord, WORKER_LIMITS, type Admission, type AdmitLimits, type Suggestion } from '../pipeline/admit.js';
+import { sourcesOf, type PrintSourceRow } from '../pipeline/identity-db.js';
+import { pipelineLayer, type PipelineEnv } from '../pipeline/layers.js';
+import { ingestRecord, syncFold, syncSources } from '../pipeline/pipeline.js';
+import { RawStoreR2 } from '../pipeline/raw-store.js';
+import { PrintRepositoryD1 } from '../pipeline/repository.js';
+import { sourceGone } from '../pipeline/source-gone.js';
+import { PrintSource } from '../pipeline/source.js';
+import { fromFactorioprints, fromPipelineText, rawKeyFor, type SourceRecord } from '../pipeline/source-record.js';
+import { purgePrintData, type TakedownEnv, type TakedownResult } from '../takedown.js';
+import { OFFLINE_MAX_INFLATED_BYTES } from '../pipeline/decode.js';
 
 export type { SourceRecord, Suggestion };
 

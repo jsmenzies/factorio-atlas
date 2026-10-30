@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { BlueprintDecodeError } from './errors';
+import { BlueprintDecodeError } from './errors.js';
 
 /**
  * Zip-bomb guard. The largest real print inflates to about 120 MB, close to this default;

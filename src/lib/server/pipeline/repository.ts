@@ -2,13 +2,13 @@ import { Context, Effect, Layer } from 'effect';
 import { nicknamesFor } from '#lib/aliases.js';
 import { QUALITY_LEVELS } from '#lib/quality.js';
 import { isPrintRemoved } from '#lib/server/removal-blocks.js';
-import type { PrintAnalysis } from './analyze';
-import { buildingsIn } from './buildings';
-import { gameData } from './game-data';
-import { StorageError } from './errors';
-import type { PrintFingerprint } from './identity';
-import { bumpPageVersion } from '../page-cache';
-import { blockedBy, identityStatements, sourcesOf, sourcesStatement, type PrintSourceRow } from './identity-db';
+import type { PrintAnalysis } from './analyze.js';
+import { buildingsIn } from './buildings.js';
+import { gameData } from './game-data.js';
+import { StorageError } from './errors.js';
+import type { PrintFingerprint } from './identity.js';
+import { bumpPageVersion } from '../page-cache.js';
+import { blockedBy, identityStatements, sourcesOf, sourcesStatement, type PrintSourceRow } from './identity-db.js';
 import {
 	FOLDED_PREFIX_SQL,
 	FOLDED_TOKEN,
@@ -18,10 +18,10 @@ import {
 	planFold,
 	type FoldMember,
 	type FoldState
-} from './fold';
-import type { FirebaseRecord } from './record';
-import { toEpochMs } from './record';
-import type { SourceMeta } from './source-record';
+} from './fold.js';
+import type { FirebaseRecord } from './record.js';
+import { toEpochMs } from './record.js';
+import type { SourceMeta } from './source-record.js';
 
 /**
  * Version of what `upsert` writes to D1 for a print: the search index (`facetTokens`, FTS columns,
@@ -83,6 +83,18 @@ export interface FailedPrint {
 	readonly reason: string;
 	readonly favorites: number;
 }
+
+/**
+ * `prints.updated_at`, the "Recently updated" order (the home page's default; index prints_updated): the record's
+ * updated date, else its posted date (factoriobin posts have no updated date, and never change), else the time it
+ * was first admitted (`fromRecord` false: a re-ingest keeps the row's earlier value, so such a print doesn't
+ * jump to the top on every re-index). A NULL would sort last for good. The print's document keeps the record's
+ * own dates; the About tab shows "Updated" only from those.
+ */
+export const recentSortDate = (r: Pick<FirebaseRecord, 'createdDate' | 'lastUpdatedDate'>, now: number) => {
+	const own = toEpochMs(r.lastUpdatedDate) ?? toEpochMs(r.createdDate);
+	return { at: own ?? now, fromRecord: own !== null };
+};
 
 export class PrintRepository extends Context.Service<
 	PrintRepository,
@@ -496,6 +508,7 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 		) =>
 			tryD1(`d1.upsert ${id}`, async () => {
 				const now = Date.now();
+				const sortDate = recentSortDate(r, now);
 				const authorId = authorIdOf(r);
 				const ownName = r.author?.displayName || null;
 				const items = [
@@ -518,7 +531,7 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 							ON CONFLICT (id) DO UPDATE SET source = excluded.source, source_url = excluded.source_url, title = excluded.title,
 								author_id = excluded.author_id, author_name = excluded.author_name, favorites = excluded.favorites,
 								image_id = excluded.image_id, image_type = excluded.image_type, created_at = excluded.created_at,
-								updated_at = excluded.updated_at, raw_key = excluded.raw_key, raw_sha256 = excluded.raw_sha256,
+								updated_at = ${sortDate.fromRecord ? 'excluded.updated_at' : 'COALESCE(prints.updated_at, excluded.updated_at)'}, raw_key = excluded.raw_key, raw_sha256 = excluded.raw_sha256,
 								ingested_at = excluded.ingested_at, analyzer_version = excluded.analyzer_version, root_kind = excluded.root_kind,
 								game_version = excluded.game_version, game_major = excluded.game_major, blueprint_count = excluded.blueprint_count,
 								entity_count = excluded.entity_count, requires_space_age = excluded.requires_space_age,
@@ -536,7 +549,7 @@ export const PrintRepositoryD1 = (db: D1Database, hooks: PrintRepositoryHooks = 
 							r.image?.id ?? null,
 							r.image?.type ?? null,
 							toEpochMs(r.createdDate),
-							toEpochMs(r.lastUpdatedDate),
+							sortDate.at,
 							rawKey,
 							rawSha256,
 							now,

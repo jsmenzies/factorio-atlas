@@ -8,11 +8,11 @@
  */
 import type { Cookies } from '@sveltejs/kit';
 import { withSignInMark } from '#lib/last-sign-in.js';
-import { sessionToken, setSessionCookies, takeFlowCookie } from './cookies';
-import { exchangeCode } from './oauth';
-import { isProvider, providerClient, SPECS, type Profile, type ProviderVars } from './providers';
-import { createSession } from './sessions';
-import { signInAccount } from './users';
+import { sessionToken, setSessionCookies, takeFlowCookie } from './cookies.js';
+import { exchangeCode } from './oauth.js';
+import { isProvider, providerClient, SPECS, type Profile, type ProviderVars } from './providers.js';
+import { createSession } from './sessions.js';
+import { signInAccount } from './users.js';
 
 export interface CallbackDeps {
 	db: D1Database;

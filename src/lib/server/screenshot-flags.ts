@@ -7,7 +7,7 @@
  * `screenshot_removals` to 'removed', writes only the difference, then purges the page cache.
  * `bun run screenshots:remove` writes one removal at once (`removalStatements`).
  */
-import { bumpPageVersion } from './page-cache';
+import { bumpPageVersion } from './page-cache.js';
 
 export type ShotRow = { state: 'copied'; v: number; ext: string; w: number; h: number } | { state: 'dead' | 'removed' };
 

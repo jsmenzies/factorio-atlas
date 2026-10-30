@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from 'effect';
-import { StorageError } from './errors';
+import { StorageError } from './errors.js';
 
 /**
  * The RAW bucket: the sanitised source records (`factorioprints/<id>.json`, so analysis can be re-run

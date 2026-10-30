@@ -4,7 +4,7 @@
  * `facet_counts` kind 'uses'). Search itself works for every entity: `facetTokens` indexes a
  * `uses_entity_<name>` token for all of them, so widening this list never needs a re-index.
  */
-import { gameData, type GameData } from './game-data';
+import { gameData, type GameData } from './game-data.js';
 
 /**
  * Prototype types worth searching by: crafting machines (assemblers, furnaces, chemical plant,

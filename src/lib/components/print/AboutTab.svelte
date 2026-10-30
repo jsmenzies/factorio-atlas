@@ -9,7 +9,7 @@
 	import { plainText } from '#lib/richtext.js';
 	import { NO_SHOT, type ShotView } from '#lib/screenshots.js';
 	import { searchRel } from '#lib/search-seo.js';
-	import { siteUrl, SOURCE_SITES, sourcesOfPrint, urlText } from '#lib/sources.js';
+	import { anonymousOn, siteUrl, SOURCE_SITES, sourcesOfPrint, urlText } from '#lib/sources.js';
 
 	/**
 	 * Where a print comes from (the original, author, dates), the description saved inside the
@@ -30,6 +30,8 @@
 	const sources = $derived(
 		sourcesOfPrint(print).map((s) => ({ site: s.site, name: SOURCE_SITES[s.site]?.name ?? s.site, url: siteUrl(s.site, s.site_id) }))
 	);
+	// A factoriobin post that names nobody: "posted anonymously" rather than "by an unknown author".
+	const anonymous = $derived(anonymousOn(print.source, print.id, print.author_name) !== null);
 	const alt = $derived(`Screenshot of ${plainText(String(print.title))}`);
 	let lightbox = $state<ShotLightbox>();
 	let shotFailed = $state(false);
@@ -90,12 +92,17 @@
 		<section class="space-y-3">
 			<h3 class="border-b border-stone-800 pb-2 font-semibold text-stone-100">Source</h3>
 			<p class="text-sm text-stone-300">
-				{#if sources[0]?.url}From {sources[0].name}: <a class="text-amber-400 underline" href={sources[0].url} rel="external"
+				{#if anonymous && sources[0]?.url}From {sources[0].name}: <a class="text-amber-400 underline" href={sources[0].url} rel="external"
 						>{urlText(sources[0].url)}</a
-					>, by{:else if sources[0]?.site === 'upload'}Uploaded here by{:else}Posted by{/if}
-				{#if print.author_id}<a class="text-stone-100 underline decoration-stone-500 hover:text-amber-300" href="/?author={print.author_id}" rel={searchRel(`/?author=${print.author_id}`)}
-						>{print.author_name ?? 'unknown author'}</a
-					>{:else if print.author_name}{print.author_name}{:else}an unknown author{/if}.
+					>, posted anonymously.
+				{:else}
+					{#if sources[0]?.url}From {sources[0].name}: <a class="text-amber-400 underline" href={sources[0].url} rel="external"
+							>{urlText(sources[0].url)}</a
+						>, by{:else if sources[0]?.site === 'upload'}Uploaded here by{:else}Posted by{/if}
+					{#if print.author_id}<a class="text-stone-100 underline decoration-stone-500 hover:text-amber-300" href="/?author={print.author_id}" rel={searchRel(`/?author=${print.author_id}`)}
+							>{print.author_name ?? 'unknown author'}</a
+						>{:else if print.author_name}{print.author_name}{:else}an unknown author{/if}.
+				{/if}
 			</p>
 			{#each sources.slice(1) as s, i (i)}
 				<p class="text-sm text-stone-300">

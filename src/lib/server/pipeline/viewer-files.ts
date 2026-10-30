@@ -9,9 +9,9 @@ import { Effect } from 'effect';
 import { listPagesWithNodes } from '#lib/viewer/extract.js';
 import { pageBase } from '#lib/viewer/game-render.js';
 import type { PageRef } from '#lib/viewer/types.js';
-import { encodeExchangeString } from './decode';
-import { StorageError } from './errors';
-import { RawStore } from './raw-store';
+import { encodeExchangeString } from './decode.js';
+import { StorageError } from './errors.js';
+import { RawStore } from './raw-store.js';
 
 /** Bump when these files change (listPages output, the strings): re-ingest then rebuilds them without re-analysing. */
 export const VIEWER_VERSION = 4;

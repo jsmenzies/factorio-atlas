@@ -21,8 +21,13 @@ export const SITE_IMAGE_HOSTS: Record<ImageSite, readonly RegExp[]> = {
 	factoriobin: []
 };
 
-/** At most this big; anything larger isn't a screenshot. */
-export const MAX_IMAGE_BYTES = 30 * 1024 * 1024;
+/**
+ * At most this big; anything larger isn't a screenshot. codex has large PNGs: 28 of its images were 37–97 MB on
+ * 2026-10-31, the largest 97,279,019 bytes (92.8 MiB). One of 96.6 MB (2,949 × 12,446) was sized in ≈ 9 s at
+ * ≈ 550 MB peak; over CAP, so only its scaled-down full size goes up, not the original. Imgur's copy (fetch.ts)
+ * has no cap of its own.
+ */
+export const MAX_IMAGE_BYTES = 100 * 1024 * 1024;
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 

@@ -136,3 +136,30 @@ export function parseScopes(results: { results?: unknown[] }[]): RenderScopes {
 		check: parseMeta(byKey.get('source-check'))
 	};
 }
+
+/**
+ * Record-store prints (other sites, uploads) with a 2.0+ page, from sync_meta 'store-prints'
+ * (scripts/render/store-scope.ts), against the render queue: `unseen`, never looked at (no render_prints row),
+ * and `changed`, looked at but their record has changed since (another stamp). The coverage figures above count
+ * only prints with a row, so without this the Update tab said "Nothing to render" while hundreds of codex and
+ * fprints prints waited for their first render.
+ */
+export const STORE_WAITING_SQL = `SELECT
+	coalesce(sum(p.print_id IS NULL), 0) AS unseen,
+	coalesce(sum(p.print_id IS NOT NULL AND p.stamp IS NOT json_extract(s.value, '$[1]')), 0) AS changed
+FROM json_each(coalesce((SELECT json_extract(value, '$.modern') FROM sync_meta WHERE key = 'store-prints'), '[]')) s
+LEFT JOIN render_prints p ON p.print_id = json_extract(s.value, '$[0]')`;
+
+/**
+ * The coverage with the store's prints added: those never looked at are in scope and left (every 2.0+ print, and
+ * the union), as a 2.0+ print with no rows is; changed ones count as `updated`, as a changed mirror record does.
+ */
+export const withStoreWaiting = (scopes: RenderScopes, store: { unseen: number; changed: number }): RenderScopes => {
+	const add = (f: ScopeFigures): ScopeFigures => ({
+		...f,
+		total: f.total + store.unseen,
+		left: f.left + store.unseen,
+		updated: f.updated + store.changed
+	});
+	return { ...scopes, modern: add(scopes.modern), union: add(scopes.union) };
+};

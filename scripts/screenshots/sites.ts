@@ -32,6 +32,9 @@ import { EXT, imageSize, md5, sniff } from './image.js';
 import { imageUrlOf, MAX_IMAGE_BYTES } from './site-images.js';
 import { formatEntry, originalPath, type StateEntry } from './state.js';
 
+/** One GET, body included: an image at MAX_IMAGE_BYTES needs ≈ 0.9 MB/s (codex's 97 MB one took 7 s here). */
+const FETCH_TIMEOUT_MS = 120_000;
+
 /** An image the stage's prints show: its id and the prints. */
 export interface ShownImage {
 	id: string;
@@ -105,7 +108,7 @@ export function imageFetcher(
 					headers: { 'user-agent': USER_AGENT, accept: 'image/*' },
 					redirect: 'manual',
 					referrerPolicy: 'no-referrer',
-					signal: AbortSignal.timeout(60_000)
+					signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
 				});
 			} catch (e) {
 				if (attempt >= (o.tries ?? 3)) return { status: 0, reason: e instanceof Error ? e.message : String(e) };

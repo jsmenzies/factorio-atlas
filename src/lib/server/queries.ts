@@ -8,8 +8,9 @@ import {
 	withQualityValue,
 	type QualityLevel
 } from '#lib/quality.js';
-import { FOLDED_TOKEN } from './pipeline/fold';
-import { atQuality, authorToken, MODULES, moduleToken, qualityToken, RENDER_TOKEN, slug, versionTokens } from './pipeline/repository';
+import { defaultSort, type SortOrder } from '#lib/search-seo.js';
+import { FOLDED_TOKEN } from './pipeline/fold.js';
+import { atQuality, authorToken, MODULES, moduleToken, qualityToken, RENDER_TOKEN, slug, versionTokens } from './pipeline/repository.js';
 
 export { MULTI_FILTERS, type MultiFilter } from '#lib/filters.js';
 
@@ -36,7 +37,7 @@ export interface SearchParams {
 	/** Only prints with a game render in this stage's bucket (`?render=1`; print_renders, migration 0015). */
 	render: boolean;
 	/** `popular`: most viewed over the last 30 days (prints.views_30d, from `bun run views:sync`), then favourites. */
-	sort: 'favorites' | 'recent' | 'relevance' | 'popular';
+	sort: SortOrder;
 	/** 1-based results page (`?p=2`), at most MAX_PAGES. */
 	page: number;
 }
@@ -64,8 +65,9 @@ export const parsePage = (v: string | null) => {
 };
 
 /**
- * Read search params from a URL. `sort` defaults to best match when there is text to match and
- * to most favourited otherwise; "relevance" without text means nothing, so it falls back too.
+ * Read search params from a URL. `sort` defaults to best match when there is text to match, to most
+ * favourited with any filter, and to newest first on the home page (defaultSort, #lib/search-seo.ts);
+ * "relevance" without text means nothing, so it falls back too.
  */
 export const parseSearch = (url: URL): SearchParams => {
 	const g = (k: string) => url.searchParams.get(k)?.trim() || null;
@@ -92,7 +94,7 @@ export const parseSearch = (url: URL): SearchParams => {
 		circuits: g('circuits') === '1',
 		trains: g('trains') === '1',
 		render: g('render') === '1',
-		sort: sort === 'recent' || sort === 'favorites' || sort === 'popular' ? sort : q ? 'relevance' : 'favorites',
+		sort: sort === 'recent' || sort === 'favorites' || sort === 'popular' ? sort : defaultSort(url.searchParams),
 		page: parsePage(g('p'))
 	};
 };

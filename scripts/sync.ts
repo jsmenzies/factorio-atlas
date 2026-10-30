@@ -89,6 +89,7 @@ import { defaultAssets } from './render/assets-dir';
 import { favoritesCacheFile, rankFavorites, readFavorites } from './render/favorites';
 import type { RecordsResult } from './records';
 import { recordsDir } from './records/store';
+import { scanStorePrints, STORE_SCOPE_CACHE } from './render/store-scope';
 import { cloneSource } from './render/source';
 import { confirmProd, fail, n } from './stage-command';
 import { localDbFile, openLocalDb } from './sync/local-db';
@@ -201,6 +202,21 @@ const SOURCES: SourceAdapter[] = [
  * screenshots read the mirror alone: uploads are ingested by the Worker (or the uploads source), and
  * their screenshots come from the stage. Moving a step to the store changes only this.
  */
+/**
+ * The record store's prints with a 2.0+ page and their stamps (sync_meta 'store-prints'), so the Update tab's
+ * estimate counts those waiting to render (src/lib/server/admin/sync.ts). Never fails the caller.
+ */
+const saveStorePrints = async () => {
+	try {
+		const { decoded, ...prints } = await scanStorePrints(records, join(ROOT, '.cache', 'render', STORE_SCOPE_CACHE));
+		await writeMeta(db, 'store-prints', prints);
+		return { ...prints, decoded };
+	} catch (e) {
+		console.error(`store prints: ${e instanceof Error ? e.message : String(e)}`);
+		return null;
+	}
+};
+
 const recordSourceArgs = (o: { store?: boolean } = {}) => ['--from-clone', clone, ...(o.store ? ['--records', records] : [])];
 
 const short = (id: string | null | undefined) => id?.slice(0, 7) ?? '?';
@@ -249,6 +265,7 @@ if (flags.plan) {
 	if (live) fail(`an update is running (${live.id}): its fetch step checks the sources itself`);
 	const plan = await planAll();
 	await writeMeta(db, 'plan', plan);
+	await saveStorePrints();
 	console.log(flags.json ? JSON.stringify(plan) : plan.sources.map(describeSource).join('\n'));
 	local.close();
 	process.exit(0);
@@ -572,6 +589,8 @@ const steps: StepDef[] = [
 					(site) => (SOURCES.find((s) => s.site === site) as { lastApply?: string } | undefined)?.lastApply
 				)
 			} satisfies SyncPlan);
+			// What the record store now holds for the render step, for the Update tab's estimate.
+			if (store?.ok) await saveStorePrints();
 			const summary = [...parts, ...errors].join(' · ');
 			const details: DetailGroup[] = plans
 				.filter((p) => !p.error)

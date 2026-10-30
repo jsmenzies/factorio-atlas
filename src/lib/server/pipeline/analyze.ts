@@ -1,5 +1,5 @@
-import { decodeGameVersion } from './decode';
-import { DLC_MODS, gameData as defaultGameData, type GameData, type SurfaceCondition } from './game-data';
+import { decodeGameVersion } from './decode.js';
+import { DLC_MODS, gameData as defaultGameData, type GameData, type SurfaceCondition } from './game-data.js';
 
 /**
  * Bump when the analyzer's output changes so stored prints can be re-analyzed

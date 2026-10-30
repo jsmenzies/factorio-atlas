@@ -93,6 +93,10 @@ describe('sitemap', () => {
 			'/?q=red%20science',
 			'/?p=2',
 			'/?sort=popular',
+			// Most favourited is no longer the home page's order, so it is a sort like the others; newest first is
+			// the home page's own order, and nothing links to it with `sort` (the select leaves the default out).
+			'/?sort=favorites',
+			'/?sort=recent',
 			'/?author=SWFBEjQvP7aHu91wPxwryXXflTf2',
 			'/?render=1',
 			'/?version=2.0',

@@ -16,7 +16,7 @@ import {
 	type SyncRunRow
 } from '#lib/sync.js';
 import { parseRenderRun, type RenderRun } from './render.js';
-import { parseScopes, scopeStatements } from './render-scope.js';
+import { parseScopes, scopeStatements, STORE_WAITING_SQL, withStoreWaiting } from './render-scope.js';
 
 export const SYNC_RUNS_SHOWN = 10;
 
@@ -49,9 +49,12 @@ export const syncOverview = async (db: D1Database, now = Date.now()) => {
 				`SELECT * FROM render_runs WHERE state IN (${LIVE_STATES.map(() => '?').join(', ')}) AND updated_at > ? ORDER BY started_at DESC LIMIT 1`
 			)
 			.bind(...LIVE_STATES, now - RENDER_STALE_MS),
+		db.prepare(STORE_WAITING_SQL),
 		...scopes
 	]);
-	const [runRows, metaRows, totals, liveRender, ...scopeResults] = results;
+	const [runRows, metaRows, totals, liveRender, storeWaiting, ...scopeResults] = results;
+	const store = storeWaiting.results[0] as { unseen?: number; changed?: number } | undefined;
+	const waiting = { unseen: Number(store?.unseen ?? 0), changed: Number(store?.changed ?? 0) };
 	const runs: SyncRun[] = (runRows.results as SyncRunRow[]).map(parseSyncRun);
 	const m = metaRows.results as { key: string; value: string; updated_at: number }[];
 	const stored = meta<unknown>(m, 'settings');
@@ -64,7 +67,9 @@ export const syncOverview = async (db: D1Database, now = Date.now()) => {
 		figures: meta<SyncFigures>(m, 'figures'),
 		totals: totals.results[0] as unknown as RenderTotals,
 		liveRender: render ? (parseRenderRun({ ...render, options: '{}' }) as RenderRun) : null,
-		scopes: parseScopes(scopeResults)
+		/** Record-store prints never rendered (already in `scopes`' total and left) and changed since (in `updated`). */
+		storeWaiting: waiting,
+		scopes: withStoreWaiting(parseScopes(scopeResults), waiting)
 	};
 };
 

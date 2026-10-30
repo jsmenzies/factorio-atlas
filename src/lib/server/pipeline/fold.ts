@@ -21,9 +21,9 @@
  * have changed or gone); `planAllFolds` reads them all (`bun run fold`). `foldStatements` writes the
  * differences. Narrowing or widening the rule is `foldGroup` alone, plus a FOLD_VERSION bump.
  */
-import { bumpPageVersion } from '../page-cache';
-import { addToken, hasToken, removeToken } from './facet-token';
-import { JOIN_MIN_SIZE } from './identity-db';
+import { bumpPageVersion } from '../page-cache.js';
+import { addToken, hasToken, removeToken } from './facet-token.js';
+import { JOIN_MIN_SIZE } from './identity-db.js';
 
 /**
  * The rule's version: bump it when `foldGroup` changes, so the next backfill (and so the next update's

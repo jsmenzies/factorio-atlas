@@ -6,7 +6,7 @@
  * credited first (`PrintDoc.print.sources`, written by the pipeline's `syncSources`). Documents without a
  * list have one source, the site the print was first seen on, read from the print's id (`ownSource`).
  */
-import { SITE_PREFIX, siteOfPrintId, type Site } from './print-id';
+import { SITE_PREFIX, siteOfPrintId, type Site } from './print-id.js';
 
 export interface SiteInfo {
 	/** As shown: "factorioprints.com". */
@@ -69,3 +69,15 @@ export const docSources = (printId: string, live: readonly PrintSource[]): Print
 	if (live.length === 1 && own && live[0].site === own.site && live[0].site_id === own.site_id) return undefined;
 	return live.map((s) => ({ site: s.site, site_id: s.site_id }));
 };
+
+/**
+ * The site a print was posted on anonymously, for its byline ("Posted anonymously on factoriobin.com"), or null.
+ * Only factoriobin: most of its posts name nobody, by design. `site` is the site of the record the print shows
+ * (`prints.source`, the document's `source`; else the id's). Other sites' prints with no name keep "unknown
+ * author" (fprints' API gives no author names at all, so every fprints print reads so).
+ */
+export const anonymousOn = (
+	site: Site | string | null | undefined,
+	printId: string,
+	authorName: string | null | undefined
+): string | null => (!authorName?.trim() && (site ?? siteOfPrintId(printId)) === 'factoriobin' ? SOURCE_SITES.factoriobin.name : null);

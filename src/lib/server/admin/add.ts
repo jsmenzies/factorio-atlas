@@ -5,8 +5,8 @@
  * an add reads factoriobin once.
  */
 import { summaryOf, type AddView } from '#lib/add-by-link.js';
-import { WORKER_LIMITS } from '../pipeline/admit';
-import { addFactoriobinPost, type Fetcher } from '../pipeline/factoriobin';
+import { WORKER_LIMITS } from '../pipeline/admit.js';
+import { addFactoriobinPost, type Fetcher } from '../pipeline/factoriobin.js';
 
 const CACHE_S = 600;
 

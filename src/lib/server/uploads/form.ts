@@ -1,5 +1,5 @@
 /** The upload and edit forms' fields (routes/upload, routes/uploads/[id]), read into an UploadInput. */
-import { IMAGE_MAX_BYTES, type UploadInput } from './uploads';
+import { IMAGE_MAX_BYTES, type UploadInput } from './uploads.js';
 
 const text = (form: FormData, key: string) => {
 	const v = form.get(key);

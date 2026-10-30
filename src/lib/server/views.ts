@@ -8,7 +8,7 @@
  */
 
 import { isPrintId } from '#lib/print-id.js';
-import { bumpPageVersion } from './page-cache';
+import { bumpPageVersion } from './page-cache.js';
 
 /** User agents that announce a crawler, preview fetcher or headless browser. */
 const BOT = /bot|crawl|spider|slurp|preview|headless|lighthouse|python|curl|wget|httpclient|fetch/i;

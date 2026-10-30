@@ -158,7 +158,7 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 							? `refresh the top ${int(settings.top)} favourites, look for changed records; `
 							: 'look for changed records; ') +
 						(prints
-							? `render about ${int(prints)} prints${capped ? ` (the per-update limit)` : ''}: new 2.0+ prints and what's left in scope; then thumbnails, the render filter and the page cache`
+							? `render about ${int(prints)} prints${capped ? ` (the per-update limit)` : ''}: new 2.0+ prints and what's left in scope, other sites' and uploads included; then thumbnails, the render filter and the page cache`
 							: 'nothing to render, unless the top list or changed records add some'),
 					idle: !prints
 				},

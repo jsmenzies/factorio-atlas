@@ -215,6 +215,39 @@ describe('adding through the gate', () => {
 		});
 	});
 
+	test('"Recently updated" order: a post has no updated date, so its posted date; with neither, when first admitted, kept on re-ingest', async () => {
+		const s = setup();
+		const { fetcher } = site({
+			LYMz5ZJT: { info: info('LYMz5ZJT'), string: STRING },
+			NoDate12: { info: info('NoDate12', { post: { createdAt: null } }), string: BOOK }
+		});
+		await addFactoriobinPost(s.b, 'LYMz5ZJT', { fetch: fetcher });
+		const posted = Date.parse('2023-11-30T22:54:41.243Z');
+		expect(s.one('SELECT created_at, updated_at FROM prints WHERE id = ?', 'fbin-LYMz5ZJT')).toEqual({
+			created_at: posted,
+			updated_at: posted
+		});
+		// The document keeps the record's own dates: the About tab shows no "Updated" line for it.
+		const doc = JSON.parse(s.RAW.objects.get('analysis/fbin-LYMz5ZJT.json')!) as { print: { updated_at: number | null } };
+		expect(doc.print.updated_at).toBeNull();
+
+		const before = Date.now();
+		await addFactoriobinPost(s.b, 'NoDate12', { fetch: fetcher });
+		const first = s.one<{ created_at: number | null; updated_at: number }>(
+			'SELECT created_at, updated_at FROM prints WHERE id = ?',
+			'fbin-NoDate12'
+		)!;
+		expect(first.created_at).toBeNull();
+		expect(first.updated_at >= before && first.updated_at <= Date.now()).toBe(true);
+		// Re-ingested (a re-index, a re-analysis): it keeps its place rather than jumping to the top again.
+		s.sqlite.run(`UPDATE prints SET updated_at = 5 WHERE id = 'fbin-NoDate12'`);
+		const record = toSourceRecord(parseInfo('NoDate12', info('NoDate12', { post: { createdAt: null } })), BOOK);
+		const admitted = await admitRecord(s.DB, record);
+		if (admitted.status !== 'existing') throw new Error(admitted.status);
+		await Effect.runPromise(Effect.provide(ingestRecord(record, admitted, { force: true }), pipelineLayer(s.env)));
+		expect(s.one('SELECT updated_at FROM prints WHERE id = ?', 'fbin-NoDate12')).toEqual({ updated_at: 5 });
+	});
+
 	test('a copy of a factorioprints print joins it as another source, archived, not shown when posted later', async () => {
 		const s = setup();
 		await ingestFactorioprints(s);

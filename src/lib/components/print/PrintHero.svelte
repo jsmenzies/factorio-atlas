@@ -9,6 +9,7 @@
 	import { plainText } from '#lib/richtext.js';
 	import { NO_SHOT, type ShotView } from '#lib/screenshots.js';
 	import { searchRel } from '#lib/search-seo.js';
+	import { anonymousOn } from '#lib/sources.js';
 
 	/**
 	 * The top of the print page, full width: back link, the print's icons, title and author, how
@@ -45,6 +46,8 @@
 	} = $props();
 
 	const plainTitle = $derived(plainText(title));
+	// A factoriobin post that names nobody (#lib/sources.ts anonymousOn): said so, rather than "by unknown author".
+	const anonymous = $derived(anonymousOn(print.source, print.id, print.author_name));
 	let lightbox = $state<ShotLightbox>();
 
 	const contents = $derived(
@@ -102,12 +105,12 @@
 					<div class="min-w-0">
 						<h1 class="text-3xl font-bold text-stone-50 sm:text-4xl"><RichText text={title} {icons} size={34} /></h1>
 						<p class="mt-1 text-stone-300">
-							by {#if print.author_id}<a
+							{#if anonymous}Posted anonymously on {anonymous}{:else}by {#if print.author_id}<a
 									class="text-stone-100 underline decoration-stone-500 hover:text-amber-300"
 									href="/?author={print.author_id}"
 									rel={searchRel(`/?author=${print.author_id}`)}
 									title="Every print by this author">{print.author_name ?? 'unknown author'}</a
-								>{:else}{print.author_name ?? 'unknown author'}{/if}{#if showsFavourites(print.source, print.id)} · ★ {print.favorites}{/if}
+								>{:else}{print.author_name ?? 'unknown author'}{/if}{/if}{#if showsFavourites(print.source, print.id)} · ★ {print.favorites}{/if}
 						</p>
 					</div>
 				</div>

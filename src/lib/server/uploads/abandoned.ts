@@ -10,7 +10,7 @@
  *   R2 calls; a cron invocation may make 10,000 and run 15 minutes), the rest the next day;
  * - one account that fails is logged and the others go on.
  */
-import { deleteAccountStep, type UploadDeps } from './uploads';
+import { deleteAccountStep, type UploadDeps } from './uploads.js';
 
 /** How long after its owner started a deletion the cron may finish it. */
 export const DELETION_GRACE_MS = 60 * 60_000;

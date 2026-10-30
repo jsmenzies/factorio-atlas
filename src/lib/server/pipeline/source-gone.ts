@@ -13,7 +13,7 @@
  * `refold` runs, so a call cut short between the purge and the refold is finished by running it again.
  */
 import type { Site } from '#lib/print-id.js';
-import { sourcesOf, winnerOf, type PrintSourceRow } from './identity-db';
+import { sourcesOf, winnerOf, type PrintSourceRow } from './identity-db.js';
 
 export type SourceGoneResult =
 	/** No such source row. */

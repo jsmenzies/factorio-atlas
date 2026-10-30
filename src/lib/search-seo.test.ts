@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { landingMeta, landingPath, searchPage, searchRel } from './search-seo.js';
+import { defaultSort, isFiltered, landingMeta, landingPath, searchPage, searchRel } from './search-seo.js';
 
 const page = (query: string) => searchPage(new URLSearchParams(query));
 
@@ -7,7 +7,9 @@ describe('searchPage', () => {
 	test('no search text or filter is the home page, whatever else is in the URL', () => {
 		expect(page('')).toEqual({ kind: 'home' });
 		expect(page('utm_source=reddit&fbclid=x')).toEqual({ kind: 'home' });
-		expect(page('sort=favorites&q=')).toEqual({ kind: 'home' });
+		// Newest first is the home page's own order; most favourited is another order of it.
+		expect(page('sort=recent&q=')).toEqual({ kind: 'home' });
+		expect(page('sort=favorites')).toBeNull();
 		expect(page('p=1')).toEqual({ kind: 'home' });
 	});
 
@@ -38,6 +40,32 @@ describe('searchPage', () => {
 	});
 });
 
+describe('defaultSort', () => {
+	const sortOf = (query: string) => defaultSort(new URLSearchParams(query));
+	test('newest first on the home page, most favourited with any filter, best match with text', () => {
+		for (const q of ['', 'p=3', 'utm_source=x', 'q=%20', 'sort=favorites', 'circuits=0', 'spaceAge=maybe', 'quality=shiny', 'makes='])
+			expect(sortOf(q)).toBe('recent');
+		for (const q of [
+			'makes=item:rail',
+			'uses=entity:foundry',
+			'author=h5YXq2',
+			'version=2.0',
+			'tag=/x/',
+			'quality=epic',
+			'spaceAge=no',
+			'circuits=1',
+			'trains=1',
+			'render=1',
+			'module=speed-module-3'
+		])
+			expect(sortOf(q)).toBe('favorites');
+		expect(sortOf('q=red')).toBe('relevance');
+		expect(sortOf('q=red&makes=item:rail')).toBe('relevance');
+		expect(isFiltered(new URLSearchParams('render=1'))).toBe(true);
+		expect(isFiltered(new URLSearchParams('sort=recent&p=2'))).toBe(false);
+	});
+});
+
 describe('links and meta', () => {
 	test('nofollow only for links to pages that are noindex', () => {
 		expect(searchRel('/')).toBeUndefined();
@@ -46,6 +74,12 @@ describe('links and meta', () => {
 		expect(searchRel('/?version=2.0')).toBe('nofollow');
 		expect(searchRel('/?makes=item%3Arail&p=1')).toBeUndefined();
 		expect(searchRel('/?makes=item%3Arail&p=3')).toBe('nofollow');
+		// A landing page in its own order (most favourited) is the landing page; newest first is another order.
+		expect(searchRel('/?makes=item%3Arail&sort=favorites')).toBeUndefined();
+		expect(searchRel('/?makes=item%3Arail&sort=recent')).toBe('nofollow');
+		expect(searchRel('/?sort=favorites')).toBe('nofollow');
+		expect(searchRel('/?sort=recent')).toBeUndefined();
+		expect(searchRel('/?sort=popular')).toBe('nofollow');
 	});
 
 	test('a landing page has one URL', () => {

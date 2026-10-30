@@ -5,9 +5,9 @@
  * cookies for, a session. Ask from a route that isn't cached (`/me`, a form action) instead.
  */
 import type { Cookies } from '@sveltejs/kit';
-import { clearHintCookie, clearSessionCookies, hasHintCookie, sessionToken, setSessionCookies } from './cookies';
-import { readSession } from './sessions';
-import type { Account } from './users';
+import { clearHintCookie, clearSessionCookies, hasHintCookie, sessionToken, setSessionCookies } from './cookies.js';
+import { readSession } from './sessions.js';
+import type { Account } from './users.js';
 
 export const CACHED_ROUTE_READ = 'cached route read the session';
 

@@ -9,8 +9,8 @@
  * factorioprints' maintainer, so the command asks slowly, one id at a time, and an answer of no
  * name is kept too. A print whose record names its author keeps that name.
  */
-import { bumpPageVersion } from '../page-cache';
-import { analysisKey, withAuthorName } from './print-doc';
+import { bumpPageVersion } from '../page-cache.js';
+import { analysisKey, withAuthorName } from './print-doc.js';
 
 export const FIREBASE_URL = 'https://facorio-blueprints.firebaseio.com';
 

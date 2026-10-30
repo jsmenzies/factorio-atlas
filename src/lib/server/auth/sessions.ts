@@ -7,8 +7,8 @@
  * Beside it, a readable `atlas_signed_in=1` cookie holds no secret: it only lets the page show
  * "Account" rather than "Sign in" before it has asked `/me` who is signed in (app.html).
  */
-import { randomToken } from './oauth';
-import { accountOf, NAME_HOLD_DAYS, type Account, type AccountRow } from './users';
+import { randomToken } from './oauth.js';
+import { accountOf, NAME_HOLD_DAYS, type Account, type AccountRow } from './users.js';
 
 export const SESSION_DAYS = 30;
 /** Signed-in browsers per account; signing in on one more ends the oldest. */

@@ -11,7 +11,7 @@
  */
 import type { Site } from '#lib/print-id.js';
 import { siteUrl } from '#lib/sources.js';
-import { stripPrivateFields, toEpochMs, type FirebaseRecord } from './record';
+import { stripPrivateFields, toEpochMs, type FirebaseRecord } from './record.js';
 
 export interface SourceAuthor {
 	readonly site: Site;

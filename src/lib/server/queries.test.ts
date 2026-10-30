@@ -1,15 +1,37 @@
 import { describe, expect, test } from 'bun:test';
 import { facetText, RENDER_TOKEN } from './pipeline/repository.js';
-import { clipQuery, filterTokens, MAX_FILTER_VALUES, MAX_PAGES, MAX_QUERY_LENGTH, parsePage, parseSearch } from './queries.js';
+import {
+	clipQuery,
+	filterTokens,
+	matchExpression,
+	MAX_FILTER_VALUES,
+	MAX_PAGES,
+	MAX_QUERY_LENGTH,
+	parsePage,
+	parseSearch
+} from './queries.js';
 
 const sortOf = (search: string) => parseSearch(new URL(`http://x/${search}`)).sort;
 
 describe('parseSearch sort', () => {
-	test('defaults to most favourited without text, best match with it', () => {
-		expect(sortOf('')).toBe('favorites');
+	test('defaults to newest first on the home page, most favourited with a filter, best match with text', () => {
+		expect(sortOf('')).toBe('recent');
+		expect(sortOf('?p=2')).toBe('recent');
+		expect(sortOf('?q=%20%20')).toBe('recent');
+		// Values parseSearch ignores aren't filters.
+		expect(sortOf('?circuits=0&spaceAge=maybe&quality=shiny')).toBe('recent');
 		expect(sortOf('?makes=item:pipe')).toBe('favorites');
+		expect(sortOf('?uses=foundry')).toBe('favorites');
+		expect(sortOf('?author=h5YXq2')).toBe('favorites');
+		expect(sortOf('?render=1')).toBe('favorites');
+		expect(sortOf('?version=2.0')).toBe('favorites');
 		expect(sortOf('?q=smelting')).toBe('relevance');
-		expect(sortOf('?q=%20%20')).toBe('favorites');
+		expect(sortOf('?q=smelting&makes=item:pipe')).toBe('relevance');
+	});
+
+	test('the default sort is newest first exactly when the search has neither text nor a filter', () => {
+		for (const q of ['', '?circuits=0', '?q=', '?makes=item:pipe', '?quality=epic', '?quality=nope', '?author=x', '?render=1', '?trains=1'])
+			expect(sortOf(q) === 'recent').toBe(matchExpression(parseSearch(new URL(`http://x/${q}`))) === '');
 	});
 
 	test('keeps an explicit sort', () => {
@@ -21,9 +43,10 @@ describe('parseSearch sort', () => {
 	});
 
 	test('best match without text, or an unknown sort, falls back to the default', () => {
-		expect(sortOf('?sort=relevance')).toBe('favorites');
+		expect(sortOf('?sort=relevance')).toBe('recent');
+		expect(sortOf('?makes=item:pipe&sort=relevance')).toBe('favorites');
 		expect(sortOf('?q=smelting&sort=bogus')).toBe('relevance');
-		expect(sortOf('?sort=bogus')).toBe('favorites');
+		expect(sortOf('?sort=bogus')).toBe('recent');
 	});
 });
 

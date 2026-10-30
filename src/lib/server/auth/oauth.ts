@@ -5,7 +5,7 @@
  * matches that cookie, so nobody can sign a visitor in to an account of theirs, and exchanges it
  * with the verifier.
  */
-import { SPECS, type Client, type Provider } from './providers';
+import { SPECS, type Client, type Provider } from './providers.js';
 
 /** How long a sign-in may take at the provider. */
 export const FLOW_MAX_AGE_S = 600;

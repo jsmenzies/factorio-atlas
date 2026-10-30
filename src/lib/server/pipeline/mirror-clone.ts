@@ -10,7 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { FACTORIOPRINTS_ID_PATTERN } from '#lib/print-id.js';
-import { mirrorPath } from './source';
+import { mirrorPath } from './source.js';
 
 export interface CloneEntry {
 	readonly id: string;

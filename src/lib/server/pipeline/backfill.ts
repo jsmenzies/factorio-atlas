@@ -3,7 +3,7 @@
  * and ETA, and the status lines shared by the live terminal view and `bun run backfill:status`.
  */
 import { D1_MONTHLY_ROWS, fullRunEstimate, R2_FREE_CLASS_A, writers } from '#lib/run-estimate.js';
-import { LIVE_STATES, type PipelineRun } from './runs';
+import { LIVE_STATES, type PipelineRun } from './runs.js';
 
 /**
  * `--limit n`: n records spread evenly over the source sorted by size (ties by id), so a small test

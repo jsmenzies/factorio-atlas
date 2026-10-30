@@ -23,8 +23,8 @@
  * changing what goes into them needs a migration that empties print_fingerprints and an INDEX_VERSION
  * bump to fill it again, and leaves existing hash blocks behind.
  */
-import { decodeGameVersion } from './decode';
-import { gameData } from './game-data';
+import { decodeGameVersion } from './decode.js';
+import { gameData } from './game-data.js';
 
 /**
  * Version of what the ingest writes to the identity tables (fingerprints, sources, folds). In the one-click
