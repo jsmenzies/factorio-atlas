@@ -11,8 +11,9 @@
  *   print's archived record in RAW (`prints.raw_key`: the pipeline text's `source.image`) and checked against
  *   the id. Prints that joined another print show that print's image, so theirs are never copied.
  * - Each is copied once into the same originals folder and run state as Imgur's (its bytes never change: a
- *   new URL is a new id). 404 or 410: dead, never asked again. Anything else (5xx, a timeout, not an image,
- *   over MAX_IMAGE_BYTES): failed, tried again on the next run. One the run state has as removed (a takedown)
+ *   new URL is a new id). 404 or 410 on two runs in a row: dead, never asked again. Anything else (5xx, a
+ *   timeout, a redirect, not an image, over MAX_IMAGE_BYTES, read with a running count): failed, tried again
+ *   on the next run. One the run state has as removed (a takedown)
  *   is never copied again.
  * - Polite: the importer's User-Agent (scripts/sync/polled.ts), no Referer, at most one request a second per
  *   host, 3 tries with backoff on 429/5xx/network errors. None of Imgur's checks (canary, removed.png,
@@ -99,9 +100,10 @@ export function imageFetcher(
 			last.set(host, Date.now());
 			let res: Response;
 			try {
+				// No redirects: the image must be where the record says (an allowed host), not wherever it points.
 				res = await (o.fetch ?? fetch)(url, {
 					headers: { 'user-agent': USER_AGENT, accept: 'image/*' },
-					redirect: 'follow',
+					redirect: 'manual',
 					referrerPolicy: 'no-referrer',
 					signal: AbortSignal.timeout(60_000)
 				});
@@ -110,13 +112,37 @@ export function imageFetcher(
 				await sleep(5000 * attempt);
 				continue;
 			}
+			if (res.status >= 300 && res.status < 400) {
+				await res.body?.cancel();
+				return { status: res.status, reason: `redirected (HTTP ${res.status}), not followed` };
+			}
 			if (res.ok) {
-				const length = Number(res.headers.get('content-length'));
-				if (length > MAX_IMAGE_BYTES) {
+				const over = { status: res.status, reason: `over ${MAX_IMAGE_BYTES / 1024 / 1024} MB` };
+				if (Number(res.headers.get('content-length')) > MAX_IMAGE_BYTES) {
 					await res.body?.cancel();
-					return { status: res.status, reason: `over ${MAX_IMAGE_BYTES / 1024 / 1024} MB` };
+					return over;
 				}
-				return { bytes: new Uint8Array(await res.arrayBuffer()) };
+				// Read with a running count: a body longer than it said is cut off at the cap, not buffered whole.
+				const chunks: Uint8Array[] = [];
+				let size = 0;
+				const reader = res.body?.getReader();
+				for (;;) {
+					const part = reader ? await reader.read() : { done: true as const, value: undefined };
+					if (part.done) break;
+					size += part.value.length;
+					if (size > MAX_IMAGE_BYTES) {
+						await reader?.cancel();
+						return over;
+					}
+					chunks.push(part.value);
+				}
+				const bytes = new Uint8Array(size);
+				let at = 0;
+				for (const c of chunks) {
+					bytes.set(c, at);
+					at += c.length;
+				}
+				return { bytes };
 			}
 			await res.body?.cancel();
 			if ((res.status === 429 || res.status >= 500) && attempt < (o.tries ?? 3)) {
@@ -209,7 +235,16 @@ export async function runFromSites(dir: string, stateFile: string, entries: Map<
 									throw e;
 								}
 							}
-						} else entry = settle(got.status === 404 || got.status === 410 ? 'dead' : 'failed', `${got.reason} from ${new URL(url).host}`);
+						} else {
+							// Gone at the source only when it answered so on an earlier run too: one 404 may be a blip.
+							const gone = got.status === 404 || got.status === 410;
+							const before = entries.get(s.id);
+							const twice = gone && before?.status === 'failed' && /^HTTP 4(04|10) /.test(before.reason ?? '');
+							entry = settle(
+								twice ? 'dead' : 'failed',
+								`${got.reason} from ${new URL(url).host}${gone && !twice ? ' (dead if again next run)' : ''}`
+							);
+						}
 					}
 				} catch (e) {
 					entry = settle('failed', e instanceof Error ? e.message : String(e));

@@ -59,9 +59,10 @@ export interface UploadGate {
 	admit(record: SourceRecord, printId: string, extra: D1PreparedStatement[]): Promise<GateOutcome>;
 	/**
 	 * The upload's source is gone (its owner deleted it, or the account): if another source keeps the
-	 * print it stays (hand-over), else the print is purged with `extras`.
+	 * print it stays (hand-over), else the print is purged with `extras`. `site` (default 'upload') lets a
+	 * polled site's script (fprints) use the same hand-over and purge.
 	 */
-	sourceGone(siteId: string, extras: PurgeExtras): Promise<'purged' | 'kept' | 'none'>;
+	sourceGone(siteId: string, extras: PurgeExtras, site?: Site): Promise<'purged' | 'kept' | 'none'>;
 	/** Whether an upload image is blocked: removal_blocks kind 'image', value `upload.<16 hex>` (`imageId` is the 16 hex). */
 	imageBlocked(imageId: string): Promise<boolean>;
 }
@@ -199,16 +200,16 @@ export const workerGate = (env: GateEnv): UploadGate => {
 
 	return {
 		admit: (record, printId, extra) => admitUpload(env, record, printId, extra, WORKER_LIMITS),
-		sourceGone: async (siteId, extras) => {
+		sourceGone: async (siteId, extras, site = 'upload') => {
 			const purge = async (printId: string) =>
 				purgePrintData(env, printId, { kind: 'gone', screenshotToo: await ownImage(printId), ...extras });
-			const r = await sourceGone(env.DB, 'upload', siteId, {
+			const r = await sourceGone(env.DB, site, siteId, {
 				purge,
 				// If the next source can't be ingested here (over the Worker's caps, the mirror unreachable), the
 				// print goes; that source's next sync admits it again as a print of its own.
 				reingest: (printId, winner) =>
 					reingest(printId, winner).catch(async (e) => {
-						console.warn(`uploads: ${printId} hand-over to ${winner.site}:${winner.site_id} failed, purged instead: ${reasonOf(e)}`);
+						console.warn(`${site}: ${printId} hand-over to ${winner.site}:${winner.site_id} failed, purged instead: ${reasonOf(e)}`);
 						await purge(printId);
 						await run(syncFold(printId));
 						// The backfill admits that source again, but the sync skips it while nothing else changed.

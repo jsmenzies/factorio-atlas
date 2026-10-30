@@ -14,8 +14,8 @@ export type ImageSite = 'codex' | 'fprints' | 'factoriobin';
 
 /** Where each site keeps its uploaders' images: an image elsewhere is not copied (its record has none). Add a site's here. */
 export const SITE_IMAGE_HOSTS: Record<ImageSite, readonly RegExp[]> = {
-	// Backblaze B2 (factoriocodex.s3.us-west-000.backblazeb2.com).
-	codex: [/^[a-z0-9-]+\.s3\.[a-z0-9-]+\.backblazeb2\.com$/],
+	// codex's own Backblaze B2 bucket (factoriocodex.s3.us-west-000.backblazeb2.com), no other.
+	codex: [/^factoriocodex\.s3\.[a-z0-9-]+\.backblazeb2\.com$/],
 	fprints: [],
 	factoriobin: []
 };

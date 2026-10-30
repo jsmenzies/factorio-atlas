@@ -228,6 +228,10 @@ export interface PollWork {
 	read: { siteId: string; rev: string; updatedAt: number }[];
 	/** Known ids the full listing lacks: read each to confirm (404 or private = gone). */
 	missing: string[];
+	/** This plan was accepted (sync_meta 'accept'): its missing prints may all be found gone. */
+	accepted: boolean;
+	/** Pending reads a full listing no longer shows: dropped. */
+	dropPending: string[];
 	/** Every page was listed. */
 	full: boolean;
 	/** The newest change listed. */
@@ -291,6 +295,8 @@ export async function planPoll(
 	const work: PollWork = {
 		read: [...read.values()].sort((a, b) => a.updatedAt - b.updatedAt),
 		missing,
+		accepted: false,
+		dropPending: full ? Object.keys(state.pending).filter((id) => !listed.has(id)) : [],
 		full,
 		newest: Math.max(state.cursor, ...[...listed.values()].map((i) => i.updatedAt)),
 		total: first.total,
@@ -307,6 +313,7 @@ export async function planPoll(
 				date: work.newest
 			}
 		: from;
+	work.accepted = o.accept === to.id;
 	let blocked: string | null = null;
 	if (first.total === 0 && knownCount > 0)
 		blocked = `the site lists no prints (this machine has ${knownCount.toLocaleString('en-US')}): check the site before fetching`;
@@ -357,6 +364,8 @@ export interface ApplyCounts {
 	gone: number;
 	/** Listed as missing but still there (a listing glitch). */
 	stillThere: number;
+	/** Missing and answering gone, past the most one fetch believes (maxChange): kept, checked again. */
+	goneHeld: number;
 	/** Reads that failed: pending, tried again next update. */
 	failed: number;
 	/** Not read: over the per-update cap or stopped; pending. */
@@ -370,12 +379,32 @@ export async function applyPoll(
 	state: PollState,
 	work: PollWork,
 	http: PoliteHttp,
-	o: { perUpdate: number; stopping?: () => boolean; signal?: AbortSignal; log?: (line: string) => void; now?: () => number }
+	o: {
+		perUpdate: number;
+		/** At most this share of the known prints is marked gone in one fetch (the plan's guard, again on the reads). */
+		maxChange: number;
+		stopping?: () => boolean;
+		signal?: AbortSignal;
+		log?: (line: string) => void;
+		now?: () => number;
+	}
 ): Promise<ApplyCounts> {
 	const now = o.now ?? Date.now;
 	const log = o.log ?? (() => undefined);
 	const stopping = () => (o.stopping?.() ?? false) || (o.signal?.aborted ?? false);
-	const c: ApplyCounts = { lists: http.lists, reads: 0, new: 0, changed: 0, rewritten: 0, gone: 0, stillThere: 0, failed: 0, left: 0 };
+	const c: ApplyCounts = {
+		lists: http.lists,
+		reads: 0,
+		new: 0,
+		changed: 0,
+		rewritten: 0,
+		gone: 0,
+		stillThere: 0,
+		goneHeld: 0,
+		failed: 0,
+		left: 0
+	};
+	const maxGone = work.accepted ? Infinity : Math.max(1, Math.floor(o.maxChange * Object.keys(state.records).length));
 	const readsBefore = http.reads;
 	let budget = o.perUpdate;
 	let sinceSave = 0;
@@ -391,6 +420,11 @@ export async function applyPoll(
 		}
 		log(`${site.site}/${siteId}: gone (${why})`);
 	};
+	/**
+	 * One read. `rev` is the revision a listing showed (a print it lists as public): then a "gone" answer is a
+	 * failed read, kept pending. Only a print missing from a full listing (`rev` null) can be found gone, and
+	 * at most `maxGone` in one fetch.
+	 */
 	const readOne = async (siteId: string, rev: string | null) => {
 		let got: Fetched;
 		try {
@@ -405,6 +439,18 @@ export async function applyPoll(
 			return 'failed' as const;
 		}
 		if ('gone' in got) {
+			if (rev !== null) {
+				// The list says it is there: the detail endpoint answering otherwise is the site's problem, not a deletion.
+				c.failed++;
+				state.pending[siteId] = rev;
+				log(`${site.site}/${siteId}: ✗ listed, but its record answered ${got.gone}: tried again next update`);
+				return 'failed' as const;
+			}
+			if (c.gone >= maxGone) {
+				c.goneHeld++;
+				log(`${site.site}/${siteId}: ✗ ${got.gone}, but ${c.gone} already gone in this fetch (the most it believes): kept`);
+				return 'failed' as const;
+			}
 			await markGone(siteId, got.gone);
 			return 'gone' as const;
 		}
@@ -422,8 +468,9 @@ export async function applyPoll(
 		return 'ok' as const;
 	};
 
-	// Every pending read is in the plan's work (a full listing drops those the site no longer lists).
-	state.pending = {};
+	// Pending reads stay in the state until each is read, so a fetch cut short loses none; a full listing
+	// drops those the site no longer lists (never read: nothing else to undo).
+	for (const id of work.dropPending) delete state.pending[id];
 	const queue = [...work.read];
 	while (queue.length && budget > 0 && !stopping()) {
 		const next = queue.shift()!;
@@ -445,7 +492,7 @@ export async function applyPoll(
 	}
 	c.left += missing.length;
 	state.cursor = work.newest;
-	if (work.full && !missing.length) state.fullAt = now();
+	if (work.full && !missing.length && !c.goneHeld) state.fullAt = now();
 	state.total = work.total;
 	// Every print was listed, so each one at the old version is read or pending now.
 	if (work.full) state.version = site.version ?? 0;
@@ -469,7 +516,7 @@ export interface PolledSourceOptions {
 export function polledSource(site: PolledSite, o: PolledSourceOptions): SourceAdapter & { lastApply?: string } {
 	const inbox = inboxDir(o.recordsDir);
 	const http = o.http ?? new PoliteHttp();
-	let planned: { state: PollState; work: PollWork; toId: string } | null = null;
+	let planned: { state: PollState; work: PollWork; toId: string; maxChange: number } | null = null;
 	const adapter: SourceAdapter & { lastApply?: string } = {
 		site: site.site,
 		polled: true,
@@ -495,15 +542,16 @@ export function polledSource(site: PolledSite, o: PolledSourceOptions): SourceAd
 			}
 			const state = await readState(inbox, site.site);
 			const { plan, work } = await planPoll(site, state, http, { maxChange: p.maxChange, accept: p.accept, signal: p.signal });
-			planned = { state, work, toId: plan.to.id };
+			planned = { state, work, toId: plan.to.id, maxChange: p.maxChange };
 			return plan;
 		},
 		apply: async (plan, signal) => {
 			if (!planned || planned.toId !== plan.to.id) throw new Error(`${site.site}: apply without its plan`);
-			const { state, work } = planned;
+			const { state, work, maxChange } = planned;
 			planned = null;
 			const c = await applyPoll(site, inbox, state, work, http, {
 				perUpdate: o.settings().perUpdate,
+				maxChange,
 				stopping: o.stopping,
 				signal,
 				log: o.log
@@ -522,6 +570,7 @@ export function polledSource(site: PolledSite, o: PolledSourceOptions): SourceAd
 					changed: c.changed,
 					'gone from the site': c.gone,
 					'still listed after all': c.stillThere,
+					'gone, held (too many at once)': c.goneHeld,
 					failed: c.failed,
 					left: pending
 				}
@@ -552,6 +601,7 @@ export const polledFetchDetails = (p: SourcePlan, counts: Record<string, number>
 							...detail('changed', counts.changed),
 							...detail('gone from the site', counts['gone from the site'], { tone: 'warn' }),
 							...detail('still listed after all', counts['still listed after all']),
+							...detail('gone, held (too many at once)', counts['gone, held (too many at once)'], { tone: 'warn' }),
 							...detail('failed, tried again next update', counts.failed ?? 0, { always: true, tone: 'bad' }),
 							...detail('left for the next update', counts.left, { tone: 'warn' })
 						]
@@ -564,7 +614,7 @@ interface AdmitFigures {
 	site: string;
 	waiting: number;
 	counts: Record<string, number>;
-	gone: { purged: number; kept: number; handedOver: number; failed: number };
+	gone: { purged: number; kept: number; failed: number; held: number; waiting: number };
 	suggested: number;
 	suggestedNew: number;
 	suggestions: Record<string, number>;
@@ -585,8 +635,11 @@ export const polledIngestDetails = (r: AdmitFigures): DetailGroup[] => [
 			...detail('unreadable', r.counts.undecodable, { tone: 'warn' }),
 			...detail('failed, tried again next update', r.counts.failed ?? 0, { always: r.waiting > 0, tone: 'bad' }),
 			...detail('gone: purged', r.gone.purged),
-			...detail('gone: kept (another source)', r.gone.kept + r.gone.handedOver),
-			...detail('gone: failed', r.gone.failed, { tone: 'bad' })
+			...detail('gone: kept (another source)', r.gone.kept),
+			...detail('gone: failed', r.gone.failed, { tone: 'bad' }),
+			...detail('gone: held (too many at once)', r.gone.held, { tone: 'warn' }),
+			...detail('gone: waiting for R2 keys', r.gone.waiting, { tone: 'warn' }),
+			...detail('forgotten, read again next fetch', r.counts.refetch, { tone: 'warn' })
 		]
 	}
 ];

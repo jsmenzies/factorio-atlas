@@ -1,59 +1,54 @@
 /**
- * `bun run polled --stage local|prod --site codex [--dir DIR] [--dry-run] [--force] [--yes] [--json]`: give
- * the stage what a polled site's inbox holds (scripts/sync/polled.ts): every record at a revision the stage
- * wasn't given goes through the one gate (`admitRecord`, then `ingestRecord`, in Bun with no Worker caps),
- * (`addRecord`, add-record.ts, with `update` for records the site changed), so blocks, joins (the same
- * blueprint already here: first upload wins what is shown) and suggestions apply
- * as for any record; every print the site deleted is a source gone (`sourceGone`): it stays while another
- * source has it, else it is purged as 'gone'.
+ * `bun run polled --stage local|prod --site codex [--dir DIR] [--dry-run] [--force] [--max-change F] [--yes] [--json]`:
+ * give the stage what a polled site's inbox holds (scripts/sync/polled.ts). Every record at a revision the
+ * stage wasn't given goes through the one gate (`addRecord`, add-record.ts: admitRecord, then ingestRecord, in
+ * Bun with no Worker caps; `update` for records the site changed, which detaches a copy edited into something
+ * else), so blocks, joins (the same blueprint already here: first upload wins what is shown) and suggestions
+ * apply as for any record. Every print the site deleted is a source gone, through the site's gate
+ * (uploads/gate.ts `workerGate`, on the stage's real bindings: sync/gate-env.ts): it stays while another source
+ * has it (credit handed over if it was this one), else it is purged as 'gone' with its renders, the edge
+ * cache, and our copy of its screenshot when no other print shows it. A deployed stage needs R2_ACCESS_KEY_ID /
+ * R2_SECRET_ACCESS_KEY for that (and CACHE_PURGE_TOKEN / CACHE_ZONE_ID for the edge); without them the
+ * deletions wait. More than `--max-change` (the update's setting) of the known prints gone at once are held.
  *
  * The one-click update runs it in its ingest step, after the backfill, for each polled site that is on. When
  * it wrote, the record store's copy of the site is pulled from the stage (records/polled.ts), so the render
  * step that follows draws the new prints.
  *
- * A purge from here deletes the stage's rows and RAW objects and bumps the page cache; the print's render
- * files in the stage's RENDERS bucket go with the next `bun run removals` (the update's first step), which
- * sweeps every tombstoned print. Polled prints have no screenshot of ours yet (codex.ts, the image hook).
- *
  * What each stage was given: `<inbox>/<site>/.admitted.<stage>.json`; a record that fails (storage) is not
  * marked and is tried again next run. Refused records (blocked, unreadable) are marked: tried again only
- * when they change.
+ * when they change. A record whose inbox file is gone is forgotten, so the next fetch reads it again.
  *
- *   --dir DIR   the record store (default RECORDS_DIR, else ~/data/factorio-records); the inbox is DIR/.polled
- *   --dry-run   admitRecord only (D1 reads): say what each record would be, write nothing
- *   --force     every inbox record again, whatever the stage was given
- *   --yes       don't ask before writing to prod
- *   --json      the result as JSON on stdout (`PolledAdmitResult`); every other line to stderr
+ *   --dir DIR        the record store (default RECORDS_DIR, else ~/data/factorio-records); the inbox is DIR/.polled
+ *   --dry-run        D1 reads only: say what each record would be, write nothing
+ *   --force          every inbox record again, whatever the stage was given
+ *   --max-change F   hold the deletions when more than this share of the known prints went at once (0.05)
+ *   --yes            don't ask before writing to prod
+ *   --json           the result as JSON on stdout (`PolledAdmitResult`); every other line to stderr
  *
- * Exit 0 when done (refusals included), 2 on any error or when stopped (130 on the second signal); the last
- * line starts with ✓ or ✗.
+ * Exit 0 when done (refusals and held deletions included), 2 on any error or when stopped (130 on the second
+ * signal); the last line starts with ✓ or ✗.
  */
-import { readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
 import { writeSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { Effect, Layer } from 'effect';
 import { printIdFor } from '#lib/print-id.js';
 import { addRecord } from '#lib/server/pipeline/add-record.js';
-import { admitRecord, type Suggestion } from '#lib/server/pipeline/admit.js';
+import type { Suggestion } from '#lib/server/pipeline/admit.js';
 import { OFFLINE_MAX_INFLATED_BYTES } from '#lib/server/pipeline/decode.js';
-import type { PrintSourceRow } from '#lib/server/pipeline/identity-db.js';
-import { ingestRecord, syncFold, syncSources } from '#lib/server/pipeline/pipeline.js';
 import { RawStoreR2 } from '#lib/server/pipeline/raw-store.js';
 import { PrintRepository, PrintRepositoryD1 } from '#lib/server/pipeline/repository.js';
-import { sourceGone } from '#lib/server/pipeline/source-gone.js';
-import { mirrorPath } from '#lib/server/pipeline/source.js';
-import { fromFactorioprints, fromPipelineText, rawKeyFor, type SourceRecord } from '#lib/server/pipeline/source-record.js';
-import { purgePrintData, type TakedownEnv } from '#lib/server/takedown.js';
-import { markIngestDue } from '#lib/server/uploads/gate.js';
+import { rawKeyFor } from '#lib/server/pipeline/source-record.js';
+import { workerGate } from '#lib/server/uploads/gate.js';
 import { POLLED_SITES } from '#lib/sync.js';
 import { recordsDir, readStoreRecord } from './records/store';
 import { polledStoreAdapter } from './records/polled';
 import { pullSite, type PullCounts } from './records/pull';
-import { confirmProd, n, openStage, parseStageArgs, requireSchema } from './stage-command';
-import { admissionWork, inboxDir, readLedger, readState, writeLedger } from './sync/polled';
+import { confirmProd, n, parseStageArgs, requireSchema } from './stage-command';
+import { openStageGate } from './sync/gate-env';
+import { admissionWork, inboxDir, readLedger, readState, writeLedger, writeState } from './sync/polled';
 
-const USAGE = 'usage: bun run polled --stage local|prod --site <site> [--dir DIR] [--dry-run] [--force] [--yes] [--json]';
+const USAGE = 'usage: bun run polled --stage local|prod --site <site> [--dir DIR] [--dry-run] [--force] [--max-change F] [--yes] [--json]';
 const JSON_OUT = process.argv.includes('--json');
 
 export type AdmitOutcome =
@@ -69,7 +64,9 @@ export type AdmitOutcome =
 	| 'blocked'
 	| 'undecodable'
 	/** Storage or the like: tried again next run. */
-	| 'failed';
+	| 'failed'
+	/** Its inbox file was missing: forgotten, so the next fetch reads it again. */
+	| 'refetch';
 
 export interface PolledAdmitResult {
 	ok: boolean;
@@ -82,8 +79,11 @@ export interface PolledAdmitResult {
 	waiting: number;
 	goneWaiting: number;
 	counts: Record<AdmitOutcome, number>;
-	/** Gone prints: purged (no source left), kept (another source has them), handed over (another source now credited). */
-	gone: { purged: number; kept: number; handedOver: number; failed: number };
+	/**
+	 * Gone prints: purged (no source left), kept (another source has them; credit handed over if it was this
+	 * one), failed; held (more at once than --max-change believes) or waiting (no R2 keys to purge with).
+	 */
+	gone: { purged: number; kept: number; failed: number; held: number; waiting: number };
 	/** Records whose answer carried suggestions (never joins), and the suggestions by kind. */
 	suggested: number;
 	/** Of the new prints, those with suggestions: a near match for an admin to look at, never joined. */
@@ -106,8 +106,8 @@ const result: PolledAdmitResult = {
 	stopped: false,
 	waiting: 0,
 	goneWaiting: 0,
-	counts: { new: 0, joined: 0, updated: 0, unchanged: 0, identified: 0, blocked: 0, undecodable: 0, failed: 0 },
-	gone: { purged: 0, kept: 0, handedOver: 0, failed: 0 },
+	counts: { new: 0, joined: 0, updated: 0, unchanged: 0, identified: 0, blocked: 0, undecodable: 0, failed: 0, refetch: 0 },
+	gone: { purged: 0, kept: 0, failed: 0, held: 0, waiting: 0 },
 	suggested: 0,
 	suggestedNew: 0,
 	suggestions: {},
@@ -142,8 +142,14 @@ const { flags, stage, generation } = parseStageArgs(USAGE, {
 	site: { type: 'string' },
 	dir: { type: 'string' },
 	force: { type: 'boolean', default: false },
+	'max-change': { type: 'string', default: '0.05' },
 	json: { type: 'boolean', default: false }
 });
+const maxChange = Number(flags['max-change']);
+if (!(maxChange > 0 && maxChange <= 1)) {
+	console.error(`--max-change takes a share from 0 to 1\n${USAGE}`);
+	process.exit(2);
+}
 const site = POLLED_SITES.find((p) => p.site === flags.site)?.site;
 if (!site) {
 	console.error(`--site must be one of ${POLLED_SITES.map((p) => p.site).join(', ')}\n${USAGE}`);
@@ -168,7 +174,10 @@ const onSignals = () => {
 	}
 };
 onSignals();
-const target = await openStage(stage, generation);
+const target = await openStageGate(stage, generation).catch((e: unknown) => {
+	console.error(`✗ ${e instanceof Error ? e.message : String(e)}`);
+	process.exit(2);
+});
 onSignals();
 
 const reasonOf = (e: unknown) => (e instanceof Error ? e.message || e.name : String(e)) || 'unknown error';
@@ -185,24 +194,11 @@ const tally = (s: readonly Suggestion[], outcome: AdmitOutcome) => {
 const TRIES = 4;
 const NO_RECORD = 'no record in the inbox';
 
-/**
- * Bun's stand-in for the purge's buckets: RENDERS and SCREENSHOTS aren't bound outside the Worker. Nothing is
- * listed there, so nothing is deleted; the next `removals` run sweeps the tombstoned print's renders from the
- * stage's bucket (through R2's S3 API). No edge purge (no RENDERS_URL): cached render files name the print's
- * own id, whose pages answer 410 once the tombstone is in.
- */
-const noBucket = {
-	list: async () => ({ objects: [], truncated: false, delimitedPrefixes: [] }),
-	delete: async () => undefined,
-	put: async () => null,
-	get: async () => null,
-	head: async () => null
-} as unknown as R2Bucket;
-
 let code = 0;
 try {
 	const env = target.env;
 	const db = env.DB;
+	const gate = workerGate(env);
 	await requireSchema(db, stage, 'SELECT site FROM print_sources LIMIT 0', 'print_sources table', '0022');
 	const state = await readState(inbox, site);
 	const ledger = await readLedger(inbox, site, stage);
@@ -217,7 +213,6 @@ try {
 
 	const layer = Layer.mergeAll(RawStoreR2(env.RAW), PrintRepositoryD1(db));
 	const run = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof layer>>) => Effect.runPromise(Effect.provide(effect, layer));
-	const opts = { maxInflatedBytes: OFFLINE_MAX_INFLATED_BYTES };
 	let sinceSave = 0;
 	const save = async (force = false) => {
 		if (result.dryRun) return;
@@ -266,62 +261,60 @@ try {
 			} catch (e) {
 				outcome = 'failed';
 				note = reasonOf(e);
-				if (note === NO_RECORD || attempt === TRIES) break;
+				if (note === NO_RECORD) {
+					// The inbox lost its file: forget the record, so the next fetch reads it again (never a stuck update).
+					if (!result.dryRun) {
+						delete state.records[siteId];
+						await writeState(inbox, site, state);
+					}
+					outcome = 'refetch';
+					break;
+				}
+				if (attempt === TRIES) break;
 				await new Promise((r) => setTimeout(r, 500 * attempt + Math.random() * 500));
 			}
 		}
 		result.counts[outcome]++;
-		if (!result.dryRun && outcome !== 'failed' && outcome !== 'blocked' && outcome !== 'undecodable' && outcome !== 'unchanged')
-			result.wrote = true;
+		if (!result.dryRun && (outcome === 'new' || outcome === 'joined' || outcome === 'updated')) result.wrote = true;
 		say(`${site}/${siteId}: ${outcome}${note ? ` (${note})` : ''}`);
 		await save();
 	}
 
-	// The site deleted these: a source gone. A factorioprints source taking over is read from the mirror clone.
-	const clone = process.env.RENDER_CLONE_DIR || join(homedir(), 'data', 'factorio-mirror');
-	const takedownEnv: TakedownEnv = { DB: db, RAW: env.RAW, RENDERS: noBucket, SCREENSHOTS: noBucket, RENDERS_URL: '', SCREENSHOTS_URL: '' };
-	const reingest = async (printId: string, winner: PrintSourceRow) => {
-		let record: SourceRecord | null;
-		if (winner.site === 'factorioprints')
-			record = fromFactorioprints(winner.site_id, await readFile(join(clone, mirrorPath(winner.site_id)), 'utf8'));
-		else {
-			const obj = await env.RAW.get(rawKeyFor(winner.site, winner.site_id));
-			record = obj ? fromPipelineText(await obj.text()) : null;
+	// The site deleted these: a source gone, through the site's gate (src/lib/server/uploads/gate.ts): kept while
+	// another source has the print (credit handed over if it was this one), else purged as 'gone', with our copy of
+	// its screenshot when no other print shows it, its renders and the edge cache (gate-env.ts: the stage's real
+	// buckets and purge token). At most maxChange of the known prints at once; more waits for a look.
+	const maxGone = Math.max(1, Math.floor(maxChange * (Object.keys(state.records).length + work.gone.length)));
+	if (work.gone.length > maxGone && !result.dryRun) {
+		result.gone.held = work.gone.length;
+		say(
+			`✗ ${n(work.gone.length)} ${site} prints gone at once, more than ${n(maxGone)}: none deleted (check the site; --max-change to let them go)`
+		);
+	} else if (work.gone.length && !result.dryRun && !target.canPurge) {
+		result.gone.waiting = work.gone.length;
+		say(
+			`! ${n(work.gone.length)} ${site} prints gone, but purging ${stage} needs R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY: left for the next run`
+		);
+	} else
+		for (const siteId of work.gone) {
+			if (stopping || result.dryRun) break;
+			const key = rawKeyFor(site, siteId);
+			try {
+				const r = await gate.sourceGone(siteId, { extra: () => [], extraKeys: [key] }, site);
+				if (r === 'purged') result.gone.purged++;
+				else result.gone.kept++;
+				// Its archive goes too, unless it is still the record a print shows.
+				if (r !== 'purged' && !(await db.prepare('SELECT 1 AS hit FROM prints WHERE raw_key = ?').bind(key).first()))
+					await env.RAW.delete(key);
+				if (r !== 'none') result.wrote = true;
+				say(`${site}/${siteId}: gone from the site: ${r}`);
+				ledger.records[siteId] = 'gone';
+			} catch (e) {
+				result.gone.failed++;
+				say(`${site}/${siteId}: ✗ gone from the site, but: ${reasonOf(e)}`);
+			}
+			await save();
 		}
-		if (!record) throw new Error(`no record for ${winner.site}:${winner.site_id}`);
-		const a = await admitRecord(db, record, opts);
-		if (a.status !== 'existing' || a.printId !== printId) throw new Error(`${winner.site}:${winner.site_id} came out ${a.status}`);
-		const r = await run(ingestRecord(record, a, opts));
-		if (r.status !== 'analysed' && r.status !== 'unchanged') throw new Error(`ingest answered ${r.status}`);
-	};
-	const purge = (printId: string) => purgePrintData(takedownEnv, printId, { kind: 'gone' });
-	for (const siteId of work.gone) {
-		if (stopping || result.dryRun) break;
-		try {
-			const r = await sourceGone(db, site, siteId, {
-				purge,
-				reingest: (printId, winner) =>
-					reingest(printId, winner).catch(async (e) => {
-						say(`${site}/${siteId}: hand-over of ${printId} to ${winner.site}:${winner.site_id} failed, purged instead: ${reasonOf(e)}`);
-						await purge(printId);
-						await run(syncFold(printId));
-						await markIngestDue(db);
-					}),
-				resync: (printId) => run(syncSources(printId)),
-				refold: (printId) => run(syncFold(printId))
-			});
-			if (r.status === 'purged') result.gone.purged++;
-			else if (r.status === 'handed-over') result.gone.handedOver++;
-			else result.gone.kept++;
-			if (r.status === 'purged' || r.status === 'handed-over') result.wrote = true;
-			say(`${site}/${siteId}: gone from the site: ${r.status}${'printId' in r ? ` (${r.printId})` : ''}`);
-			ledger.records[siteId] = 'gone';
-		} catch (e) {
-			result.gone.failed++;
-			say(`${site}/${siteId}: ✗ gone from the site, but: ${reasonOf(e)}`);
-		}
-		await save();
-	}
 	await save(true);
 	// The search sidebar's unfiltered counts, and the page cache (rebuildFacets bumps it).
 	if (result.wrote)
@@ -344,7 +337,9 @@ try {
 		`${n(c.new)} new, ${n(c.joined)} joined an existing print, ${n(c.updated)} updated, ${n(c.unchanged + c.identified)} unchanged, ` +
 		`${n(c.blocked)} blocked, ${n(c.undecodable)} unreadable, ${n(c.failed)} failed; ${n(result.suggestedNew)} of the new with suggestions` +
 		(work.gone.length
-			? `; gone: ${n(result.gone.purged)} purged, ${n(result.gone.kept + result.gone.handedOver)} kept (another source), ${n(result.gone.failed)} failed`
+			? `; gone: ${n(result.gone.purged)} purged, ${n(result.gone.kept)} kept (another source), ${n(result.gone.failed)} failed` +
+				(result.gone.held ? `, ${n(result.gone.held)} held (too many at once)` : '') +
+				(result.gone.waiting ? `, ${n(result.gone.waiting)} waiting for R2 keys` : '')
 			: '') +
 		(result.dryRun ? ' (dry run: nothing written)' : '');
 	if (stopping) {

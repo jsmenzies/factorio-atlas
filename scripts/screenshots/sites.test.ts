@@ -35,6 +35,8 @@ describe('site images', () => {
 		])
 			expect(allowedImageUrl('codex', bad)).toBeNull();
 		expect(siteImage('fprints', URL_A)).toBeNull();
+		// Another Backblaze bucket is not codex's.
+		expect(allowedImageUrl('codex', 'https://someone-else.s3.us-west-000.backblazeb2.com/x.png')).toBeNull();
 	});
 
 	test("the URL comes from the print's archived record, checked against the id", () => {
@@ -83,7 +85,13 @@ describe('site images', () => {
 
 	test('the fetch: a User-Agent, no Referer, retried on 5xx, 404 passed back', async () => {
 		const seen: RequestInit[] = [];
-		const answers = [new Response('', { status: 502 }), new Response(PNG), new Response('', { status: 404 })];
+		const answers = [
+			new Response('', { status: 502 }),
+			new Response(PNG),
+			new Response('', { status: 404 }),
+			new Response('', { status: 302, headers: { location: 'https://elsewhere.example/x.png' } }),
+			new Response(new Uint8Array(31 * 1024 * 1024))
+		];
 		const get = imageFetcher({
 			minIntervalMs: 0,
 			sleep: async () => undefined,
@@ -94,7 +102,10 @@ describe('site images', () => {
 		});
 		expect(await get(URL_A)).toEqual({ bytes: PNG });
 		expect(await get(URL_A)).toEqual({ status: 404, reason: 'HTTP 404' });
+		expect(await get(URL_A)).toMatchObject({ status: 302 });
+		expect(await get(URL_A)).toEqual({ status: 200, reason: 'over 30 MB' });
 		expect(new Headers(seen[0].headers).get('user-agent')).toContain('factorio-atlas');
 		expect(seen[0].referrerPolicy).toBe('no-referrer');
+		expect(seen[0].redirect).toBe('manual');
 	});
 });

@@ -77,7 +77,7 @@ const fetchOnce = async (site: PolledSite, perUpdate = 100, maxChange = 0.05, ac
 	const h = http();
 	const { plan, work } = await planPoll(site, state, h, { maxChange, accept, now: NOW });
 	if (plan.blocked || plan.from.id === plan.to.id) return { plan, counts: null, state };
-	const counts = await applyPoll(site, inbox, state, work, h, { perUpdate, now: () => NOW });
+	const counts = await applyPoll(site, inbox, state, work, h, { perUpdate, maxChange, now: () => NOW });
 	return { plan, counts, state: await readState(inbox, 'codex') };
 };
 
@@ -161,6 +161,42 @@ describe('polled sites: fetch', () => {
 		expect(counts).toMatchObject({ gone: 1 });
 		expect(Object.keys(state.gone)).toEqual(['4']);
 		expect(state.records['4']).toBeUndefined();
+	});
+
+	test('a listed print whose record answers 404 is a failed read, kept pending, never gone', async () => {
+		const prints = new Map([...Array(7)].map((_, i) => [String(i + 1), 100 + i] as [string, number]));
+		const missing = new Set<string>();
+		const version = { v: 1 };
+		const { site } = fakeSite(prints, { missing, version });
+		await fetchOnce(site);
+		prints.set('3', 300);
+		missing.add('3');
+		const one = await fetchOnce(site);
+		expect(one.counts).toMatchObject({ gone: 0, failed: 1 });
+		expect(one.state.records['3'] !== undefined).toBe(true);
+		expect(one.state.pending['3']).toBe('300#1');
+		// A record version bump while the detail endpoint answers 404 for everything: nothing is gone.
+		for (const id of prints.keys()) missing.add(id);
+		version.v = 2;
+		site.version = 2;
+		const all = await fetchOnce(site);
+		expect(all.counts).toMatchObject({ gone: 0, failed: 7 });
+		expect(Object.keys(all.state.records).length).toBe(7);
+		expect(Object.keys(all.state.gone).length).toBe(0);
+	});
+
+	test('the reads find at most maxChange of the known prints gone in one fetch, whatever the plan said', async () => {
+		const prints = new Map([...Array(40)].map((_, i) => [String(i + 1), 100 + i] as [string, number]));
+		const { site } = fakeSite(prints, { per: 10 });
+		await fetchOnce(site);
+		for (const id of ['1', '2', '3']) prints.delete(id);
+		const state = await readState(inbox, 'codex');
+		const h = http();
+		const { work } = await planPoll(site, state, h, { maxChange: 1, now: NOW });
+		expect(work.missing.length).toBe(3);
+		const counts = await applyPoll(site, inbox, state, work, h, { perUpdate: 100, maxChange: 0.05, now: () => NOW });
+		expect(counts).toMatchObject({ gone: 2, goneHeld: 1 });
+		expect(Object.keys((await readState(inbox, 'codex')).records).length).toBe(38);
 	});
 
 	test('held back when too many prints vanish from the list, or it is empty; an accepted plan goes through', async () => {

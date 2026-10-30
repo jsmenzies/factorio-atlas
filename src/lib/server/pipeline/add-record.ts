@@ -12,7 +12,10 @@
  *   are written.
  * - 'already': this site's record is already a source of `printId`; nothing is written, unless `update`
  *   (a polled site's changed record, scripts/polled.ts): then it is ingested again (`updated: true`), and
- *   shows if it is the print's credited source.
+ *   shows if it is the print's credited source. A source that isn't shown and whose whole-print hash is no
+ *   longer the print's is detached instead (its source row goes, the print's sources list follows) and
+ *   added afresh, so a copy edited into something else never takes the print's identity with it: it comes
+ *   out 'new' or joins whatever it now copies (`detachedFrom` names the print it left).
  * - 'blocked' (an approved removal), 'unreadable', 'too-big' (over `limits`: the Worker's caps; add it from
  *   a Bun run instead), 'failed' (storage: nothing or part written, safe to try again).
  * - Once written, the record's text is archived in RAW at `<site>/<siteId>.json` (source-record.ts
@@ -25,8 +28,8 @@ import { Effect, Layer } from 'effect';
 import { printIdFor, type Site } from '#lib/print-id.js';
 import { bumpPageVersion } from '../page-cache';
 import { admitRecord, type Admission, type AdmitLimits, type Suggestion } from './admit';
-import { blockedBy } from './identity-db';
-import { ingestRecord } from './pipeline';
+import { blockedBy, sourcesOf } from './identity-db';
+import { ingestRecord, postedLater, syncSources } from './pipeline';
 import { RawStoreR2 } from './raw-store';
 import { PrintRepositoryD1 } from './repository';
 import { rawKeyFor, toPipelineText, type SourceRecord } from './source-record';
@@ -57,7 +60,11 @@ export type AddOutcome =
 	| { readonly status: 'too-big'; readonly by: 'string' | 'entities'; readonly size: number; readonly limit: number }
 	| { readonly status: 'failed'; readonly reason: string };
 
-export type AddResult = AddOutcome & { readonly planned: boolean };
+export type AddResult = AddOutcome & {
+	readonly planned: boolean;
+	/** With `update`: the record left this print (its content no longer the print's, and not the one shown) before it was added. */
+	readonly detachedFrom?: string;
+};
 
 /**
  * What a source is before its record is read: blocked by an approved removal, already a source of a live
@@ -113,6 +120,35 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 	const suggestions = admission.admitted.suggestions;
 	if (planned) return done(join ? { status: 'joins', printId, shown: null, suggestions } : { status: 'new', printId, suggestions });
 
+	const layer = Layer.mergeAll(RawStoreR2(b.RAW), PrintRepositoryD1(b.DB));
+	if (known && admission.status === 'existing') {
+		// A source the print doesn't show, whose content is no longer the print's: it must not become the print's
+		// identity (ingestRecord would make its hashes the print's current ones). Detach it and add it afresh.
+		let detach = false;
+		try {
+			if (postedLater(record, await sourcesOf(b.DB, printId))) {
+				const current = await b.DB.prepare(`SELECT sha256 FROM print_fingerprints WHERE print_id = ? AND kind = 'print' AND current = 1`)
+					.bind(printId)
+					.first<{ sha256: string }>();
+				detach = (current?.sha256 ?? null) !== (admission.admitted.fingerprint.whole?.exact ?? null);
+			}
+			if (detach) {
+				await b.DB.batch([
+					b.DB.prepare('DELETE FROM print_sources WHERE site = ? AND site_id = ? AND print_id = ?').bind(
+						record.site,
+						record.siteId,
+						printId
+					),
+					bumpPageVersion(b.DB, o.now)
+				]);
+				await Effect.runPromise(Effect.provide(syncSources(printId, { bump: false }), layer));
+			}
+		} catch (e) {
+			return done({ status: 'failed', reason: reasonOf(e) });
+		}
+		if (detach) return { ...(await addRecord(b, record, { ...o, update: false })), detachedFrom: printId };
+	}
+
 	const full: Admission = admission.status === 'existing' ? admission : { ...admission, printId };
 	let outcome;
 	try {
@@ -122,7 +158,7 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 					extra: () => [bumpPageVersion(b.DB, o.now)],
 					...(o.maxInflatedBytes ? { maxInflatedBytes: o.maxInflatedBytes } : {})
 				}),
-				Layer.mergeAll(RawStoreR2(b.RAW), PrintRepositoryD1(b.DB))
+				layer
 			)
 		);
 	} catch (e) {

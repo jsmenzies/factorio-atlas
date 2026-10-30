@@ -91,4 +91,36 @@ describe('addRecord with update (a polled site changed the record)', () => {
 		expect(fromPipelineText(s.objects.get(rawKeyFor('codex', '9'))!)).toMatchObject({ title: 'Renamed on codex' });
 		expect(s.one('SELECT source FROM prints WHERE id = ?', FP_ID)).toEqual({ source: 'factorioprints' });
 	});
+
+	test('a copy edited into something else leaves the print it copied: detached, added afresh, the print keeps its identity', async () => {
+		const s = setup();
+		const fp = fromFactorioprints(FP_ID, FP_TEXT);
+		const admitted = await admitRecord(s.DB, fp);
+		if (admitted.status !== 'new') throw new Error(admitted.status);
+		await Effect.runPromise(Effect.provide(ingestRecord(fp, { ...admitted, printId: FP_ID }), pipelineLayer(s.env)));
+		const hash = () => s.one(`SELECT sha256 FROM print_fingerprints WHERE print_id = ? AND kind = 'print' AND current = 1`, FP_ID);
+		const before = hash();
+		const copy = codex('9', { blueprintString: STRING, uploadedAt: Date.UTC(2026, 0, 1) });
+		expect(await addRecord(s.b, copy, { update: true })).toMatchObject({ status: 'joins', printId: FP_ID });
+		const docSites = () =>
+			(
+				(JSON.parse(s.objects.get(`analysis/${FP_ID}.json`) ?? '{}') as { print?: { sources?: { site: string }[] } }).print?.sources ?? []
+			).map((x) => x.site);
+		expect(docSites()).toContain('codex');
+		// Edited on codex into a different blueprint (a book).
+		const edited = { ...copy, blueprintString: BOOK, updatedAt: Date.UTC(2026, 1, 1) };
+		expect(await addRecord(s.b, edited, { update: true })).toMatchObject({ status: 'new', printId: 'codex-9', detachedFrom: FP_ID });
+		expect(hash()).toEqual(before);
+		expect(s.one('SELECT print_id FROM print_sources WHERE site = ? AND site_id = ?', 'codex', '9')).toEqual({ print_id: 'codex-9' });
+		expect(docSites()).not.toContain('codex');
+		// A later real copy still joins the print it copies, and the book doesn't.
+		expect(await addRecord(s.b, codex('10', { blueprintString: STRING, uploadedAt: Date.UTC(2026, 2, 1) }))).toMatchObject({
+			status: 'joins',
+			printId: FP_ID
+		});
+		expect(await addRecord(s.b, codex('11', { blueprintString: BOOK, uploadedAt: Date.UTC(2026, 2, 1) }))).toMatchObject({
+			status: 'joins',
+			printId: 'codex-9'
+		});
+	});
 });

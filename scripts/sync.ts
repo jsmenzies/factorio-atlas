@@ -443,13 +443,26 @@ async function admitPolled(backfill: Outcome, stopping: () => boolean): Promise<
 	let worst: 'done' | 'warning' | 'failed' = 'done';
 	for (const site of POLLED) {
 		if (!polledSettings(site.site)?.on || stopping()) continue;
-		const r = await script(['scripts/polled.ts', '--stage', stage, '--site', site.site, '--dir', records, '--yes', '--json']);
+		const r = await script([
+			'scripts/polled.ts',
+			'--stage',
+			stage,
+			'--site',
+			site.site,
+			'--dir',
+			records,
+			'--max-change',
+			String(settings.maxChange),
+			'--yes',
+			'--json'
+		]);
 		const result = lastJsonLine<PolledAdmitResult>(r.tail);
 		if (result) details.push(...polledIngestDetails(result));
 		const line = result?.summary.replace(/^[✓✗]\s*/, '') ?? failureLine(r.tail);
 		parts.push(`${site.site}: ${line}`);
 		if (r.code !== 0 || !result?.ok) worst = 'failed';
-		else if (result.counts.blocked || result.counts.undecodable) worst = worst === 'failed' ? worst : 'warning';
+		else if (result.counts.blocked || result.counts.undecodable || result.counts.refetch || result.gone.held || result.gone.waiting)
+			worst = worst === 'failed' ? worst : 'warning';
 		if (result?.store)
 			details.push({
 				title: `record store: ${site.site}`,
