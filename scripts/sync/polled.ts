@@ -352,18 +352,17 @@ export async function planPoll(
 	if (full) while (more()) await listNext();
 
 	const read = new Map<string, { siteId: string; rev: string; updatedAt: number }>();
-	let added = 0;
-	let changed = 0;
 	for (const it of [...listed.values()].sort((a, b) => a.updatedAt - b.updatedAt)) {
 		const have = state.records[it.siteId];
 		if (have?.rev === it.rev && !(it.siteId in state.pending)) continue;
 		read.set(it.siteId, it);
-		if (have) changed++;
-		else added++;
 	}
 	// Pending reads the listing didn't show (listed only until the cursor): read them too, first.
 	for (const [siteId, rev] of Object.entries(state.pending))
 		if (!read.has(siteId) && (!full || listed.has(siteId))) read.set(siteId, { siteId, rev, updatedAt: 0 });
+	// New: never read into the inbox (a pending read that never succeeded is new too, listed or not); changed: read before.
+	const changed = [...read.keys()].filter((id) => id in state.records).length;
+	const added = read.size - changed;
 	const missing = full ? Object.keys(state.records).filter((id) => !listed.has(id)) : [];
 	const work: PollWork = {
 		read: [...read.values()].sort((a, b) => a.updatedAt - b.updatedAt),
@@ -404,11 +403,12 @@ export async function planPoll(
 		to,
 		prints: first.total,
 		added,
-		edited: changed + work.read.filter((r) => r.updatedAt === 0).length,
+		edited: changed,
 		favourites: 0,
 		deleted: missing,
 		modern: 0,
 		blocked,
+		left: pending,
 		position:
 			`${knownCount.toLocaleString('en-US')} prints on this machine, ${first.total.toLocaleString('en-US')} on the site · ` +
 			`newest change ${day(state.cursor)} · full listing ${day(state.fullAt)}` +
@@ -416,7 +416,7 @@ export async function planPoll(
 		stateText: moved
 			? [
 					...(added ? [`${added.toLocaleString('en-US')} new`] : []),
-					...(changed || pending ? [`${(changed + pending).toLocaleString('en-US')} changed`] : []),
+					...(changed ? [`${changed.toLocaleString('en-US')} changed`] : []),
 					...(missing.length ? [`${missing.length.toLocaleString('en-US')} gone?`] : [])
 				].join(', ')
 			: undefined

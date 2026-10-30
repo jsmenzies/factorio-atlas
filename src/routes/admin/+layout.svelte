@@ -5,6 +5,28 @@
 
 	// Private (Cloudflare Access; see hooks.server.ts). Nothing on the public site links here.
 	let { children }: LayoutProps = $props();
+
+	/**
+	 * The tabs. Overview and Update run on this machine only (`vite dev`); there, the pipeline and render
+	 * pages are the Update tab's detail pages (its steps link to their runs). Deployed, /admin is the
+	 * pipeline page, so it keeps its tab.
+	 */
+	const tabs = $derived([
+		...(dev
+			? [
+					{ href: '/admin', label: 'Overview', active: (p: string) => p === '/admin' },
+					{
+						href: '/admin/update',
+						label: 'Update',
+						active: (p: string) => ['/admin/update', '/admin/pipeline', '/admin/render'].some((t) => p === t || p.startsWith(`${t}/`))
+					}
+				]
+			: [{ href: '/admin/pipeline', label: 'Pipeline', active: (p: string) => p.startsWith('/admin/pipeline') }]),
+		{ href: '/admin/reports', label: 'Reports', active: (p: string) => p.startsWith('/admin/reports') },
+		{ href: '/admin/screenshots', label: 'Screenshots', active: (p: string) => p.startsWith('/admin/screenshots') },
+		{ href: '/admin/add', label: 'Add', active: (p: string) => p.startsWith('/admin/add') },
+		{ href: '/admin/accounts', label: 'Accounts', active: (p: string) => p.startsWith('/admin/accounts') }
+	]);
 </script>
 
 <svelte:head>
@@ -13,51 +35,14 @@
 
 <nav class="mb-6 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm" aria-label="Admin">
 	<span class="rounded bg-stone-800 px-1.5 py-0.5 text-xs font-medium tracking-wide text-stone-400 uppercase">Admin</span>
-	<!-- The Overview and Settings run updates on this machine: local only. -->
-	{#if dev}
+	{#each tabs as t (t.href)}
+		{@const active = t.active(page.url.pathname)}
 		<a
-			href="/admin"
-			class={page.url.pathname === '/admin' ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
-			aria-current={page.url.pathname === '/admin' ? 'page' : undefined}>Overview</a
+			href={t.href}
+			class={active ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
+			aria-current={page.url.pathname === t.href ? 'page' : undefined}>{t.label}</a
 		>
-	{/if}
-	<a
-		href="/admin/pipeline"
-		class={page.url.pathname.startsWith('/admin/pipeline') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
-		aria-current={page.url.pathname === '/admin/pipeline' ? 'page' : undefined}>Pipeline</a
-	>
-	<a
-		href="/admin/render"
-		class={page.url.pathname.startsWith('/admin/render') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
-		aria-current={page.url.pathname === '/admin/render' ? 'page' : undefined}>Render</a
-	>
-	<a
-		href="/admin/reports"
-		class={page.url.pathname.startsWith('/admin/reports') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
-		aria-current={page.url.pathname === '/admin/reports' ? 'page' : undefined}>Reports</a
-	>
-	<a
-		href="/admin/screenshots"
-		class={page.url.pathname.startsWith('/admin/screenshots') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
-		aria-current={page.url.pathname === '/admin/screenshots' ? 'page' : undefined}>Screenshots</a
-	>
-	<a
-		href="/admin/add"
-		class={page.url.pathname.startsWith('/admin/add') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
-		aria-current={page.url.pathname === '/admin/add' ? 'page' : undefined}>Add</a
-	>
-	<a
-		href="/admin/accounts"
-		class={page.url.pathname.startsWith('/admin/accounts') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
-		aria-current={page.url.pathname === '/admin/accounts' ? 'page' : undefined}>Accounts</a
-	>
-	{#if dev}
-		<a
-			href="/admin/settings"
-			class={page.url.pathname === '/admin/settings' ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
-			aria-current={page.url.pathname === '/admin/settings' ? 'page' : undefined}>Settings</a
-		>
-	{/if}
+	{/each}
 </nav>
 
 {@render children()}

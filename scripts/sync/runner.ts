@@ -29,6 +29,7 @@ import {
 	type SyncStepId
 } from '#lib/sync.js';
 import { alive } from '../render/queue';
+import type { PolledAdmitResult } from '../polled';
 
 /** How long a step may take to end after Quit before its process group is killed. */
 export const QUIT_GRACE_MS = 30_000;
@@ -161,6 +162,26 @@ export function backfillSummary(r: BackfillResult) {
 /** Whether a backfill leaves nothing to retry: it finished, and every failure is the record's own (kept in ingest_state). */
 export const backfillComplete = (r: BackfillResult) =>
 	r.state === 'finished' && Object.entries(r.failures).every(([kind, n]) => n === 0 || !TRANSIENT_FAILURES.has(kind));
+
+/**
+ * How one polled site's admission (`polled --json`, scripts/polled.ts) leaves the ingest step, by the same rule
+ * as the backfill (a finished backfill with failed prints is a warning): 'failed' only when it crashed, gave no
+ * result, or a deletion failed part-way (a purge that may have left the stage half done); stopped when asked to;
+ * records that failed after their retries are a warning, since the next update retries them (they aren't in
+ * the stage's ledger), so the steps that need ingest (authors, render) still run. Refusals and waiting
+ * deletions are warnings too.
+ */
+export const polledAdmitStatus = (
+	code: number | null,
+	r: Pick<PolledAdmitResult, 'ok' | 'stopped' | 'finished' | 'counts' | 'gone'> | null
+): 'done' | 'warning' | 'failed' | 'stopped' => {
+	if (!r) return 'failed';
+	if (r.stopped) return 'stopped';
+	if (r.ok && code === 0)
+		return r.counts.blocked || r.counts.undecodable || r.counts.refetch || r.gone.waiting || r.gone.edgeNotPurged ? 'warning' : 'done';
+	if (r.finished && !r.gone.failed) return 'warning';
+	return 'failed';
+};
 
 // --- steps
 

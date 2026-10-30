@@ -1,0 +1,453 @@
+{
+	"id": "2026-10-30T12:00:29Z-sygq",
+	"state": "finished",
+	"control": null,
+	"stage": "prod",
+	"options": {
+		"log": "sync-2026-10-30T12-00-29-288Z.log"
+	},
+	"sources": [
+		{
+			"site": "factorioprints",
+			"from": {
+				"id": "afb755bc880a13a3dea1b2fab6e1e41e83749d53",
+				"date": 1792854490000
+			},
+			"to": {
+				"id": "afb755bc880a13a3dea1b2fab6e1e41e83749d53",
+				"date": 1792854490000
+			}
+		},
+		{
+			"site": "uploads",
+			"from": {
+				"id": "none",
+				"date": 0
+			},
+			"to": {
+				"id": "none",
+				"date": 0
+			},
+			"ingestsItself": true
+		},
+		{
+			"site": "codex",
+			"from": {
+				"id": "25@1793299169582",
+				"date": 1793299169582
+			},
+			"to": {
+				"id": "456@1793299169582:9e06695b17af",
+				"date": 1793299169582
+			},
+			"polled": true,
+			"deleted": [],
+			"counts": {
+				"list pages": 1,
+				"records read": 431,
+				"new": 431,
+				"changed": 0,
+				"gone from the site": 0,
+				"still listed after all": 0,
+				"gone, held (too many at once)": 0,
+				"failed": 0,
+				"left": 0
+			}
+		},
+		{
+			"site": "fprints",
+			"from": {
+				"id": "25@1791844949334",
+				"date": 1791844949334
+			},
+			"to": {
+				"id": "432@1791844949334:defa2067951f",
+				"date": 1791844949334
+			},
+			"polled": true,
+			"deleted": [],
+			"counts": {
+				"list pages": 1,
+				"records read": 407,
+				"new": 407,
+				"changed": 0,
+				"gone from the site": 0,
+				"still listed after all": 0,
+				"gone, held (too many at once)": 0,
+				"failed": 0,
+				"left": 0
+			}
+		}
+	],
+	"steps": [
+		{
+			"id": "removals",
+			"status": "done",
+			"startedAt": 1793361629296,
+			"summary": "nothing to do",
+			"details": [
+				{
+					"rows": [
+						{
+							"label": "deleted on the site",
+							"value": 2
+						},
+						{
+							"label": "taken down on request",
+							"value": 1
+						}
+					]
+				}
+			],
+			"finishedAt": 1793361652079
+		},
+		{
+			"id": "fetch",
+			"status": "done",
+			"startedAt": 1793361652082,
+			"summary": "factorioprints: already at its latest (afb755b) · uploads: already at its latest (none) · codex: 1 list pages, 431 records read, 431 new, 0 changed, 0 gone from the site, 0 still listed after all, 0 gone, held (too many at once), 0 failed, 0 left · fprints: 1 list pages, 407 records read, 407 new, 0 changed, 0 gone from the site, 0 still listed after all, 0 gone, held (too many at once), 0 failed, 0 left · record store: upload: 1 on the site, 0 new, 0 changed, 0 removed · factoriobin: 1 on the site, 0 new, 0 changed, 0 removed · codex: 12 on the site, 0 new, 0 changed, 0 removed · fprints: 22 on the site, 0 new, 0 changed, 0 removed; 36 records in the store",
+			"details": [
+				{
+					"title": "factorioprints",
+					"rows": [
+						{
+							"label": "position",
+							"value": "afb755b"
+						},
+						{
+							"label": "new prints",
+							"value": 0
+						}
+					]
+				},
+				{
+					"title": "uploads",
+					"rows": [
+						{
+							"label": "waiting",
+							"value": 0
+						},
+						{
+							"label": "failed, tried again next update",
+							"value": 0
+						},
+						{
+							"label": "still processing",
+							"value": 0
+						}
+					]
+				},
+				{
+					"title": "codex",
+					"rows": [
+						{
+							"label": "prints on the site",
+							"value": 456
+						},
+						{
+							"label": "new to read",
+							"value": 100
+						},
+						{
+							"label": "changed to read",
+							"value": 331
+						},
+						{
+							"label": "list pages read",
+							"value": 1
+						},
+						{
+							"label": "records read",
+							"value": 431
+						},
+						{
+							"label": "new",
+							"value": 431
+						},
+						{
+							"label": "failed, tried again next update",
+							"value": 0
+						}
+					]
+				},
+				{
+					"title": "fprints",
+					"rows": [
+						{
+							"label": "prints on the site",
+							"value": 432
+						},
+						{
+							"label": "new to read",
+							"value": 407
+						},
+						{
+							"label": "list pages read",
+							"value": 1
+						},
+						{
+							"label": "records read",
+							"value": 407
+						},
+						{
+							"label": "new",
+							"value": 407
+						},
+						{
+							"label": "failed, tried again next update",
+							"value": 0
+						}
+					]
+				},
+				{
+					"title": "record store",
+					"rows": [
+						{
+							"label": "records",
+							"value": 36
+						}
+					]
+				}
+			],
+			"finishedAt": 1793362704837
+		},
+		{
+			"id": "ingest",
+			"status": "failed",
+			"startedAt": 1793362704840,
+			"summary": "backfill skipped: nothing changed since the last update that ran it (factorioprints@afb755b) · codex: 355 new, 73 joined an existing print, 0 updated, 0 unchanged, 0 blocked, 0 unreadable, 3 failed; 66 of the new with suggestions · fprints: 378 new, 27 joined an existing print, 0 updated, 0 unchanged, 0 blocked, 2 unreadable, 0 failed; 31 of the new with suggestions",
+			"details": [
+				{
+					"title": "codex: through the gate",
+					"rows": [
+						{
+							"label": "records to admit",
+							"value": 431
+						},
+						{
+							"label": "new prints",
+							"value": 355
+						},
+						{
+							"label": "joined an existing print",
+							"value": 73
+						},
+						{
+							"label": "new, with suggestions to look at",
+							"value": 66
+						},
+						{
+							"label": "failed, tried again next update",
+							"value": 3,
+							"tone": "bad"
+						}
+					]
+				},
+				{
+					"title": "record store: codex",
+					"rows": [
+						{
+							"label": "prints of its own",
+							"value": 368
+						},
+						{
+							"label": "new",
+							"value": 356
+						}
+					]
+				},
+				{
+					"title": "fprints: through the gate",
+					"rows": [
+						{
+							"label": "records to admit",
+							"value": 407
+						},
+						{
+							"label": "new prints",
+							"value": 378
+						},
+						{
+							"label": "joined an existing print",
+							"value": 27
+						},
+						{
+							"label": "new, with suggestions to look at",
+							"value": 31
+						},
+						{
+							"label": "unreadable",
+							"value": 2,
+							"tone": "warn"
+						},
+						{
+							"label": "failed, tried again next update",
+							"value": 0
+						}
+					]
+				},
+				{
+					"title": "record store: fprints",
+					"rows": [
+						{
+							"label": "prints of its own",
+							"value": 400
+						},
+						{
+							"label": "new",
+							"value": 378
+						}
+					]
+				}
+			],
+			"finishedAt": 1793364814913
+		},
+		{
+			"id": "authors",
+			"status": "skipped",
+			"summary": "needs \"update the site's prints\", which failed"
+		},
+		{
+			"id": "screenshots",
+			"status": "warning",
+			"startedAt": 1793364814917,
+			"summary": "18111 already copied, 2 dead; to fetch 0 (0 failed before, 0 files missing, 0 dead rechecked) · uploads: 1 approved, copied 0 · other sites: 716 to copy, copied 686, failed 30 · prod bucket: 18840 images in 365s: made 686, put 4653 files (1348.0 MB), deleted 0, already up 18154, failed 0 · 686 D1 rows written; cached pages purged",
+			"details": [
+				{
+					"title": "On this machine",
+					"rows": [
+						{
+							"label": "already copied",
+							"value": 18111
+						},
+						{
+							"label": "dead on Imgur",
+							"value": 2
+						},
+						{
+							"label": "to fetch",
+							"value": 0
+						}
+					]
+				},
+				{
+					"title": "From other sites",
+					"rows": [
+						{
+							"label": "images shown",
+							"value": 749
+						},
+						{
+							"label": "already copied",
+							"value": 33
+						},
+						{
+							"label": "copied now",
+							"value": 686
+						},
+						{
+							"label": "failed, tried again next update",
+							"value": 30,
+							"tone": "bad"
+						}
+					]
+				},
+				{
+					"title": "From uploads",
+					"rows": [
+						{
+							"label": "approved",
+							"value": 1
+						},
+						{
+							"label": "already up",
+							"value": 1
+						},
+						{
+							"label": "files put",
+							"value": 0
+						},
+						{
+							"label": "failed",
+							"value": 0
+						}
+					]
+				},
+				{
+					"title": "Prod bucket",
+					"rows": [
+						{
+							"label": "already up",
+							"value": 18153
+						},
+						{
+							"label": "sizes made",
+							"value": 686
+						},
+						{
+							"label": "files put",
+							"value": "4,653 (1348.0 MB)"
+						},
+						{
+							"label": "deleted",
+							"value": 0
+						},
+						{
+							"label": "failed",
+							"value": 0
+						}
+					]
+				},
+				{
+					"title": "Search cards",
+					"rows": [
+						{
+							"label": "rows written",
+							"value": 686
+						}
+					]
+				}
+			],
+			"finishedAt": 1793366192883
+		},
+		{
+			"id": "render",
+			"status": "skipped",
+			"summary": "needs \"update the site's prints\", which failed"
+		},
+		{
+			"id": "figures",
+			"status": "done",
+			"startedAt": 1793366192887,
+			"summary": "prod: 18,818 prints, 180 failed to read, 5,483 rendered, 0 factorioprints prints without an author name",
+			"details": [
+				{
+					"title": "prod",
+					"rows": [
+						{
+							"label": "prints",
+							"value": 18818
+						},
+						{
+							"label": "failed to read",
+							"value": 180
+						},
+						{
+							"label": "with a render",
+							"value": 5483
+						},
+						{
+							"label": "factorioprints prints without an author name",
+							"value": 0
+						}
+					]
+				}
+			],
+			"finishedAt": 1793366201519
+		}
+	],
+	"started_at": 1793361629288,
+	"updated_at": 1793366201523,
+	"finished_at": 1793366201523,
+	"error": null
+}

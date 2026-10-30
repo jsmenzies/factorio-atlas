@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { isLiveSync } from './server/sync';
-import { DEFAULT_SETTINGS, estimateRender, parseSettings, planTotals, sourceDigest, type SourcePlan } from './sync';
+import {
+	DEFAULT_SETTINGS,
+	estimateRender,
+	parseSettings,
+	planTotals,
+	POLLED_READS_PER_UPDATE,
+	sourceDigest,
+	type SourcePlan
+} from './sync';
 
 describe('parseSettings', () => {
 	test('nothing stored: the defaults', () => {
@@ -14,6 +22,13 @@ describe('parseSettings', () => {
 		expect(errors.sort()).toEqual(['imgurRecheck', 'workers']);
 	});
 
+	test('render on by default; turned off kept; settings saved before it existed render', () => {
+		expect(DEFAULT_SETTINGS.render).toBe(true);
+		expect(parseSettings({ render: false }).settings.render).toBe(false);
+		expect(parseSettings({ top: 5 }).settings.render).toBe(true);
+		expect(parseSettings({ render: 'no' }).errors).toEqual(['render']);
+	});
+
 	test('top 0 means no top list', () => {
 		expect(parseSettings({ top: 0 }).settings.top).toBe(0);
 		expect(parseSettings({ top: 1.5 }).errors).toEqual(['top']);
@@ -21,26 +36,22 @@ describe('parseSettings', () => {
 });
 
 describe('polled sites', () => {
-	test('codex and fprints are on by default, with room for the first full import', () => {
-		expect(DEFAULT_SETTINGS.polled.codex).toEqual({ on: true, perUpdate: 1000 });
-		expect(DEFAULT_SETTINGS.polled.fprints).toEqual({ on: true, perUpdate: 1000 });
-		expect(parseSettings({ polled: { codex: { on: false } } }).settings.polled.fprints).toEqual({ on: true, perUpdate: 1000 });
-		expect(parseSettings({ polled: { fprints: { on: false, perUpdate: 5 } } }).settings.polled).toEqual({
-			codex: { on: true, perUpdate: 1000 },
-			fprints: { on: false, perUpdate: 5 }
-		});
+	test('codex and fprints are on by default; reads per update are a built-in backstop, not a setting', () => {
+		expect(DEFAULT_SETTINGS.polled).toEqual({ codex: { on: true }, fprints: { on: true } });
+		expect(POLLED_READS_PER_UPDATE).toBe(1000);
+		expect(parseSettings({ polled: { fprints: { on: false } } }).settings.polled).toEqual({ codex: { on: true }, fprints: { on: false } });
 		// Settings saved before polled sites existed get the defaults.
-		expect(parseSettings({ top: 5 }).settings.polled.codex).toEqual({ on: true, perUpdate: 1000 });
+		expect(parseSettings({ top: 5 }).settings.polled.codex).toEqual({ on: true });
 	});
 
-	test('turned off, a cap kept; bad fields named', () => {
-		expect(parseSettings({ polled: { codex: { on: false, perUpdate: 40 } } })).toMatchObject({
-			settings: { polled: { codex: { on: false, perUpdate: 40 } } },
+	test('an old saved read cap is ignored, never an error; a bad switch is named', () => {
+		expect(parseSettings({ polled: { codex: { on: false, perUpdate: 40 } } })).toEqual({
+			settings: { ...DEFAULT_SETTINGS, polled: { codex: { on: false }, fprints: { on: true } } },
 			errors: []
 		});
 		const bad = parseSettings({ polled: { codex: { on: 'yes', perUpdate: 0 } } });
-		expect(bad.settings.polled.codex).toEqual({ on: true, perUpdate: 1000 });
-		expect(bad.errors.sort()).toEqual(['polled.codex.on', 'polled.codex.perUpdate']);
+		expect(bad.settings.polled.codex).toEqual({ on: true });
+		expect(bad.errors).toEqual(['polled.codex.on']);
 	});
 
 	test("out of the backfill's ingest key, counted apart in the plan's totals", () => {

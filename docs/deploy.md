@@ -597,13 +597,13 @@ A failed step is marked and the steps that don't need it still run; authors and 
 screenshots and render need removals.
 
 **Other sites polled for prints** (factoriocodex.com, through its public JSON API, and fprints.xyz,
-through its sitemap and the import API it offers other sites; each on by default, `/admin/settings`
+through its sitemap and the import API it offers other sites; each on by default, the Update tab at `/admin/update`
 turns either off): in the fetch step the update lists the site's prints by last change until it is
 past the newest change it has seen (usually one request; fprints' sitemap lists every print in one),
 reads each new or changed print (codex's with `?skip_view=true`, so no view is counted), and keeps it
 in the record store's inbox
 (`<RECORDS_DIR>/.polled/<site>/`). Every request sends a User-Agent naming this project, at most one
-a second; an update reads at most 1,000 prints (a setting), the rest wait for the next one. When the
+a second; an update reads at most 1,000 prints per site (built in, not a setting), the rest wait for the next one. When the
 site's total doesn't match what this machine knows, and once a week, it lists every page (fprints:
 every update): a print missing from the list is read once more, and a 404 (fprints: its API's "no
 rows" answer) or a print no longer public is a deletion (a print
@@ -627,15 +627,21 @@ URLs (at most one request a second, each site's own image host only, no redirect
 runs), into the same pipeline as Imgur's, and until then the print shows none.
 Prints deleted from the mirror are counted and kept. Each update is a `sync_runs` row in the local
 D1 (migration 0020, so run `bun run db:migrate` first) and one log, `sync-<time>.log`, in the run
-logs folder (`<renders dir>/logs/`). Ctrl-C, or Stop on the Overview, ends the current step cleanly
+logs folder (`<renders dir>/logs/`). Ctrl-C, or Stop on the Update tab, ends the current step cleanly
 and starts no more; Ctrl-C again, or Quit now, ends the step at once, and kills it 30 s later if it
 hasn't. An update refuses to start while another is running or a render run is live; one whose
 process was killed is closed as failed by the next, once its processes are gone.
 
-Its settings (the top N favourites to render, how many prints to render per update, render workers,
-screenshots, Imgur rechecks, author lookups and the 5% guard) are saved in the local D1 from
-`/admin/settings` under `bun run dev`; without them the defaults apply. `/admin` under `bun run dev`
-is the Overview: what the next update would do, Update everything, the figures and past updates.
+Its settings (each polled site on or off, the 5% guard, author lookups, screenshots and
+Imgur rechecks, render on or off, the top N favourites to render, how many prints to render per update and
+render workers) are saved in the local D1 as they are changed on the Update tab (`/admin/update`) under
+`bun run dev`; without them the defaults apply. There, the Update tab draws the update as a flow: one lane per source
+(factorioprints, codex, fprints, uploads) through Waiting (the last check), Read (its fetch) and the gate (the backfill,
+or the polled admission), into the shared screenshot and render stages, with the update's own figures, live from its
+log while a step runs; the seven steps above it open to every figure each recorded; Start, Stop and the log are at the
+top. `/admin` is the Overview: what the site has by source, what needs a look (open removal requests, upload
+screenshots to approve, accounts being deleted), render coverage and past updates. `/admin/settings`
+redirects to the Update tab.
 
 ## Admin page (`/admin`, `/admin/pipeline`, `/admin/render`, `/admin/reports`)
 
@@ -643,8 +649,8 @@ is the Overview: what the next update would do, Update everything, the figures a
 (`/admin/render`), with pause, resume and stop, and removal requests to approve or reject
 (`/admin/reports`, "Removal requests"). Render runs and updates happen on the machine that
 renders and are recorded in its local D1, so `/admin/render` shows them under `bun run dev`, where
-it can also start a batch, and `/admin` is the Overview and `/admin/settings` the update's settings
-(deployed, `/admin` goes to `/admin/pipeline` and the settings page is a 404). Two locks, both
+it can also start a batch, and `/admin` is the Overview and `/admin/update` runs updates (deployed,
+`/admin` goes to `/admin/pipeline` and the Update tab is a 404). Two locks, both
 required:
 
 1. **Cloudflare Access** in front of `<domain>/admin*`, allowing only `ADMIN_EMAIL`. Alchemy

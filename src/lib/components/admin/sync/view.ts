@@ -1,9 +1,13 @@
 import type { ScopeFigures } from '#lib/server/admin/render-scope.js';
 import {
+	detail,
 	estimateRender,
 	planTotals,
+	POLLED_READS_PER_UPDATE,
 	sourceMoved,
 	SYNC_STALE_MS,
+	type DetailGroup,
+	type DetailRow,
 	type SourcePlan,
 	type StepStatus,
 	type SyncPlan,
@@ -114,7 +118,7 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 			.filter((p) => (p.ingestsItself || p.polled) && sourceMoved(p) && !p.blocked)
 			.map(
 				(p) =>
-					`${p.site}: ${p.stateText ?? 'something waiting'}${p.polled ? ` (≈ ${int(Math.min(p.added + p.edited + p.deleted.length, settings.polled[p.site as keyof typeof settings.polled]?.perUpdate ?? Infinity))} reads at 1 a second)` : ''}`
+					`${p.site}: ${p.stateText ?? 'something waiting'}${p.polled ? ` (≈ ${int(Math.min(p.added + p.edited + p.deleted.length, POLLED_READS_PER_UPDATE))} reads at 1 a second)` : ''}`
 			)
 	];
 	return [
@@ -145,21 +149,72 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 						(settings.imgurRecheck === 'weekly' ? '; recheck Imgur for deletions if a week has passed' : '')
 				}
 			: { id: 'screenshots', text: 'off in the settings', idle: true },
-		{
-			id: 'render',
-			text:
-				(settings.top > 0 ? `refresh the top ${int(settings.top)} favourites, look for changed records; ` : 'look for changed records; ') +
-				(prints
-					? `render about ${int(prints)} prints${capped ? ` (the per-update limit)` : ''}: new 2.0+ prints and what's left in scope; then thumbnails, the render filter and the page cache`
-					: 'nothing to render, unless the top list or changed records add some'),
-			idle: !prints
-		},
+		!settings.render
+			? { id: 'render', text: 'off in the settings', idle: true }
+			: {
+					id: 'render',
+					text:
+						(settings.top > 0
+							? `refresh the top ${int(settings.top)} favourites, look for changed records; `
+							: 'look for changed records; ') +
+						(prints
+							? `render about ${int(prints)} prints${capped ? ` (the per-update limit)` : ''}: new 2.0+ prints and what's left in scope; then thumbnails, the render filter and the page cache`
+							: 'nothing to render, unless the top list or changed records add some'),
+					idle: !prints
+				},
 		{ id: 'figures', text: "count the site's prints, renders and screenshots" }
 	];
 }
 
-/** Time, uploads and disk for the render step of an update started now. */
+/** Time, uploads and disk for the render step of an update started now (nothing when it's off). */
 export const previewCost = (plan: SyncPlan | null, union: ScopeFigures, settings: SyncSettings) =>
-	estimateRender(renderWork(plan, union.left, settings));
+	estimateRender(settings.render ? renderWork(plan, union.left, settings) : 0);
+
+const groupOf = (run: SyncRun, step: SyncStepId, match: (title: string) => boolean): DetailGroup | undefined =>
+	run.steps.find((s) => s.id === step)?.details?.find((g) => g.title !== undefined && match(g.title));
+const valueOf = (g: DetailGroup | undefined, label: string) => {
+	const v = g?.rows.find((r) => r.label === label)?.value;
+	return typeof v === 'number' ? v : undefined;
+};
+
+/**
+ * What one update did for one source, for its card on the Update tab: a polled site's reads (from its
+ * `counts`) and how they went through the gate (the ingest step's "<site>: through the gate" group); the
+ * mirror's fetch rows and the backfill's analysed/failed; any other source its fetch group as recorded.
+ * Empty until the fetch step has recorded something for it.
+ */
+export function sourceRunRows(run: SyncRun, site: string): DetailRow[] {
+	const entry = run.sources.find((s) => s.site === site);
+	const fetched = groupOf(run, 'fetch', (t) => t === site);
+	if (entry?.polled) {
+		const c = entry.counts;
+		if (!c) return [];
+		const gate = groupOf(run, 'ingest', (t) => t === `${site}: through the gate`);
+		const gateFailed = valueOf(gate, 'failed, tried again next update') ?? 0;
+		return [
+			...detail('read', c['records read'], { always: true }),
+			...detail('new', c.new),
+			...detail('changed', c.changed),
+			...detail('new prints on the site', valueOf(gate, 'new prints')),
+			...detail('joined an existing print', valueOf(gate, 'joined an existing print')),
+			...detail('updated', valueOf(gate, 'updated')),
+			...detail('gone from the site', c['gone from the site'], { tone: 'warn' }),
+			...detail('failed', (c.failed ?? 0) + gateFailed, { always: true, tone: 'bad' }),
+			...detail('left for the next update', c.left, { always: true, tone: 'warn' })
+		];
+	}
+	if (!fetched) return [];
+	if (entry && !entry.ingestsItself) {
+		// The backfill's group names every site it read ("factorioprints, codex, fprints").
+		const backfill = groupOf(run, 'ingest', (t) => !t.includes(':') && t.split(', ').includes(site));
+		return [
+			...fetched.rows.filter((r) => r.label !== 'position'),
+			...detail('analysed', valueOf(backfill, 'analysed')),
+			...detail('re-indexed', valueOf(backfill, 're-indexed')),
+			...detail('failed to read', valueOf(backfill, 'failed'), { tone: 'bad' })
+		];
+	}
+	return fetched.rows;
+}
 
 export const shortCommit = (commit: string | null | undefined) => commit?.slice(0, 7) ?? '?';

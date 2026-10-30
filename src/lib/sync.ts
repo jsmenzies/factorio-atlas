@@ -1,7 +1,7 @@
 /**
- * One update (`bun run sync`, scripts/sync.ts; started from the admin Overview under `vite dev`):
+ * One update (`bun run sync`, scripts/sync.ts; started from the admin Update tab under `vite dev`):
  * fetch each print source (today the factorioprints mirror clone), then bring every stage-side copy
- * up to date with them, step by step. What the runner, the Overview (in the browser too) and the dev
+ * up to date with them, step by step. What the runner, the admin Overview and Update tabs (in the browser too) and the dev
  * plugin share: the saved settings, the steps, the sources' plans, the `sync_runs` row's shape
  * (migration 0020), the `sync_meta` documents and the estimates. The database helpers are in
  * #lib/server/sync.js.
@@ -17,6 +17,8 @@ export interface SyncSettings {
 	perUpdate: number | null;
 	/** Render workers; null: the runner's default (half the CPU threads). */
 	workers: number | null;
+	/** Run the render step (top list, changed records, render and upload); off: the step is skipped. */
+	render: boolean;
 	/** Copy new screenshots from Imgur, upload them and update the stage's screenshot rows. */
 	screenshots: boolean;
 	/** Ask Imgur whether copied screenshots were deleted, at most this often (≈ 75 min for 18k). */
@@ -46,16 +48,22 @@ export type PolledSiteId = (typeof POLLED_SITES)[number]['site'];
 export interface PolledSettings {
 	/** Fetch and admit this site's prints in every update. */
 	on: boolean;
-	/** Record reads an update makes at most (new and changed prints, and deletions to confirm); the rest wait. */
-	perUpdate: number;
 }
 
-export const DEFAULT_POLLED: PolledSettings = { on: true, perUpdate: 1000 };
+export const DEFAULT_POLLED: PolledSettings = { on: true };
+
+/**
+ * Record reads an update makes at most on one polled site (new and changed prints, and deletions to confirm);
+ * the rest wait for the next update. A backstop, not a setting: after the first import a site gives only its
+ * changes. (Settings saved before 2026-10-30 may carry `polled.<site>.perUpdate`: ignored.)
+ */
+export const POLLED_READS_PER_UPDATE = 1000;
 
 export const DEFAULT_SETTINGS: SyncSettings = {
 	top: 1000,
 	perUpdate: 500,
 	workers: null,
+	render: true,
 	screenshots: true,
 	imgurRecheck: 'never',
 	authors: true,
@@ -87,6 +95,7 @@ export function parseSettings(input: unknown): { settings: SyncSettings; errors:
 		top: pick('top', (v) => whole(v, 0, 100_000)),
 		perUpdate: pick('perUpdate', (v) => (v === null ? null : whole(v, 1, 100_000))),
 		workers: pick('workers', (v) => (v === null ? null : whole(v, 1, 64))),
+		render: pick('render', (v) => (typeof v === 'boolean' ? v : undefined)),
 		screenshots: pick('screenshots', (v) => (typeof v === 'boolean' ? v : undefined)),
 		imgurRecheck: pick('imgurRecheck', (v) => (v === 'never' || v === 'weekly' ? v : undefined)),
 		authors: pick('authors', (v) => (typeof v === 'boolean' ? v : undefined)),
@@ -97,7 +106,7 @@ export function parseSettings(input: unknown): { settings: SyncSettings; errors:
 	return { settings, errors };
 }
 
-/** Each polled site's settings: a valid field kept, else the default; errors named `polled.<site>.<field>`. */
+/** Each polled site's settings: a valid field kept, else the default; errors named `polled.<site>.<field>`. Unknown fields (an old `perUpdate`) are ignored. */
 const parsePolled = (input: unknown, errors: string[]): Record<PolledSiteId, PolledSettings> => {
 	const all = input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
 	const out = {} as Record<PolledSiteId, PolledSettings>;
@@ -108,10 +117,7 @@ const parsePolled = (input: unknown, errors: string[]): Record<PolledSiteId, Pol
 			if (v === undefined) errors.push(`polled.${site}.${key}`);
 			return v ?? DEFAULT_POLLED[key];
 		};
-		out[site] = {
-			on: field('on', typeof o.on === 'boolean' ? o.on : undefined),
-			perUpdate: field('perUpdate', whole(o.perUpdate, 1, 100_000))
-		};
+		out[site] = { on: field('on', typeof o.on === 'boolean' ? o.on : undefined) };
 	}
 	return out;
 };
@@ -311,6 +317,8 @@ export interface SourcePlan {
 	polled?: boolean;
 	/** Turned off in the settings: not checked, nothing fetched. */
 	off?: boolean;
+	/** A polled site's reads left over from the last update (its per-update cap, failed reads), counted in `added`/`edited`; absent in older plans. */
+	left?: number;
 }
 
 /** What an update would do now, from the last check of every source (`bun run sync --plan`). */
@@ -363,6 +371,13 @@ export interface SyncFigures {
 	rendered: number;
 	/** Screenshot rows by state (copied, dead, removed). */
 	screenshots: Record<string, number>;
+	/** The fields below were added on 2026-10-30: figures counted before then lack them. */
+	/** Prints by the site they are credited to (`prints.source`), and how many of them are folded copies (`duplicate_of`). */
+	bySource?: Record<string, { prints: number; folded: number }>;
+	/** Live sources by site (`print_sources`), joined copies of prints credited elsewhere included. */
+	sourceRecords?: Record<string, number>;
+	/** What needs looking at: open removal requests, upload screenshots to approve, accounts being deleted, uploads still processing. */
+	attention?: { reports: number; screenshots: number; deleting: number; processing: number };
 }
 
 /**

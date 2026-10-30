@@ -138,6 +138,26 @@ describe('polled sites: fetch', () => {
 		expect(calls).toEqual(['list 1', 'read 3', 'read 4', 'read 5']);
 	});
 
+	test('prints never read (every read failed last time) count as new, not changed, listed on page 1 or not', async () => {
+		// As codex on 2026-10-30: a fetch whose reads all failed (HTTP 522) left every print pending with the
+		// cursor moved on, so the next plan listed one page and called the other pending prints "changed".
+		const prints = new Map([...Array(7)].map((_, i) => [String(i + 1), 100 + i] as [string, number]));
+		const failing = new Set(prints.keys());
+		const { site, calls } = fakeSite(prints, { failing });
+		const first = await fetchOnce(site);
+		expect(first.counts).toMatchObject({ new: 0, failed: 7 });
+		expect(Object.keys(first.state.pending).length).toBe(7);
+		failing.clear();
+		calls.length = 0;
+		const { plan, counts } = await fetchOnce(site);
+		expect(calls.filter((c) => c.startsWith('list'))).toEqual(['list 1']);
+		expect(plan).toMatchObject({ added: 7, edited: 0, stateText: '7 new' });
+		expect(counts).toMatchObject({ new: 7, changed: 0, left: 0 });
+		// A print read before and changed since still counts as changed.
+		prints.set('3', 300);
+		expect((await fetchOnce(site)).plan).toMatchObject({ added: 0, edited: 1, stateText: '1 changed' });
+	});
+
 	test('a failed read is pending and tried again', async () => {
 		const prints = new Map([
 			['1', 100],

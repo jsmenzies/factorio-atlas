@@ -1,6 +1,6 @@
 /**
  * `bun run sync`: one update. Fetch every print source (today the factorioprints mirror clone), then
- * bring the stage up to date with them, using the settings saved from the admin Overview (sync_meta
+ * bring the stage up to date with them, using the settings saved from the admin Update tab (sync_meta
  * 'settings'; defaults in #lib/sync.js):
  *
  *   1. removals     `removals --stage S --yes --json`: this machine's copies of prints the stage
@@ -10,7 +10,7 @@
  *   2. fetch        each source: what's new (for the mirror: GitHub's latest commit against the
  *                   clone's), then fetch it (fast-forward). Polled sites (codex, fprints; scripts/sync/polled.ts):
  *                   list until past the cursor, read new and changed records into the record store's
- *                   inbox, at most `polled.<site>.perUpdate` reads, ≈ 1 request a second. A source is held back, and only it, when
+ *                   inbox, at most POLLED_READS_PER_UPDATE reads (#lib/sync.js), ≈ 1 request a second. A source is held back, and only it, when
  *                   adds, deletions and moves are more than `maxChange` of its prints (a layout
  *                   change; `--accept <commit>` lets one through), it would have no prints, or its
  *                   history was rewritten. Then `records --stage S --json`: the record store
@@ -72,6 +72,7 @@ import {
 	estimateRender,
 	freshSteps,
 	parseSettings,
+	POLLED_READS_PER_UPDATE,
 	parseSyncRun,
 	sourceDigest,
 	sourceMoved,
@@ -107,6 +108,7 @@ import { recordStoreFetch, removalsDetails, removalsSummary } from './sync/step-
 import type { RemovalsResult } from './removals';
 import {
 	backfillComplete,
+	polledAdmitStatus,
 	backfillSummary,
 	claimRun,
 	ingestKey,
@@ -186,7 +188,7 @@ const SOURCES: SourceAdapter[] = [
 	...POLLED.map((site) =>
 		polledSource(site, {
 			recordsDir: records,
-			settings: () => polledSettings(site.site),
+			settings: () => ({ on: polledSettings(site.site).on, perUpdate: POLLED_READS_PER_UPDATE }),
 			log: (line) => say(line),
 			stopping: () => stopRequested()
 		})
@@ -437,7 +439,8 @@ const backfillStep = async (): Promise<Outcome> => {
 async function admitPolled(backfill: Outcome, stopping: () => boolean): Promise<Outcome> {
 	const parts: string[] = [];
 	const details: DetailGroup[] = [];
-	let worst: 'done' | 'warning' | 'failed' = 'done';
+	let worst: 'done' | 'warning' | 'failed' | 'stopped' = 'done';
+	const rank = { skipped: 0, done: 1, warning: 2, stopped: 3, failed: 4 } as Record<string, number>;
 	for (const site of POLLED) {
 		if (!polledSettings(site.site)?.on || stopping()) continue;
 		const r = await script(['scripts/polled.ts', '--stage', stage, '--site', site.site, '--dir', records, '--yes', '--json']);
@@ -445,15 +448,9 @@ async function admitPolled(backfill: Outcome, stopping: () => boolean): Promise<
 		if (result) details.push(...polledIngestDetails(result));
 		const line = result?.summary.replace(/^[✓✗]\s*/, '') ?? failureLine(r.tail);
 		parts.push(`${site.site}: ${line}`);
-		if (r.code !== 0 || !result?.ok) worst = 'failed';
-		else if (
-			result.counts.blocked ||
-			result.counts.undecodable ||
-			result.counts.refetch ||
-			result.gone.waiting ||
-			result.gone.edgeNotPurged
-		)
-			worst = worst === 'failed' ? worst : 'warning';
+		// A few records that failed (a network blip) are retried next update: a warning, so authors and render still run.
+		const status = polledAdmitStatus(r.code, result);
+		if (rank[status] > rank[worst]) worst = status;
 		if (result?.store)
 			details.push({
 				title: `record store: ${site.site}`,
@@ -466,7 +463,6 @@ async function admitPolled(backfill: Outcome, stopping: () => boolean): Promise<
 			});
 	}
 	if (!parts.length) return backfill;
-	const rank = { skipped: 0, done: 1, warning: 2, stopped: 3, failed: 4 } as Record<string, number>;
 	const status = (rank[worst] ?? 0) > (rank[backfill.status] ?? 0) ? worst : backfill.status === 'skipped' ? worst : backfill.status;
 	return {
 		...backfill,
@@ -752,6 +748,7 @@ const steps: StepDef[] = [
 	{
 		id: 'render',
 		needs: ['ingest', 'removals'],
+		gate: () => (settings.render ? null : 'turned off in the settings'),
 		async run({ stopping }): Promise<Outcome> {
 			const parts: string[] = [];
 			const details: DetailGroup[] = [];
@@ -858,7 +855,17 @@ const steps: StepDef[] = [
 						{ label: 'with a render', value: figures.rendered },
 						{ label: 'factorioprints prints without an author name', value: figures.unnamed }
 					]
-				}
+				},
+				...(figures.bySource
+					? [
+							{
+								title: 'prints by source',
+								rows: Object.entries(figures.bySource)
+									.sort(([, x], [, y]) => y.prints - x.prints)
+									.map(([site, c]) => ({ label: site, value: c.prints }))
+							}
+						]
+					: [])
 			];
 			return { status: 'done', summary: figuresText(figures), details };
 		}

@@ -1,5 +1,5 @@
 /**
- * The admin Overview (local only): the latest updates (`sync_runs`), the saved settings, the last
+ * The admin Overview and Update tabs (local only): the latest updates (`sync_runs`), the saved settings, the last
  * mirror check and stage figures (`sync_meta`), render coverage and the render queue's totals, in
  * one `db.batch` (see busy.ts for why one).
  */
@@ -72,7 +72,7 @@ export const SYNC_TIMING = { staleMs: SYNC_STALE_MS, heartbeatMs: SYNC_HEARTBEAT
 
 /**
  * A form post from another site. SvelteKit skips its own CSRF check under `vite dev`, the only place
- * the Overview and Settings actions exist, so they check the Origin header themselves.
+ * the Update tab's actions exist, so they check the Origin header themselves.
  */
 export const crossSite = (request: Request, url: URL) => {
 	const origin = request.headers.get('origin');

@@ -74,6 +74,11 @@ export interface PolledAdmitResult {
 	site: string;
 	dryRun: boolean;
 	stopped: boolean;
+	/**
+	 * It went through every record and deletion it had to the end (not stopped, no error outside a record): the
+	 * records that failed then are retried next update (they aren't in the ledger), so the update goes on.
+	 */
+	finished: boolean;
 	/** Records the stage wasn't given at their revision, and gone prints it still had, when it started. */
 	waiting: number;
 	goneWaiting: number;
@@ -103,6 +108,7 @@ const result: PolledAdmitResult = {
 	site: '',
 	dryRun: false,
 	stopped: false,
+	finished: false,
 	waiting: 0,
 	goneWaiting: 0,
 	counts: { new: 0, joined: 0, updated: 0, unchanged: 0, identified: 0, blocked: 0, undecodable: 0, failed: 0, refetch: 0 },
@@ -352,9 +358,13 @@ try {
 		code = 2;
 		report(false, `✗ stopped: ${line}`);
 	} else if (c.failed || result.gone.failed) {
+		result.finished = true;
 		code = 2;
 		report(false, `✗ ${line}`);
-	} else report(true, `✓ ${line}`);
+	} else {
+		result.finished = true;
+		report(true, `✓ ${line}`);
+	}
 } catch (e) {
 	code = 2;
 	report(false, `✗ ${reasonOf(e)}`);

@@ -7,6 +7,7 @@ import { d1FromSqlite } from '#lib/server/pipeline/d1-sqlite.js';
 import { DEFAULT_SETTINGS, freshSteps, parseSyncRun, sourceDigest, SYNC_STALE_MS, type SyncRun, type SyncRunRow } from '#lib/sync.js';
 import {
 	backfillComplete,
+	polledAdmitStatus,
 	backfillSummary,
 	claimRun,
 	ingestKey,
@@ -129,6 +130,28 @@ describe('the ingest skip key', () => {
 		expect(backfillComplete(result('finished', { decode: 1, storage: 40 }))).toBe(false);
 		expect(backfillComplete(result('finished', { worker: 1 }))).toBe(false);
 		expect(backfillComplete(result('stopped', {}))).toBe(false);
+	});
+
+	test('a polled admission: a few records failing after their retries is a warning, a crash or a failed deletion is a failure', () => {
+		const counts = { new: 364, joined: 64, updated: 0, unchanged: 0, identified: 0, blocked: 0, undecodable: 0, failed: 0, refetch: 0 };
+		const gone = { purged: 0, kept: 0, failed: 0, waiting: 0, edgeNotPurged: 0 };
+		const r = (o: Partial<Parameters<typeof polledAdmitStatus>[1] & object> = {}) => ({
+			ok: true,
+			stopped: false,
+			finished: true,
+			counts,
+			gone,
+			...o
+		});
+		expect(polledAdmitStatus(0, r())).toBe('done');
+		// As codex on 2026-10-30: 3 of 431 lost the D1 connection; they're retried next update, authors and render still run.
+		expect(polledAdmitStatus(2, r({ ok: false, counts: { ...counts, failed: 3 } }))).toBe('warning');
+		expect(polledAdmitStatus(0, r({ counts: { ...counts, blocked: 1 } }))).toBe('warning');
+		expect(polledAdmitStatus(2, r({ ok: false, gone: { ...gone, failed: 1 } }))).toBe('failed');
+		// Crashed (an error outside a record, before the end), no JSON, or stopped.
+		expect(polledAdmitStatus(2, r({ ok: false, finished: false }))).toBe('failed');
+		expect(polledAdmitStatus(null, null)).toBe('failed');
+		expect(polledAdmitStatus(2, r({ ok: false, finished: false, stopped: true }))).toBe('stopped');
 	});
 
 	test("the summary names each outcome some print had, so a re-index doesn't read as nothing", () => {

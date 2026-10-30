@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import type { ScopeFigures } from '#lib/server/admin/render-scope.js';
 import { DEFAULT_SETTINGS, freshSteps, type SourcePlan, type SyncPlan, type SyncRun } from '#lib/sync.js';
-import { previewSteps, renderWork, sourceState, unchecked, updateState, upToDateLine } from './view';
+import { polledFetchDetails, polledIngestDetails } from '../../../../../scripts/sync/polled';
+import { previewCost, previewSteps, renderWork, sourceRunRows, sourceState, unchecked, updateState, upToDateLine } from './view';
 
 const source = (over: Partial<SourcePlan> = {}): SourcePlan => ({
 	site: 'factorioprints',
@@ -66,6 +67,12 @@ describe('previewSteps', () => {
 		expect(steps[1].text).toBe('+46 new, 4 edited, 212 only favourite counts changed, 1 deleted');
 		expect(steps[3]).toEqual({ id: 'authors', text: 'off in the settings', idle: true });
 		expect(steps[5].text).toContain('render about 46 prints');
+	});
+	test('render turned off: the step says so and costs nothing', () => {
+		const off = { ...DEFAULT_SETTINGS, render: false };
+		expect(previewSteps(plan(), union(5), off)[5]).toEqual({ id: 'render', text: 'off in the settings', idle: true });
+		expect(previewCost(plan(), union(5), off).pages).toBe(0);
+		expect(previewCost(plan(), union(5), DEFAULT_SETTINGS).pages).toBeGreaterThan(0);
 	});
 	test('nothing new: fetch, ingest and render are idle', () => {
 		const steps = previewSteps(plan(level), union(0), DEFAULT_SETTINGS);
@@ -142,5 +149,81 @@ describe('upToDateLine', () => {
 	test('sources turned off are not counted', () => {
 		const sources = [level('factorioprints'), level('fprints', { off: true, polled: true }), level('codex', { error: 'HTTP 522' })];
 		expect(upToDateLine({ checkedAt: 0, sources }).text).toBe('1 of 2 sources up to date · codex couldn’t be checked');
+	});
+});
+
+describe('sourceRunRows', () => {
+	// As the update records them: a polled site's counts and fetch group, the gate's group in the ingest step.
+	const codexPlan: SourcePlan = { ...source({ site: 'codex', polled: true, added: 431, edited: 0, prints: 456, deleted: [] }) };
+	const counts = { 'list pages': 1, 'records read': 431, new: 431, changed: 0, 'gone from the site': 0, failed: 0, left: 0 };
+	const gate = polledIngestDetails({
+		site: 'codex',
+		waiting: 431,
+		counts: { new: 364, joined: 66, failed: 1 },
+		gone: { purged: 0, kept: 0, failed: 0, waiting: 0, edgeNotPurged: 0 },
+		suggested: 0,
+		suggestedNew: 0,
+		suggestions: {}
+	});
+	const done = (): SyncRun => ({
+		...run('finished', 0),
+		sources: [
+			{ site: 'factorioprints', from: { id: 'aaa', date: 0 }, to: { id: 'bbb', date: 0 } },
+			{ site: 'codex', from: null, to: null, polled: true, counts }
+		],
+		steps: freshSteps().map((s) =>
+			s.id === 'fetch'
+				? {
+						...s,
+						status: 'done',
+						details: [
+							{
+								title: 'factorioprints',
+								rows: [
+									{ label: 'position', value: 'aaa → bbb' },
+									{ label: 'new prints', value: 46 }
+								]
+							},
+							polledFetchDetails(codexPlan, counts)
+						]
+					}
+				: s.id === 'ingest'
+					? {
+							...s,
+							status: 'done',
+							details: [
+								{
+									title: 'factorioprints, codex, fprints',
+									rows: [
+										{ label: 'analysed', value: 50 },
+										{ label: 'failed', value: 2 }
+									]
+								},
+								...gate
+							]
+						}
+					: s
+		)
+	});
+
+	test('a polled site: what it read and how the gate took it, from the labels the update writes', () => {
+		const rows = Object.fromEntries(sourceRunRows(done(), 'codex').map((r) => [r.label, r.value]));
+		expect(rows).toEqual({
+			read: 431,
+			new: 431,
+			'new prints on the site': 364,
+			'joined an existing print': 66,
+			failed: 1,
+			'left for the next update': 0
+		});
+	});
+
+	test('the mirror: its fetch rows (no position) and the backfill it was part of', () => {
+		const rows = Object.fromEntries(sourceRunRows(done(), 'factorioprints').map((r) => [r.label, r.value]));
+		expect(rows).toEqual({ 'new prints': 46, analysed: 50, 'failed to read': 2 });
+	});
+
+	test('nothing before the fetch step recorded it', () => {
+		expect(sourceRunRows(run('running', 0), 'codex')).toEqual([]);
 	});
 });
