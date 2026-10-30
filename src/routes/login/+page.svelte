@@ -1,9 +1,16 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import PageMeta from '#lib/components/PageMeta.svelte';
+	import { lastSignIn } from '#lib/last-sign-in.js';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 	const returnParam = $derived(encodeURIComponent(data.returnTo));
+	// Only the browser knows (lib/last-sign-in.ts), so the badge appears once the page has hydrated.
+	let lastUsed: string | null = $state(null);
+	onMount(() => {
+		lastUsed = lastSignIn();
+	});
 </script>
 
 <PageMeta title="Sign in · Blueprint Atlas" description="Sign in to Blueprint Atlas to upload your Factorio blueprints." noindex />
@@ -18,10 +25,13 @@
 			<!-- Full page loads: these leave the site for the provider's own page. -->
 			{#each data.providers as p (p.id)}
 				<a
-					class="rounded bg-stone-800 px-4 py-2.5 text-center text-stone-100 hover:bg-stone-700"
+					class="flex items-center justify-center gap-2 rounded bg-stone-800 px-4 py-2.5 text-center text-stone-100 hover:bg-stone-700"
 					href="/auth/{p.id}?return={returnParam}"
-					data-sveltekit-reload>Continue with {p.label}</a
+					data-sveltekit-reload
 				>
+					Continue with {p.label}
+					{#if lastUsed === p.id}<span class="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-300">Last used</span>{/if}
+				</a>
 			{/each}
 			{#if data.devSignIn}
 				<a

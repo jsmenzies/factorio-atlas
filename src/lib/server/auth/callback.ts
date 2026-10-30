@@ -3,9 +3,11 @@
  * this). Only a `state` matching this browser's flow cookie is accepted; then the code becomes a
  * token, the token a profile, and the profile an account and a session (ending the browser's previous
  * session, if it had one). Anything that goes wrong lands on /login with a short reason (`?error=`).
- * A new account goes to /account first, to check the name it was given.
+ * A new account goes to /account first, to check the name it was given. Either way the URL carries the
+ * provider in its fragment, for the browser to remember (lib/last-sign-in.ts).
  */
 import type { Cookies } from '@sveltejs/kit';
+import { withSignInMark } from '#lib/last-sign-in.js';
 import { sessionToken, setSessionCookies, takeFlowCookie } from './cookies';
 import { exchangeCode } from './oauth';
 import { isProvider, providerClient, SPECS, type Profile, type ProviderVars } from './providers';
@@ -45,5 +47,5 @@ export const finishSignIn = async (provider: string, url: URL, deps: CallbackDep
 	if (!result.ok) return back('banned');
 	const session = await createSession(db, result.account.id, now, sessionToken(cookies, dev));
 	setSessionCookies(cookies, session.token, session.expiresAt, dev);
-	return result.created ? `/account?welcome=1&return=${encodeURIComponent(flow.returnTo)}` : flow.returnTo;
+	return withSignInMark(result.created ? `/account?welcome=1&return=${encodeURIComponent(flow.returnTo)}` : flow.returnTo, provider);
 };

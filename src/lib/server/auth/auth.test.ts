@@ -219,7 +219,7 @@ describe('the callback', () => {
 		const { db, sqlite } = fresh();
 		const { cookies, jar, flow } = started();
 		const next = await finishSignIn('github', callback(flow.state), { db, vars, cookies, dev: true, fetcher: github().fetcher });
-		expect(next).toBe(`/account?welcome=1&return=${encodeURIComponent('/prints/x')}`);
+		expect(next).toBe(`/account?welcome=1&return=${encodeURIComponent('/prints/x')}#signed-in=github`);
 		expect(jar.get(HINT_COOKIE)).toBe('1');
 		const token = jar.get(sessionCookieName(true)) ?? '';
 		expect((await readSession(db, token))?.account.name).toBe('octocat');
@@ -230,7 +230,7 @@ describe('the callback', () => {
 		const again = started('github', { [sessionCookieName(true)]: token });
 		expect(
 			await finishSignIn('github', callback(again.flow.state), { db, vars, cookies: again.cookies, dev: true, fetcher: github().fetcher })
-		).toBe('/prints/x');
+		).toBe('/prints/x#signed-in=github');
 		expect(await readSession(db, token)).toBeNull();
 		expect(count(sqlite, 'sessions')).toBe(1);
 	});

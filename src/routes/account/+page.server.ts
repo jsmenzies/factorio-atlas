@@ -2,6 +2,7 @@ import { dev } from '$app/env';
 import { fail, redirect } from '@sveltejs/kit';
 import { env } from 'cloudflare:workers';
 import { clearSessionCookies, sessionToken } from '#lib/server/auth/cookies.js';
+import { ACCOUNT_DELETED_MARK } from '#lib/last-sign-in.js';
 import { safeReturn } from '#lib/server/auth/oauth.js';
 import { SPECS, isProvider } from '#lib/server/auth/providers.js';
 import { deleteSession } from '#lib/server/auth/sessions.js';
@@ -71,6 +72,7 @@ export const actions: Actions = {
 		const { deleted, left } = await deleteAccountUploads({ db: env.DB, raw: env.RAW, gate: workerGate(env) }, account.id);
 		if (left > 0 || !(await deleteAccount(env.DB, account.id))) return { deleting: { deleted, left: Math.max(left, 1) } };
 		clearSessionCookies(cookies, dev);
-		redirect(303, '/');
+		// The fragment tells the browser to forget the service it signed in with (lib/last-sign-in.ts).
+		redirect(303, `/${ACCOUNT_DELETED_MARK}`);
 	}
 };

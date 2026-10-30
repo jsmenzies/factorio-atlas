@@ -4,7 +4,7 @@
 	/**
 	 * What the site collects and keeps, in plain words. Static: no load, no cookies or locals, so it is safe
 	 * to cache. Keep it in step with the code: page views (lib/server/views.ts), browser storage (app.html,
-	 * lib/rate-unit.svelte.ts, SearchBox, the print page's view fetch), screenshots (lib/screenshots.ts),
+	 * lib/rate-unit.svelte.ts, SearchBox, lib/last-sign-in.ts, the print page's view fetch), screenshots (lib/screenshots.ts),
 	 * removal requests (lib/reports.ts, lib/server/turnstile.ts), accounts (lib/server/auth/: providers'
 	 * scopes, cookies, sessions, name holds) and uploads (lib/server/uploads/). Change the date when the
 	 * text changes.
@@ -75,12 +75,16 @@
 		<h2 class="border-b border-stone-800 pb-2 text-lg font-semibold text-stone-100">In your browser</h2>
 		<p>
 			Unless you sign in, the site itself sets no cookies; the only one you may get is Cloudflare’s bot check above. Signing in adds the
-			cookies described under “Accounts and uploads”. The site keeps three small things in your browser’s own storage, which are never sent
+			cookies described under “Accounts and uploads”. The site keeps four small things in your browser’s own storage, which are never sent
 			to the site:
 		</p>
 		<ul class="list-disc space-y-1 pl-5">
 			<li><code class="text-stone-100">atlas.rate</code> (local storage): whether you show rates per second or per minute.</li>
 			<li><code class="text-stone-100">atlas.picker.tab</code> (local storage): the tab you last opened in the search box’s item menu.</li>
+			<li>
+				<code class="text-stone-100">atlas.lastSignIn</code> (local storage): which service you last signed in with, so the sign-in page can
+				mark it. It stays when you sign out and goes when you delete your account.
+			</li>
 			<li>
 				<code class="text-stone-100">viewed:</code> and a print’s id (session storage, gone when you close the tab): so each print counts one
 				view per tab.

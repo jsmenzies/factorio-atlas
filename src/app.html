@@ -10,12 +10,24 @@
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 		<!-- Before the page draws, as cached pages are the same for everyone: the visitor's rate unit
 		     (lib/rate-unit.svelte.ts; pages carry both units), and whether a session may exist
-		     (lib/server/auth/sessions.ts: the hint cookie; AccountLink.svelte asks /me for the name). -->
+		     (lib/server/auth/sessions.ts: the hint cookie; AccountLink.svelte asks /me for the name).
+		     Before the router starts: the service just signed in with, or a deleted account, from the
+		     URL's fragment into local storage, and the fragment taken off (lib/last-sign-in.ts). -->
 		<script nonce="%sveltekit.nonce%">
 			try {
 				if (localStorage.getItem('atlas.rate') === 'min') document.documentElement.dataset.rate = 'min';
 			} catch {}
 			if (/(?:^|; )atlas_signed_in=1(?:;|$)/.test(document.cookie)) document.documentElement.dataset.auth = 'in';
+			{
+				const mark = /^#(?:signed-in=(discord|github|google)|account-deleted)$/.exec(location.hash);
+				if (mark) {
+					history.replaceState(history.state, '', location.pathname + location.search);
+					try {
+						if (mark[1]) localStorage.setItem('atlas.lastSignIn', mark[1]);
+						else localStorage.removeItem('atlas.lastSignIn');
+					} catch {}
+				}
+			}
 		</script>
 		%sveltekit.head%
 	</head>
