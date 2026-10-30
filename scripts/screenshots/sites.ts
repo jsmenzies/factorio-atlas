@@ -1,6 +1,6 @@
 /**
- * `bun run screenshots --from-sites local|prod`: the images other sites' records name (codex's `image_url`;
- * fprints next), as an input of the screenshots pipeline beside Imgur and uploads. Generic: any store site.
+ * `bun run screenshots --from-sites local|prod`: the images other sites' records name (codex's and fprints'
+ * `image_url`), as an input of the screenshots pipeline beside Imgur and uploads. Generic: any store site.
  *
  * Contract for a site (site-images.ts):
  * - Its SourceRecord's `image` is `siteImage(site, url)`: `{ key: '<site>.<16 hex of the URL's SHA-256>', url }`,

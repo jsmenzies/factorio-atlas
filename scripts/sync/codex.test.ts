@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { siteImage } from '../screenshots/site-images';
-import { codexRecord, codexTags, linksIn, type CodexBlueprint } from './codex';
+import { codexRecord, codexTags, type CodexBlueprint } from './codex';
+import { linksIn } from './polled';
 
 /** A made-up print in the API's shape (no player's work). */
 const sample = (o: Partial<CodexBlueprint> = {}): CodexBlueprint => ({

@@ -36,7 +36,7 @@
  *
  * `--from-uploads S` (scripts/screenshots/uploads.ts): the stage's approved upload screenshots, copied from
  * its private RAW bucket into the same originals folder and run state, as `upload.<16 hex>`; never Imgur.
- * `--from-sites S` (scripts/screenshots/sites.ts): the images other sites' records name (codex's
+ * `--from-sites S` (scripts/screenshots/sites.ts): the images other sites' records name (codex's and fprints'
  * `image_url`) for the stage's prints that show them, copied from their URLs as `<site>.<16 hex>`.
  *
  * The other steps (scripts/screenshots/run.ts) work from state.jsonl, never the records:

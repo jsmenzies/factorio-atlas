@@ -40,7 +40,7 @@ export const screenshotsDir = (root = process.cwd(), value = process.env.SCREENS
 
 /**
  * fetch (default): copy originals from Imgur. uploads: copy a stage's approved upload screenshots from
- * its RAW bucket. sites: copy the images other sites' records name (codex's), for a stage's prints that show
+ * its RAW bucket. sites: copy the images other sites' records name (codex's, fprints'), for a stage's prints that show
  * them (scripts/screenshots/sites.ts). make: the sizes, from the originals on disk. upload: make what's missing, then bring a
  * bucket in line. recheck: ask Imgur whether copied images still exist, and mark the deleted ones removed.
  */

@@ -37,6 +37,18 @@ describe('site images', () => {
 		expect(siteImage('fprints', URL_A)).toBeNull();
 		// Another Backblaze bucket is not codex's.
 		expect(allowedImageUrl('codex', 'https://someone-else.s3.us-west-000.backblazeb2.com/x.png')).toBeNull();
+		// fprints: its own Bunny CDN zone only, and never another site's host.
+		const bunny = 'https://fprints-data.b-cdn.net/uploads/95699d0d-c28b-4dcc-bfcd-257be9434b37.webp';
+		expect(allowedImageUrl('fprints', bunny)).toBe(bunny);
+		expect(/^fprints\.[0-9a-f]{16}$/.test(siteImage('fprints', bunny)!.key)).toBe(true);
+		for (const bad of [
+			'https://other.b-cdn.net/x.webp',
+			'https://fprints-data.b-cdn.net.evil.com/x.webp',
+			'https://i.imgur.com/AbC123x.png',
+			URL_A
+		])
+			expect(allowedImageUrl('fprints', bad)).toBeNull();
+		expect(allowedImageUrl('codex', bunny)).toBeNull();
 	});
 
 	test("the URL comes from the print's archived record, checked against the id", () => {

@@ -37,7 +37,10 @@ export interface SyncSettings {
  * Sites the update polls for new and changed prints (scripts/sync/polled.ts): their records go into the
  * record store's inbox in the fetch step and through the gate in the ingest step.
  */
-export const POLLED_SITES = [{ site: 'codex', name: 'factoriocodex.com' }] as const;
+export const POLLED_SITES = [
+	{ site: 'codex', name: 'factoriocodex.com' },
+	{ site: 'fprints', name: 'fprints.xyz' }
+] as const;
 export type PolledSiteId = (typeof POLLED_SITES)[number]['site'];
 
 export interface PolledSettings {
@@ -338,7 +341,7 @@ export const planTotals = (plan: SyncPlan | null) => {
 			(p) => p.added,
 			fetched.filter((p) => p.ingestsItself)
 		),
-		/** New and changed records on polled sites (codex), read in the fetch and admitted in the ingest step. */
+		/** New and changed records on polled sites (codex, fprints), read in the fetch and admitted in the ingest step. */
 		polled: sum(
 			(p) => p.added + p.edited,
 			fetched.filter((p) => p.polled)

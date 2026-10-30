@@ -21,8 +21,14 @@ describe('parseSettings', () => {
 });
 
 describe('polled sites', () => {
-	test('codex is on by default, with room for the first full import', () => {
+	test('codex and fprints are on by default, with room for the first full import', () => {
 		expect(DEFAULT_SETTINGS.polled.codex).toEqual({ on: true, perUpdate: 1000 });
+		expect(DEFAULT_SETTINGS.polled.fprints).toEqual({ on: true, perUpdate: 1000 });
+		expect(parseSettings({ polled: { codex: { on: false } } }).settings.polled.fprints).toEqual({ on: true, perUpdate: 1000 });
+		expect(parseSettings({ polled: { fprints: { on: false, perUpdate: 5 } } }).settings.polled).toEqual({
+			codex: { on: true, perUpdate: 1000 },
+			fprints: { on: false, perUpdate: 5 }
+		});
 		// Settings saved before polled sites existed get the defaults.
 		expect(parseSettings({ top: 5 }).settings.polled.codex).toEqual({ on: true, perUpdate: 1000 });
 	});

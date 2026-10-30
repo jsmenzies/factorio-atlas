@@ -9,6 +9,7 @@ import {
 	emptyState,
 	PoliteHttp,
 	planPoll,
+	polledSource,
 	readState,
 	type Fetched,
 	type ListedPrint,
@@ -249,5 +250,50 @@ describe('PoliteHttp', () => {
 		expect(seen[0].ua).toContain('factorio-atlas');
 		expect(await h.get('https://example.com/b', 'read')).toEqual({ status: 404, body: null });
 		expect([h.lists, h.reads]).toEqual([3, 1]);
+	});
+
+	test('text bodies; a failure goneIf recognises is passed back at once, others still retried', async () => {
+		const slept: number[] = [];
+		const answers = [
+			new Response('<urlset/>'),
+			new Response('{"error":"no rows"}', { status: 500 }),
+			new Response('{"error":"busy"}', { status: 500 }),
+			new Response('{"error":"busy"}', { status: 500 }),
+			new Response('{"error":"busy"}', { status: 500 })
+		];
+		const h = new PoliteHttp({
+			minIntervalMs: 0,
+			sleep: async (ms) => void slept.push(ms),
+			fetch: (async () => answers.shift()!) as unknown as typeof fetch
+		});
+		expect(await h.get('https://example.com/sitemap.xml', 'list', undefined, { text: true })).toEqual({ status: 200, body: '<urlset/>' });
+		const goneIf = (status: number, text: string) => status === 500 && text.includes('no rows');
+		expect(await h.get('https://example.com/r?id=1', 'read', undefined, { goneIf })).toEqual({ status: 500, body: null });
+		expect(slept).toEqual([]);
+		expect(h.get('https://example.com/r?id=2', 'read', undefined, { goneIf })).rejects.toThrow('HTTP 500');
+	});
+
+	test('the source carries its kind, for the Overview even when its plan fails', () => {
+		const { site } = fakeSite(new Map());
+		expect(polledSource(site, { recordsDir: inbox, settings: () => ({ on: true, perUpdate: 1 }) })).toMatchObject({
+			site: 'codex',
+			kind: 'test',
+			polled: true
+		});
+	});
+
+	test('a site whose one page lists everything has a full listing every time: a deletion is noticed at once', async () => {
+		const prints = new Map([...Array(30)].map((_, i) => [String(i + 1), 100 + i] as [string, number]));
+		const { site, calls } = fakeSite(prints, { per: 100 });
+		site.listsAll = true;
+		await fetchOnce(site);
+		prints.delete('4');
+		// Same total as known would hide it from a cursor listing; listsAll lists in full anyway.
+		prints.set('31', 50);
+		calls.length = 0;
+		const { plan, counts } = await fetchOnce(site);
+		expect(plan).toMatchObject({ added: 1, deleted: ['4'] });
+		expect(calls).toEqual(['list 1', 'read 31', 'read 4']);
+		expect(counts).toMatchObject({ new: 1, gone: 1 });
 	});
 });

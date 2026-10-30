@@ -1,7 +1,7 @@
 /**
  * Polled sites as sources of the one-click update: a site with a public list of its prints, most recently
- * changed first (factoriocodex.com; fprints.xyz can reuse this). Generic: a site is a `PolledSite` (one list
- * page, one record), and this module does the rest.
+ * changed first (factoriocodex.com, sync/codex.ts), or all at once (fprints.xyz's sitemap, sync/fprints.ts).
+ * Generic: a site is a `PolledSite` (one list page, one record), and this module does the rest.
  *
  * Contract:
  * - **Fetch step** (`polledSource(...)`, a SourceAdapter run in the update's own process):
@@ -64,6 +64,11 @@ export interface PolledSite {
 	 * and reads every print again (its revisions should carry it too, so each one differs).
 	 */
 	version?: number;
+	/**
+	 * One page lists every print the site has (a sitemap): every listing is a full one, so deletions are
+	 * noticed at once, and the cursor only orders the reads.
+	 */
+	listsAll?: boolean;
 	/** Page `page` (from 1) of the site's public prints, most recently changed first. */
 	listPage(page: number, http: PoliteHttp, signal?: AbortSignal): Promise<ListPage>;
 	/** One record, read without counting a view. */
@@ -89,15 +94,26 @@ export interface HttpOptions {
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-/** Paced, retried GETs of JSON. Counts its requests (`lists`, `reads`). */
+/** How a GET's body is read, and which failures mean the record isn't there (a site that answers 500 for an unknown id). */
+export interface GetOptions {
+	/** The body as text (a sitemap), not JSON. */
+	text?: boolean;
+	/** A failed answer (status, its body's text) that says the record doesn't exist: passed back as `{ status, body: null }`, not retried. */
+	goneIf?: (status: number, text: string) => boolean;
+}
+
+/** Paced, retried GETs of JSON (or text). Counts its requests (`lists`, `reads`). */
 export class PoliteHttp {
 	lists = 0;
 	reads = 0;
 	private last = 0;
 	constructor(private readonly o: HttpOptions = {}) {}
 
-	/** The JSON body, or `{ status }` alone for 404 and 410. Throws on other failures, after retrying those worth it. */
-	async get(url: string, kind: 'list' | 'read', signal?: AbortSignal): Promise<{ status: number; body: unknown }> {
+	/**
+	 * The body (JSON, or text with `text`), or `{ status }` alone for 404, 410 and what `goneIf` says is gone.
+	 * Throws on other failures, after retrying those worth it.
+	 */
+	async get(url: string, kind: 'list' | 'read', signal?: AbortSignal, g: GetOptions = {}): Promise<{ status: number; body: unknown }> {
 		const sleep = this.o.sleep ?? wait;
 		const tries = this.o.tries ?? 3;
 		for (let attempt = 1; ; attempt++) {
@@ -110,7 +126,10 @@ export class PoliteHttp {
 			let res: Response;
 			try {
 				res = await (this.o.fetch ?? fetch)(url, {
-					headers: { 'user-agent': this.o.userAgent ?? USER_AGENT, accept: 'application/json' },
+					headers: {
+						'user-agent': this.o.userAgent ?? USER_AGENT,
+						accept: g.text ? 'application/xml, text/xml;q=0.9, */*;q=0.1' : 'application/json'
+					},
 					signal: AbortSignal.any([AbortSignal.timeout(this.o.timeoutMs ?? 60_000), ...(signal ? [signal] : [])])
 				});
 			} catch (e) {
@@ -122,8 +141,11 @@ export class PoliteHttp {
 				await res.body?.cancel();
 				return { status: res.status, body: null };
 			}
-			if (res.ok) return { status: res.status, body: await res.json() };
-			await res.body?.cancel();
+			if (res.ok) return { status: res.status, body: g.text ? await res.text() : await res.json() };
+			if (g.goneIf) {
+				const text = await res.text().catch(() => '');
+				if (g.goneIf(res.status, text)) return { status: res.status, body: null };
+			} else await res.body?.cancel();
 			if ((res.status === 429 || res.status >= 500) && attempt < tries) {
 				const after = Number(res.headers.get('retry-after'));
 				await sleep(Math.min(120_000, Number.isFinite(after) && after > 0 ? after * 1000 : 5000 * attempt));
@@ -133,6 +155,24 @@ export class PoliteHttp {
 		}
 	}
 }
+
+// --- record helpers, for each site's record builder
+
+/** Unix ms of an ISO time, or null. */
+export const time = (s: string | null | undefined) => {
+	const t = s ? Date.parse(s) : NaN;
+	return Number.isFinite(t) ? t : null;
+};
+
+/** "2.0.73.1" or "Version 2.0" → the factorioprints-style tag "/version/2,0/" (the version facet reads those). */
+export const versionTag = (v: string | null | undefined) => {
+	const m = /^(?:Version )?(\d+)\.(\d+)/.exec(v?.trim() ?? '');
+	return m ? `/version/${Number(m[1])},${Number(m[2])}/` : null;
+};
+
+/** Links in a description (without the sentence's own trailing punctuation): what may name the same print elsewhere. */
+export const linksIn = (text: string | null) =>
+	[...new Set((text?.match(/https?:\/\/[^\s)\]<>"']+/g) ?? []).map((u) => u.replace(/[.,;:!?]+$/, '')))].slice(0, 20);
 
 // --- state
 
@@ -264,7 +304,7 @@ export async function planPoll(
 	const first = await site.listPage(1, http, o.signal);
 	for (const it of first.items) listed.set(it.siteId, it);
 	let page = 1;
-	let full = o.full || state.cursor === 0 || now - state.fullAt > FULL_EVERY_MS;
+	let full = o.full || site.listsAll === true || state.cursor === 0 || now - state.fullAt > FULL_EVERY_MS;
 	const more = () => page < first.totalPages;
 	const listNext = async () => {
 		page++;
@@ -522,6 +562,7 @@ export function polledSource(site: PolledSite, o: PolledSourceOptions): SourceAd
 	let planned: { state: PollState; work: PollWork; toId: string; maxChange: number } | null = null;
 	const adapter: SourceAdapter & { lastApply?: string } = {
 		site: site.site,
+		kind: site.kind,
 		polled: true,
 		plan: async (p: PlanOptions): Promise<SourcePlan> => {
 			if (!o.settings().on) {

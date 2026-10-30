@@ -596,17 +596,20 @@ In order, each step being the command you'd otherwise run by hand:
 A failed step is marked and the steps that don't need it still run; authors and render need ingest,
 screenshots and render need removals.
 
-**Other sites polled for prints** (today factoriocodex.com, through its public JSON API; on by
-default, `/admin/settings` turns it off): in the fetch step the update lists the site's prints by last
-change until it is past the newest change it has seen (usually one request), reads each new or
-changed print (`?skip_view=true`, so no view is counted), and keeps it in the record store's inbox
+**Other sites polled for prints** (factoriocodex.com, through its public JSON API, and fprints.xyz,
+through its sitemap and the import API it offers other sites; each on by default, `/admin/settings`
+turns either off): in the fetch step the update lists the site's prints by last change until it is
+past the newest change it has seen (usually one request; fprints' sitemap lists every print in one),
+reads each new or changed print (codex's with `?skip_view=true`, so no view is counted), and keeps it
+in the record store's inbox
 (`<RECORDS_DIR>/.polled/<site>/`). Every request sends a User-Agent naming this project, at most one
 a second; an update reads at most 1,000 prints (a setting), the rest wait for the next one. When the
-site's total doesn't match what this machine knows, and once a week, it lists every page: a print
-missing from the list is read once more, and a 404 or a print no longer public is a deletion (a print
+site's total doesn't match what this machine knows, and once a week, it lists every page (fprints:
+every update): a print missing from the list is read once more, and a 404 (fprints: its API's "no
+rows" answer) or a print no longer public is a deletion (a print
 the list still shows is never one: its failed read is tried again). More than the 5% guard missing, or
 an empty list, holds the site back until accepted. In the ingest step,
-after the backfill, `bun run polled --stage … --site codex` puts every new or changed record through
+after the backfill, `bun run polled --stage … --site codex|fprints` puts every new or changed record through
 the same gate as any print (blocks, joins with the same blueprint already here, suggestions), and
 each deletion as a source gone: kept while another site has the print, else deleted with its renders,
 the edge cache and our copy of its screenshot (on prod this needs `R2_ACCESS_KEY_ID`,
@@ -615,9 +618,9 @@ deletions wait for a run that has them). An edit that makes one of a print's sou
 blueprint splits it: the print stays with the source it was first added from (its URL), and the
 others become prints of their own. `bun run polled … --dry-run` says what each record would become without
 writing. The prints that are their own print then reach the record store (`bun run records`), so the
-render step draws them. A print's image on that site (codex's, on Backblaze B2) is never linked to: the
+render step draws them. A print's image on that site (codex's on Backblaze B2, fprints' on its Bunny CDN) is never linked to: the
 screenshots step's `screenshots --from-sites …` copies the images the stage's prints show, from their
-URLs (at most one request a second, codex's own bucket only, no redirects; dead only after a 404 on two
+URLs (at most one request a second, each site's own image host only, no redirects; dead only after a 404 on two
 runs), into the same pipeline as Imgur's, and until then the print shows none.
 Prints deleted from the mirror are counted and kept. Each update is a `sync_runs` row in the local
 D1 (migration 0020, so run `bun run db:migrate` first) and one log, `sync-<time>.log`, in the run

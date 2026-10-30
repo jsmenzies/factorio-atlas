@@ -285,6 +285,14 @@ describe('upload screenshots (`upload.<16 hex>`)', () => {
 		expect(shotView(id, null, null, '/screenshots')).toMatchObject({ state: 'preparing', imgur: false, backdrop: null });
 	});
 
+	test("fprints' image ids are own images too: never Imgur, preparing until sized", () => {
+		const id = siteImageId('fprints', '0123456789abcdef0123');
+		expect([id, isSiteImage(id), isOwnImage(id), isImgurId(id)]).toEqual(['fprints.0123456789abcdef', true, true, false]);
+		expect(cardImage(card({ image_id: id }), bases)).toBeNull();
+		expect(shotView(id, null, null, '/screenshots')).toMatchObject({ state: 'preparing', imgur: false });
+		for (const k of shotKeys({ id, v: 1, ext: 'webp', w: 1920, h: 1080 })) expect(SHOT_KEY.test(k)).toBe(true);
+	});
+
 	test('sized: our files, as for Imgur images', () => {
 		expect(cardImage(card({ shot_state: 'copied', shot_v: 1, shot_ext: 'png', shot_w: 1920, shot_h: 1080 }), bases)).toMatchObject({
 			kind: 'screenshot',

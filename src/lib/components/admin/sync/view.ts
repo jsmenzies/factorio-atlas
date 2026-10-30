@@ -30,6 +30,29 @@ export const updateState = (run: SyncRun | null, plan: SyncPlan | null, now: num
 	return 'current';
 };
 
+/** Sources the last check couldn't reach (an error): never "up to date". */
+export const unchecked = (plan: SyncPlan | null): SourcePlan[] => (plan?.sources ?? []).filter((p) => p.error);
+
+/**
+ * The headline when nothing waits: every source on is up to date, or how many are and which couldn't be
+ * checked ("2 of 3 sources up to date · codex couldn't be checked"). Sources turned off aren't counted.
+ */
+export const upToDateLine = (plan: SyncPlan): { text: string; complete: boolean } => {
+	const on = plan.sources.filter((p) => !p.off);
+	const failed = unchecked(plan);
+	// complete: the text follows the words "Up to date", which the box sets in green.
+	if (!failed.length) return { text: on.length === 1 ? 'with its source' : `with all ${on.length} sources`, complete: true };
+	const ok = on.length - failed.length;
+	return { text: `${ok} of ${on.length} source${on.length === 1 ? '' : 's'} up to date · ${uncheckedText(failed)}`, complete: false };
+};
+
+/** "codex couldn't be checked", "codex and fprints couldn't be checked". */
+export const uncheckedText = (failed: readonly SourcePlan[]) => {
+	const names = failed.map((p) => p.site);
+	const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
+	return `${list} couldn’t be checked`;
+};
+
 /** The mirror's plan (the first source today), for the lines that name its commits. */
 export const mirrorPlan = (plan: SyncPlan | null) => plan?.sources[0] ?? null;
 

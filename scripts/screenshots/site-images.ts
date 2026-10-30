@@ -1,5 +1,5 @@
 /**
- * Other sites' images as screenshots: the part a site's record builder needs (codex.ts, and fprints next)
+ * Other sites' images as screenshots: the part a site's record builder needs (sync/codex.ts, sync/fprints.ts)
  * and the copy step (sites.ts) shares. Pure apart from hashing; for tests.
  *
  * A site's record names its image by URL. `siteImage(site, url)` turns that into the record's `image`:
@@ -16,7 +16,8 @@ export type ImageSite = 'codex' | 'fprints' | 'factoriobin';
 export const SITE_IMAGE_HOSTS: Record<ImageSite, readonly RegExp[]> = {
 	// codex's own Backblaze B2 bucket (factoriocodex.s3.us-west-000.backblazeb2.com), no other.
 	codex: [/^factoriocodex\.s3\.[a-z0-9-]+\.backblazeb2\.com$/],
-	fprints: [],
+	// fprints' own Bunny CDN zone (fprints-data.b-cdn.net), no other.
+	fprints: [/^fprints-data\.b-cdn\.net$/],
 	factoriobin: []
 };
 

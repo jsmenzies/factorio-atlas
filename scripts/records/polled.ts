@@ -1,5 +1,5 @@
 /**
- * Polled sites (scripts/sync/polled.ts: codex) as sites of the record store, filled from the stage like
+ * Polled sites (scripts/sync/polled.ts: codex, fprints) as sites of the record store, filled from the stage like
  * uploads: the prints that are their own print there (`<prefix>-<siteId>`, from that site's live source),
  * each record read from its archive in RAW (`<site>/<siteId>.json`, the pipeline text the ingest wrote).
  * A record that joined another print (the same blueprint already here) is not listed, so the render step

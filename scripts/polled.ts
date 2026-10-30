@@ -1,5 +1,5 @@
 /**
- * `bun run polled --stage local|prod --site codex [--dir DIR] [--dry-run] [--force] [--yes] [--json]`:
+ * `bun run polled --stage local|prod --site codex|fprints [--dir DIR] [--dry-run] [--force] [--yes] [--json]`:
  * give the stage what a polled site's inbox holds (scripts/sync/polled.ts). Every record at a revision the
  * stage wasn't given goes through the one gate (`addRecord`, add-record.ts: admitRecord, then ingestRecord, in
  * Bun with no Worker caps; `update` for records the site changed, which detaches a copy edited into something

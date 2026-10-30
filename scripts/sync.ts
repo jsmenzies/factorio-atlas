@@ -8,7 +8,7 @@
  *                   copies). Runs whatever else happens; when it fails, screenshots and render (which
  *                   could put a removed print's files back) are skipped and the update says so
  *   2. fetch        each source: what's new (for the mirror: GitHub's latest commit against the
- *                   clone's), then fetch it (fast-forward). Polled sites (codex, scripts/sync/polled.ts):
+ *                   clone's), then fetch it (fast-forward). Polled sites (codex, fprints; scripts/sync/polled.ts):
  *                   list until past the cursor, read new and changed records into the record store's
  *                   inbox, at most `polled.<site>.perUpdate` reads, ≈ 1 request a second. A source is held back, and only it, when
  *                   adds, deletions and moves are more than `maxChange` of its prints (a layout
@@ -95,6 +95,7 @@ import { MIRROR_SITE, mirrorSource, type SourceAdapter } from './sync/mirror';
 import { failureLine, lastJsonLine, lastLine, lineMatching } from './sync/output';
 import { UPLOADS_SOURCE, uploadsSource } from './sync/uploads';
 import { codexSite } from './sync/codex';
+import { fprintsSite } from './sync/fprints';
 import { polledFetchDetails, polledIngestDetails, polledSource, type PolledSite } from './sync/polled';
 import type { PolledAdmitResult } from './polled';
 import type { UploadRunResult } from './screenshots/run';
@@ -167,8 +168,8 @@ const records = recordsDir(ROOT);
 let say = (line: string) => console.error(line);
 let stopRequested = () => false;
 
-/** Polled sites (scripts/sync/polled.ts), one per POLLED_SITES entry: fprints joins here. */
-const POLLED: PolledSite[] = [codexSite];
+/** Polled sites (scripts/sync/polled.ts), one per POLLED_SITES entry. */
+const POLLED: PolledSite[] = [codexSite, fprintsSite];
 const polledSettings = (site: string) => settings.polled[site as keyof typeof settings.polled];
 
 /**
@@ -224,6 +225,8 @@ const planAll = async (signal?: AbortSignal) => {
 			console.error(`✗ ${s.site}: ${error}`);
 			sources.push({
 				site: s.site,
+				...(s.kind ? { kind: s.kind } : {}),
+				...(s.polled ? { polled: true } : {}),
 				from: none,
 				to: none,
 				prints: 0,

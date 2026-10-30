@@ -7,7 +7,19 @@
 	import { PIPELINE_DEP } from '../live.svelte.js';
 	import { ago, bytes, clock, duration, int, percent, when } from '../metrics.js';
 	import StepList from './StepList.svelte';
-	import { heldBack, PLAN_FRESH_MS, previewCost, previewSteps, shortCommit, sourceMoved, sourceState, updateState } from './view.js';
+	import {
+		heldBack,
+		PLAN_FRESH_MS,
+		previewCost,
+		previewSteps,
+		shortCommit,
+		sourceMoved,
+		sourceState,
+		unchecked,
+		uncheckedText,
+		updateState,
+		upToDateLine
+	} from './view.js';
 
 	/**
 	 * The Overview's main box: an update waiting (with what each step would do and what it costs), an
@@ -125,6 +137,7 @@
 
 	const totals = $derived(planTotals(plan));
 	const held = $derived(heldBack(plan));
+	const failed = $derived(unchecked(plan));
 	const current = $derived(run?.steps.find((s) => s.status === 'running'));
 	const stepNo = $derived(current ? SYNC_STEPS.findIndex((s) => s.id === current.id) + 1 : 0);
 	const preview = $derived(previewSteps(plan, union, settings));
@@ -196,12 +209,19 @@
 						...(totals.polled ? [`${int(totals.polled)} from other sites`] : [])
 					].join(', ') || 'new names to put on uploads'}
 				</h2>
-				<p class="text-xs text-stone-500">Sources checked {ago(now - plan.checkedAt)}</p>
+				<p class="text-xs text-stone-500">
+					Sources checked {ago(now - plan.checkedAt)}{failed.length ? ` · ${uncheckedText(failed)}` : ''}
+				</p>
 			{:else}
 				<p class="text-xs font-semibold tracking-wide text-stone-500 uppercase">Update</p>
 				<h2 id="update-title" class="text-lg font-semibold text-stone-100">
 					{#if plan}
-						<span class="text-emerald-300">Up to date</span> with {plan.sources.length === 1 ? 'its source' : `all ${plan.sources.length} sources`}
+						{@const line = upToDateLine(plan)}
+						{#if line.complete}
+							<span class="text-emerald-300">Up to date</span> {line.text}
+						{:else}
+							<span class="text-amber-200">{line.text}</span>
+						{/if}
 					{:else}
 						Not checked yet
 					{/if}

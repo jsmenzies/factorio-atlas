@@ -17,7 +17,7 @@
 import type { SourceRecord } from '#lib/server/pipeline/source-record.js';
 import { siteUrl } from '#lib/sources.js';
 import { siteImage } from '../screenshots/site-images';
-import type { Fetched, ListPage, PolledSite, PoliteHttp } from './polled';
+import { linksIn, time, versionTag, type Fetched, type ListPage, type PolledSite, type PoliteHttp } from './polled';
 
 export const CODEX_API = 'https://factoriocodex.com/api/v1';
 const PER_PAGE = 100;
@@ -113,12 +113,6 @@ export const CODEX_TAGS: Record<string, string> = {
 	'Aquilo Planet': '/planets/aquilo/'
 };
 
-/** "2.0.73.1" or "Version 2.0" → "/version/2,0/". */
-const versionTag = (v: string | null | undefined) => {
-	const m = /^(?:Version )?(\d+)\.(\d+)/.exec(v?.trim() ?? '');
-	return m ? `/version/${m[1]},${m[2]}/` : null;
-};
-
 export const codexTags = (tags: readonly CodexTag[] | null | undefined, gameVersion: string | null | undefined) => {
 	const out = new Set<string>();
 	const chosen = versionTag(gameVersion);
@@ -128,14 +122,6 @@ export const codexTags = (tags: readonly CodexTag[] | null | undefined, gameVers
 		if (mapped) out.add(mapped);
 	}
 	return [...out];
-};
-
-/** Links in a description: what may name the same print elsewhere. */
-export const linksIn = (text: string | null) => [...new Set(text?.match(/https?:\/\/[^\s)\]<>"']+/g) ?? [])].slice(0, 20);
-
-const time = (s: string | null | undefined) => {
-	const t = s ? Date.parse(s) : NaN;
-	return Number.isFinite(t) ? t : null;
 };
 
 /** The SourceRecord of a print the API answered, or gone when it isn't public. Throws when it has no string. */

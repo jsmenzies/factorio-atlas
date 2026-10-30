@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { ScopeFigures } from '#lib/server/admin/render-scope.js';
 import { DEFAULT_SETTINGS, freshSteps, type SourcePlan, type SyncPlan, type SyncRun } from '#lib/sync.js';
-import { previewSteps, renderWork, sourceState, updateState } from './view';
+import { previewSteps, renderWork, sourceState, unchecked, updateState, upToDateLine } from './view';
 
 const source = (over: Partial<SourcePlan> = {}): SourcePlan => ({
 	site: 'factorioprints',
@@ -113,5 +113,34 @@ describe('a source whose cursor isn’t a commit (uploads)', () => {
 		const both = previewSteps(plan({}, [uploads(3)]), union(0), DEFAULT_SETTINGS);
 		expect(both[1].text).toBe('+46 new, 4 edited, 212 only favourite counts changed, 1 deleted; uploads: 3 waiting');
 		expect(both[2].text).toContain('analyse 50 new and edited prints');
+	});
+});
+
+describe('upToDateLine', () => {
+	const level = (site: string, over: Partial<SourcePlan> = {}) =>
+		source({ site, from: { id: 'a', date: 0 }, to: { id: 'a', date: 0 }, ...over });
+	test('every source checked: up to date with all of them', () => {
+		expect(upToDateLine({ checkedAt: 0, sources: [level('factorioprints'), level('uploads'), level('codex')] })).toEqual({
+			text: 'with all 3 sources',
+			complete: true
+		});
+		expect(upToDateLine({ checkedAt: 0, sources: [level('factorioprints')] }).text).toBe('with its source');
+	});
+
+	test("a source that couldn't be checked is never up to date, and is named", () => {
+		const sources = [level('factorioprints'), level('uploads'), level('codex', { error: 'HTTP 522', polled: true })];
+		expect(updateState(null, { checkedAt: 0, sources }, 0)).toBe('current');
+		expect(upToDateLine({ checkedAt: 0, sources })).toEqual({
+			text: '2 of 3 sources up to date · codex couldn’t be checked',
+			complete: false
+		});
+		const two = [...sources, level('fprints', { error: 'timeout', polled: true })];
+		expect(upToDateLine({ checkedAt: 0, sources: two }).text).toBe('2 of 4 sources up to date · codex and fprints couldn’t be checked');
+		expect(unchecked({ checkedAt: 0, sources: two }).map((p) => p.site)).toEqual(['codex', 'fprints']);
+	});
+
+	test('sources turned off are not counted', () => {
+		const sources = [level('factorioprints'), level('fprints', { off: true, polled: true }), level('codex', { error: 'HTTP 522' })];
+		expect(upToDateLine({ checkedAt: 0, sources }).text).toBe('1 of 2 sources up to date · codex couldn’t be checked');
 	});
 });

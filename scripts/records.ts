@@ -1,7 +1,7 @@
 /**
  * `bun run records --stage local|prod [--dir DIR] [--dry-run] [--json]`: bring this machine's record
  * store (scripts/records/store.ts: RECORDS_DIR, else ~/data/factorio-records) in line with the stage, for
- * every site whose records live there (uploads: scripts/records/uploads.ts; polled sites such as codex, their
+ * every site whose records live there (uploads: scripts/records/uploads.ts; polled sites (codex, fprints), their
  * prints that are their own print on the stage: scripts/records/polled.ts). Only new and changed
  * records are fetched; those the site no longer has (deleted, taken down) leave the store. The render
  * runs read the store beside the mirror clone, so uploads get renders and thumbnails like any print.
@@ -99,7 +99,7 @@ try {
 	const env = target.env;
 	await requireSchema(env.DB, stage, 'SELECT print_id FROM uploads LIMIT 0', 'uploads table', '0024');
 	await requireSchema(env.DB, stage, 'SELECT site FROM print_sources LIMIT 0', 'print_sources table', '0022');
-	/** Every site that feeds the store; others join here. Polled sites (codex): their own prints on the stage. */
+	/** Every site that feeds the store; others join here. Polled sites (codex, fprints): their own prints on the stage. */
 	const adapters: StoreAdapter[] = [
 		uploadsStoreAdapter(env),
 		factoriobinStoreAdapter(env),

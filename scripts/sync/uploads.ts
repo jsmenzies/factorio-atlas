@@ -97,6 +97,7 @@ const runUploads = (root: string, stage: string, args: string[], signal?: AbortS
 
 export const uploadsSource = (root: string, stage: string): SourceAdapter => ({
 	site: UPLOADS_SOURCE,
+	kind: 'uploads on the site',
 	ingestsItself: true,
 	plan: async ({ signal }): Promise<SourcePlan> => {
 		const r = await runUploads(root, stage, ['--plan'], signal);

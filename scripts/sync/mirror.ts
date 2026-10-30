@@ -217,6 +217,8 @@ export const pullMirror = async (clone: string, commit: string, signal?: AbortSi
 /** A print source for the update's fetch step: say what's new (plan), then bring the local copy to it (apply). */
 export interface SourceAdapter {
 	site: string;
+	/** What the source is (SourcePlan.kind), for the Overview's list when its plan couldn't be made. */
+	kind?: string;
 	/** Its apply ingests its records itself (uploads): none of the backfill's work (SourcePlan.ingestsItself). */
 	ingestsItself?: boolean;
 	/** A polled site (scripts/sync/polled.ts): its apply reads records into the inbox, the ingest step admits them. */
