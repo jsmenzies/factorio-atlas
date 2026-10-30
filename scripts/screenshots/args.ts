@@ -66,15 +66,17 @@ export interface ShotArgs {
 	recheckDead: boolean;
 	planOnly: boolean;
 	canary: boolean;
+	/** End the fetch or the upload with its counts as one line of JSON on stdout. */
+	json: boolean;
 }
 
 export class UsageError extends Error {}
 
 export const USAGE =
 	'usage: screenshots [--from-clone DIR] [--from-disk [DIR]] [--ids a,b] [--limit N] [--rate N] [--in-flight N]\n' +
-	'                   [--recheck-dead] [--plan-only] [--no-canary]\n' +
+	'                   [--recheck-dead] [--plan-only] [--no-canary] [--json]\n' +
 	'       screenshots --make [--ids a,b] [--limit N] [--jobs N]\n' +
-	'       screenshots --upload local|prod [--ids a,b] [--limit N] [--jobs N] [--plan-only]\n' +
+	'       screenshots --upload local|prod [--ids a,b] [--limit N] [--jobs N] [--plan-only] [--json]\n' +
 	'       screenshots --recheck [--ids a,b] [--limit N] [--rate N] [--no-canary]';
 
 export function parseArgs(argv: readonly string[], defaults: { clone: string; disk: string; root?: string }): ShotArgs {
@@ -91,6 +93,7 @@ export function parseArgs(argv: readonly string[], defaults: { clone: string; di
 		inFlight: IN_FLIGHT,
 		recheckDead: false,
 		planOnly: false,
+		json: false,
 		canary: true
 	};
 	for (let i = 0; i < argv.length; i++) {
@@ -139,6 +142,7 @@ export function parseArgs(argv: readonly string[], defaults: { clone: string; di
 			a.jobs = n;
 		} else if (flag === '--recheck-dead') a.recheckDead = true;
 		else if (flag === '--plan-only') a.planOnly = true;
+		else if (flag === '--json') a.json = true;
 		else if (flag === '--no-canary') a.canary = false;
 		else throw new UsageError(`unknown option ${flag}`);
 	}

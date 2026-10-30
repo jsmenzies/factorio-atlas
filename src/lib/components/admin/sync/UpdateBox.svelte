@@ -7,7 +7,7 @@
 	import { PIPELINE_DEP } from '../live.svelte.js';
 	import { ago, bytes, clock, duration, int, percent, when } from '../metrics.js';
 	import StepList from './StepList.svelte';
-	import { heldBack, mirrorPlan, PLAN_FRESH_MS, previewCost, previewSteps, shortCommit, updateState } from './view.js';
+	import { heldBack, PLAN_FRESH_MS, previewCost, previewSteps, shortCommit, sourceMoved, sourceState, updateState } from './view.js';
 
 	/**
 	 * The Overview's main box: an update waiting (with what each step would do and what it costs), an
@@ -125,7 +125,6 @@
 
 	const totals = $derived(planTotals(plan));
 	const held = $derived(heldBack(plan));
-	const mirror = $derived(mirrorPlan(plan));
 	const current = $derived(run?.steps.find((s) => s.status === 'running'));
 	const stepNo = $derived(current ? SYNC_STEPS.findIndex((s) => s.id === current.id) + 1 : 0);
 	const preview = $derived(previewSteps(plan, union, settings));
@@ -189,29 +188,21 @@
 				<h2 id="update-title" class="text-lg font-semibold text-stone-100">
 					Something new to fetch: {int(totals.added)} new print{totals.added === 1 ? '' : 's'}
 				</h2>
-				<p class="text-xs text-stone-500">
-					{#if mirror}
-						{mirror.site}: <code>{shortCommit(mirror.to.id)}</code> ({when(mirror.to.date, now, timeZone)}), this machine has
-						<code>{shortCommit(mirror.from.id)}</code> ({when(mirror.from.date, now, timeZone)}) ·
-					{/if}
-					checked {ago(now - plan.checkedAt)}
-				</p>
+				<p class="text-xs text-stone-500">Sources checked {ago(now - plan.checkedAt)}</p>
 			{:else}
 				<p class="text-xs font-semibold tracking-wide text-stone-500 uppercase">Update</p>
 				<h2 id="update-title" class="text-lg font-semibold text-stone-100">
-					{#if plan && mirror}
-						<span class="text-emerald-300">Up to date</span> with {mirror.site} at <code class="text-base">{shortCommit(mirror.to.id)}</code>
-					{:else if plan}
-						<span class="text-emerald-300">Up to date</span>
+					{#if plan}
+						<span class="text-emerald-300">Up to date</span> with {plan.sources.length === 1 ? 'its source' : `all ${plan.sources.length} sources`}
 					{:else}
 						Not checked yet
 					{/if}
 				</h2>
 				<p class="text-xs text-stone-500">
 					{#if plan}
-						{mirror ? `Last change ${when(mirror.to.date, now, timeZone)} · ` : ''}checked {busy === 'check' ? 'now…' : ago(now - plan.checkedAt)}
+						Sources checked {busy === 'check' ? 'now…' : ago(now - plan.checkedAt)}
 					{:else}
-						Checking the mirror…
+						Checking the sources…
 					{/if}
 				</p>
 			{/if}
@@ -280,6 +271,34 @@
 			{/if}
 		</div>
 	</div>
+
+	{#if !live && plan?.sources.length}
+		<!-- Where the prints come from: one row per source (uploads, arriving through the site, would be one more). -->
+		<ul class="mt-3 divide-y divide-stone-800/70 rounded-md border border-stone-800 bg-stone-950/60 text-sm" aria-label="Sources">
+			{#each plan.sources as p (p.site)}
+				{@const state = sourceState(p)}
+				<li class="grid gap-x-4 gap-y-0.5 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+					<div class="min-w-0">
+						<p class="truncate" title={p.kind ? `${p.site} · ${p.kind}` : p.site}>
+							<span class="font-medium text-stone-100">{p.site}</span>
+							{#if p.kind}<span class="text-stone-500"> · {p.kind}</span>{/if}
+						</p>
+						<p class="text-xs text-stone-500">
+							{#if sourceMoved(p)}
+								this machine <code>{shortCommit(p.from.id)}</code> ({when(p.from.date, now, timeZone)}) · latest <code>{shortCommit(p.to.id)}</code>
+								({when(p.to.date, now, timeZone)})
+							{:else}
+								at <code>{shortCommit(p.to.id)}</code> · last change {when(p.to.date, now, timeZone)}
+							{/if}
+						</p>
+					</div>
+					<p class="text-sm sm:text-right {state.tone === 'ok' ? 'text-emerald-300' : state.tone === 'warn' ? 'text-amber-200' : 'text-rose-300'}">
+						{state.text}
+					</p>
+				</li>
+			{/each}
+		</ul>
+	{/if}
 
 	{#if error}<p class="mt-3 text-sm whitespace-pre-wrap text-rose-300" role="alert">{error}</p>{/if}
 	{#if message}<p class="mt-3 text-sm text-rose-300" role="alert">{message}</p>{/if}

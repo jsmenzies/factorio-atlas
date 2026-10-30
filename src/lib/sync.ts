@@ -101,7 +101,34 @@ export interface SyncStep {
 	runId?: string;
 	/** The exit code of its last command, when it ran one. */
 	code?: number | null;
+	/** Its figures, from the commands' structured output (rows older than these have only `summary`). */
+	details?: DetailGroup[];
 }
+
+/** One figure in a step's details: a label and its value; a long value (a path) is `muted`. */
+export interface DetailRow {
+	label: string;
+	value: number | string;
+	/** warn: something to look at; bad: a failure. */
+	tone?: 'warn' | 'bad';
+	muted?: boolean;
+}
+
+/** A step's figures, in groups when it has parts (the machine's copies, a bucket, a source). */
+export interface DetailGroup {
+	title?: string;
+	rows: DetailRow[];
+}
+
+/** A row for details; `always` keeps a zero (failed 0 where failures matter), else zeros are left out. */
+export const detail = (
+	label: string,
+	value: number | string | null | undefined,
+	o: { always?: boolean; tone?: DetailRow['tone']; muted?: boolean } = {}
+) =>
+	value === null || value === undefined || (value === 0 && !o.always)
+		? []
+		: [{ label, value, ...(o.tone && value !== 0 ? { tone: o.tone } : {}), ...(o.muted ? { muted: true } : {}) } satisfies DetailRow];
 
 export const freshSteps = (): SyncStep[] => SYNC_STEPS.map(({ id }) => ({ id, status: 'pending' }));
 
@@ -186,6 +213,10 @@ export const SYNC_STALE_MS = 60_000;
 /** What a fetch would bring from one source (for the mirror: its latest commit against the clone's). */
 export interface SourcePlan {
 	site: string;
+	/** What the source is, for the Overview's list ("GitHub mirror owner/repo"); absent in older plans. */
+	kind?: string;
+	/** Commits (or batches) the source is ahead of this machine; absent in older plans. */
+	behind?: number;
 	/** What this machine has, and what the source has now. */
 	from: SourceCursor;
 	to: SourceCursor;

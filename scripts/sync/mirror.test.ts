@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fixtureRecord } from '#lib/server/fixtures.js';
-import { changesByID, favouritesOnly, idOf, planMirror, pullMirror, structural } from './mirror';
+import { changesByID, favouritesOnly, idOf, planMirror, pullMirror, sourceKind, structural } from './mirror';
 
 describe('changesByID', () => {
 	test('a record that moved is one modified print, not a deletion and an addition', () => {
@@ -105,6 +105,16 @@ describe('planMirror on a real git clone', () => {
 		// Accepted, that commit goes through; another wouldn't.
 		expect((await planMirror(clone, { maxChange: 0.5, accept: plan.to.id })).blocked).toBeNull();
 		expect((await planMirror(clone, { maxChange: 0.5, accept: plan.from.id })).blocked).not.toBeNull();
+	});
+
+	test("names the source from the clone's origin", () => {
+		expect(sourceKind('https://github.com/motlin/factorio-blueprint-firebase-cdn.git\n')).toBe(
+			'GitHub mirror motlin/factorio-blueprint-firebase-cdn'
+		);
+		expect(sourceKind('git@github.com:motlin/factorio-blueprint-firebase-cdn.git')).toBe(
+			'GitHub mirror motlin/factorio-blueprint-firebase-cdn'
+		);
+		expect(sourceKind('/tmp/origin')).toBe('git mirror /tmp/origin');
 	});
 
 	test('edits in place are not a layout change', () => {

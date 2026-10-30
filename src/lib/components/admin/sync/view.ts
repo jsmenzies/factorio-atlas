@@ -33,14 +33,22 @@ export const updateState = (run: SyncRun | null, plan: SyncPlan | null, now: num
 /** The mirror's plan (the first source today), for the lines that name its commits. */
 export const mirrorPlan = (plan: SyncPlan | null) => plan?.sources[0] ?? null;
 
+/** A source's line in the Overview's list: held back, behind (and by how much), or up to date. */
+export const sourceState = (p: SourcePlan): { text: string; tone: 'ok' | 'warn' | 'bad' } => {
+	if (p.blocked) return { text: 'held back', tone: 'bad' };
+	if (!sourceMoved(p)) return { text: 'up to date', tone: 'ok' };
+	const behind = p.behind ? `${int(p.behind)} commit${p.behind === 1 ? '' : 's'} behind` : 'behind';
+	return { text: `${behind} · ${int(p.added)} new, ${int(p.edited)} edited`, tone: 'warn' };
+};
+
 export { sourceMoved };
 
 /** A mirror check older than this is redone when the Overview opens. */
 export const PLAN_FRESH_MS = 10 * 60_000;
 
 export const STEP_MARK: Record<StepStatus, { mark: string; class: string; label: string }> = {
-	pending: { mark: '', class: 'bg-stone-800 text-stone-400', label: 'Waiting' },
-	running: { mark: '', class: 'bg-amber-500 text-stone-950', label: 'Running' },
+	pending: { mark: '', class: 'border border-stone-700 text-stone-400', label: 'Waiting' },
+	running: { mark: '', class: 'bg-amber-500/15 text-amber-300', label: 'Running' },
 	done: { mark: '✓', class: 'bg-emerald-950 text-emerald-300', label: 'Done' },
 	warning: { mark: '!', class: 'bg-amber-950 text-amber-200', label: 'Done, with something to look at' },
 	failed: { mark: '✗', class: 'bg-rose-950 text-rose-300', label: 'Failed' },

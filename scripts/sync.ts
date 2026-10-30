@@ -54,12 +54,14 @@ import { VIEWER_VERSION } from '#lib/server/pipeline/viewer-files.js';
 import { rendersDir } from '#lib/server/renders-dir.js';
 import { LIVE_SYNC_WHERE, liveSyncParams, readMeta, writeMeta } from '#lib/server/sync.js';
 import {
+	detail,
 	estimateRender,
 	freshSteps,
 	parseSettings,
 	parseSyncRun,
 	sourceDigest,
 	sourceMoved,
+	type DetailGroup,
 	type SourcePlan,
 	type SourceRun,
 	type SyncFigures,
@@ -74,7 +76,7 @@ import { cloneSource } from './render/source';
 import { confirmProd, fail, n } from './stage-command';
 import { localDbFile, openLocalDb } from './sync/local-db';
 import { MIRROR_SITE, mirrorSource, type SourceAdapter } from './sync/mirror';
-import { lastJsonLine, lastLine, lineMatching } from './sync/output';
+import { failureLine, lastJsonLine, lastLine, lineMatching } from './sync/output';
 import {
 	backfillComplete,
 	backfillSummary,
@@ -275,15 +277,46 @@ runner.say(`sync ${run.id} → ${stage} · log ${join(logDir, logName)}`);
 const script = (args: string[], env?: Record<string, string>) => runner.runScript(args, env);
 const hasSource = (site: string) => run.sources.some((s) => s.site === site);
 /** A failed command's outcome, summarised by its last result line. */
-const failed = (r: ScriptResult) => outcomeOf(r, '', [], `exit ${r.code}: ${lastLine(r.tail)}`);
+const failed = (r: ScriptResult) => outcomeOf(r, '', [], `exit ${r.code}: ${failureLine(r.tail)}`);
 
 const steps: StepDef[] = [
 	{
 		id: 'removals',
 		async run(): Promise<Outcome> {
 			const r = await script(['scripts/removals.ts', '--stage', stage, '--yes', '--json']);
-			const result = lastJsonLine<{ ok: boolean; summary: string; stopped: boolean }>(r.tail);
-			if (r.code === 0 && result?.ok) return { status: 'done', summary: result.summary.replace(/^[✓✗]\s*/, ''), code: r.code };
+			const result = lastJsonLine<{
+				ok: boolean;
+				summary: string;
+				stopped: boolean;
+				deleted: number;
+				takedowns: number;
+				newlySwept: number;
+				blocksAdded: number;
+				blocksDropped: number;
+				localRows: number;
+				diskPaths: number;
+				lateRenderFiles: number;
+				screenshots: number;
+			}>(r.tail);
+			const details: DetailGroup[] | undefined =
+				result === null
+					? undefined
+					: [
+							{
+								rows: [
+									...detail('deleted on the site', result.deleted, { always: true }),
+									...detail('taken down on request', result.takedowns),
+									...detail('swept for the first time', result.newlySwept),
+									...detail('blocks added', result.blocksAdded),
+									...detail('blocks dropped', result.blocksDropped),
+									...detail('render rows removed', result.localRows),
+									...detail('folders removed on disk', result.diskPaths),
+									...detail('late render files deleted', result.lateRenderFiles),
+									...detail('screenshots removed', result.screenshots)
+								]
+							}
+						];
+			if (r.code === 0 && result?.ok) return { status: 'done', summary: result.summary.replace(/^[✓✗]\s*/, ''), code: r.code, details };
 			if (result?.stopped) return { status: 'stopped', summary: result.summary.replace(/^[✓✗]\s*/, ''), code: r.code };
 			// Prod refuses removed prints itself (ingest checks its blocks), but this machine's copies
 			// weren't swept: the steps that could upload them again don't run.
@@ -292,7 +325,8 @@ const steps: StepDef[] = [
 				summary:
 					`REMOVALS NOT APPLIED (exit ${r.code}): ${result?.summary.replace(/^[✓✗]\s*/, '') ?? lastLine(r.tail)}; ` +
 					'screenshots and render are skipped until it succeeds',
-				code: r.code
+				code: r.code,
+				details
 			};
 		}
 	},
@@ -336,7 +370,24 @@ const steps: StepDef[] = [
 				})
 			} satisfies SyncPlan);
 			const summary = [...parts, ...errors].join(' · ');
-			return { status: errors.length ? 'failed' : plans.some((p) => p.blocked) ? 'warning' : 'done', summary };
+			const details: DetailGroup[] = plans.map((p) => {
+				const to = run.sources.find((s) => s.site === p.site)?.to;
+				return {
+					title: p.site,
+					rows: [
+						{ label: 'position', value: to && to.id !== p.from.id ? `${short(p.from.id)} → ${short(to.id)}` : short(p.from.id) },
+						...detail('held back', p.blocked, { tone: 'warn' }),
+						...detail('commits fetched', p.blocked ? 0 : p.behind),
+						...detail('new prints', p.added, { always: !p.blocked }),
+						...detail('edited', p.edited),
+						...detail('only favourite counts', p.favourites),
+						...detail('deleted (kept on the site)', p.deleted.length),
+						...detail('with a 2.0+ page', p.modern)
+					]
+				};
+			});
+			for (const e of errors) details.push({ rows: [{ label: 'failed', value: e, tone: 'bad' }] });
+			return { status: errors.length ? 'failed' : plans.some((p) => p.blocked) ? 'warning' : 'done', summary, details };
 		}
 	},
 	{
@@ -368,11 +419,28 @@ const steps: StepDef[] = [
 			const kinds = Object.entries(result.failures)
 				.map(([k, v]) => `${k} ${n(v)}`)
 				.join(', ');
+			// The backfill reads one source today (recordSourceArgs), so its counts are that source's.
+			const details: DetailGroup[] = [
+				{
+					title: run.sources.map((s) => s.site).join(', ') || undefined,
+					rows: [
+						...detail('re-indexed', result.reindexed),
+						...detail('viewer files rebuilt', result.viewer),
+						...detail('favourite counts updated', result.favorites),
+						...detail('analysed', result.analysed, { always: true }),
+						...detail('failed', result.failed, { always: true, tone: 'bad' }),
+						...Object.entries(result.failures).flatMap(([k, v]) => detail(`${k} failures`, v, { tone: 'bad' })),
+						...detail('known failures skipped', result.skipped),
+						...detail('unchanged', result.unchanged)
+					]
+				}
+			];
 			return {
 				status: result.failed ? 'warning' : 'done',
 				summary: result.failed ? `${summary} (${kinds})` : summary,
 				runId: result.id,
-				code: r.code
+				code: r.code,
+				details
 			};
 		}
 	},
@@ -393,8 +461,31 @@ const steps: StepDef[] = [
 			const parts: string[] = [];
 			let warning = false;
 			// Exit 2: Imgur refused us or sent something odd; what was copied still goes up.
-			const fetched = await script(['scripts/screenshots.ts', ...recordSourceArgs()]);
+			const fetched = await script(['scripts/screenshots.ts', ...recordSourceArgs(), '--json']);
 			if (fetched.code !== 0 && fetched.code !== 2) return failed(fetched);
+			const copy = lastJsonLine<{
+				alreadyCopied: number;
+				dead: number;
+				toFetch: number;
+				fetched: number;
+				newlyDead: number;
+				failed: number;
+				dir: string;
+			}>(fetched.tail);
+			const details: DetailGroup[] = [];
+			if (copy)
+				details.push({
+					title: 'On this machine',
+					rows: [
+						...detail('already copied', copy.alreadyCopied, { always: true }),
+						...detail('dead on Imgur', copy.dead, { always: true }),
+						...detail('to fetch', copy.toFetch, { always: true }),
+						...detail('fetched', copy.fetched),
+						...detail('newly dead', copy.newlyDead, { tone: 'warn' }),
+						...detail('failed', copy.failed, { always: copy.toFetch > 0, tone: 'bad' }),
+						...detail('folder', copy.dir, { muted: true })
+					]
+				});
 			warning ||= fetched.code === 2;
 			// `screenshots: done in 26s: fetched 89 (109.0 MB), dead 0, failed 0, …`, or with nothing to
 			// fetch its plan line, `screenshots: 18111 already copied, 2 dead; to fetch 0 (…) → <dir>`.
@@ -410,9 +501,29 @@ const steps: StepDef[] = [
 				else warning = true;
 				parts.push(lineMatching(r.tail, /^screenshots: /).replace(/^screenshots: /, ''));
 			}
-			if (stopping()) return { status: 'stopped', summary: parts.join(' · ') };
-			const up = await script(['scripts/screenshots.ts', '--upload', stage]);
-			if (up.code !== 0) return failed(up);
+			if (stopping()) return { status: 'stopped', summary: parts.join(' · '), details };
+			const up = await script(['scripts/screenshots.ts', '--upload', stage, '--json']);
+			if (up.code !== 0) return { ...failed(up), details };
+			const bucket = lastJsonLine<{
+				images: number;
+				made: number;
+				put: number;
+				bytes: number;
+				deleted: number;
+				alreadyUp: number;
+				failed: number;
+			}>(up.tail);
+			if (bucket)
+				details.push({
+					title: `${stage[0].toUpperCase()}${stage.slice(1)} bucket`,
+					rows: [
+						...detail('already up', bucket.alreadyUp, { always: true }),
+						...detail('sizes made', bucket.made),
+						{ label: 'files put', value: bucket.put ? `${n(bucket.put)} (${(bucket.bytes / 1e6).toFixed(1)} MB)` : 0 },
+						{ label: 'deleted', value: bucket.deleted },
+						...detail('failed', bucket.failed, { always: true, tone: 'bad' })
+					]
+				});
 			// `screenshots: local bucket: 18120 images in 830s: made 89, put 122048 files (…), …`
 			parts.push(
 				lineMatching(up.tail, /^screenshots: \S+ bucket: /)
@@ -420,9 +531,12 @@ const steps: StepDef[] = [
 					.replace(/\. Then: .*$/, '')
 			);
 			const flagged = await script(['scripts/screenshots-flags.ts', '--stage', stage, '--yes']);
-			if (flagged.code !== 0) return failed(flagged);
+			if (flagged.code !== 0) return { ...failed(flagged), details };
 			parts.push(lastLine(flagged.tail));
-			return { status: warning ? 'warning' : 'done', summary: parts.filter(Boolean).join(' · ') };
+			// `✓ 89 D1 rows written; cached pages purged`, or `already in sync; nothing written`.
+			const written = Number(/([\d,]+) D1 rows written/.exec(flagged.tail)?.[1]?.replace(/,/g, '') ?? 0);
+			details.push({ title: 'Search cards', rows: [{ label: 'rows written', value: written }] });
+			return { status: warning ? 'warning' : 'done', summary: parts.filter(Boolean).join(' · '), details };
 		}
 	},
 	{
@@ -430,6 +544,7 @@ const steps: StepDef[] = [
 		needs: ['ingest', 'removals'],
 		async run({ stopping }): Promise<Outcome> {
 			const parts: string[] = [];
+			const details: DetailGroup[] = [];
 			// The top N favourites come from factorioprints' counts.
 			const top = hasSource(MIRROR_SITE) ? settings.top : 0;
 			if (top > 0) {
@@ -443,15 +558,28 @@ const steps: StepDef[] = [
 				if (r.code !== 0 || !list) return failed(r);
 				const after = await inTop();
 				const joined = after.filter((id) => !before.has(id)).length;
-				parts.push(
-					`top ${n(list.n)} (≥ ${n(list.cutoff)} favourites): ${n(joined)} joined, ${n(before.size - (after.length - joined))} left`
-				);
+				const left = before.size - (after.length - joined);
+				parts.push(`top ${n(list.n)} (≥ ${n(list.cutoff)} favourites): ${n(joined)} joined, ${n(left)} left`);
+				details.push({
+					title: `Top ${n(list.n)} favourites (≥ ${n(list.cutoff)})`,
+					rows: [
+						{ label: 'joined', value: joined },
+						{ label: 'left (their renders stay)', value: left }
+					]
+				});
 			}
 			const r = await script(['scripts/render-scope.ts', 'check', ...recordSourceArgs(), '--json']);
 			const check = lastJsonLine<{ changed: number; gone: number }>(r.tail);
 			if (r.code !== 0 || !check) return failed(r);
 			parts.push(`${n(check.changed)} rendered prints changed, ${n(check.gone)} gone from their source (renders kept)`);
-			if (stopping()) return { status: 'stopped', summary: parts.join(' · ') };
+			details.push({
+				title: 'Rendered prints',
+				rows: [
+					{ label: 'record changed', value: check.changed },
+					{ label: 'gone from their source (renders kept)', value: check.gone }
+				]
+			});
+			if (stopping()) return { status: 'stopped', summary: parts.join(' · '), details };
 
 			const args = ['scripts/render-game.ts', ...recordSourceArgs(), '--next', String(settings.perUpdate ?? 100_000)];
 			if (top > 0) args.push('--top', String(top));
@@ -482,9 +610,25 @@ const steps: StepDef[] = [
 							(row.uploads_pending ? `, ${n(row.uploads_pending)} uploads left for the next update` : '')
 					: lastLine(rendered.tail)
 			);
+			if (row)
+				details.push({
+					title: 'This run',
+					rows: [
+						{ label: 'prints with work', value: row.prints_total },
+						...detail('pages drawn', row.rendered, { always: row.prints_total > 0 }),
+						...detail('prints drawn', row.prints_rendered),
+						...detail('files uploaded', row.uploaded, { always: row.prints_total > 0 }),
+						...detail('failed', row.failed, { always: row.prints_total > 0, tone: 'bad' }),
+						...detail('uploads left for the next update', row.uploads_pending, { tone: 'warn' })
+					]
+				});
 			// 2: pages failed; 3: uploads left for the next update; 4: the search flags step failed (run it by hand).
 			if (rendered.code === 4) parts.push('render:flags failed: run it by hand');
-			return { ...outcomeOf(rendered, parts.join(' · '), [2, 3, 4], `exit ${rendered.code}: ${lastLine(rendered.tail)}`), runId: row?.id };
+			return {
+				...outcomeOf(rendered, parts.join(' · '), [2, 3, 4], `exit ${rendered.code}: ${lastLine(rendered.tail)}`),
+				runId: row?.id,
+				details
+			};
 		}
 	},
 	{
@@ -492,7 +636,19 @@ const steps: StepDef[] = [
 		async run(): Promise<Outcome> {
 			const r = await script(['scripts/sync.ts', '--figures', '--stage', stage, '--json']);
 			const figures = lastJsonLine<SyncFigures>(r.tail);
-			return r.code === 0 && figures ? { status: 'done', summary: figuresText(figures) } : failed(r);
+			if (r.code !== 0 || !figures) return failed(r);
+			const details: DetailGroup[] = [
+				{
+					title: figures.stage,
+					rows: [
+						{ label: 'prints', value: figures.prints },
+						{ label: 'failed to read', value: figures.failed },
+						{ label: 'with a render', value: figures.rendered },
+						{ label: 'without an author name', value: figures.unnamed }
+					]
+				}
+			];
+			return { status: 'done', summary: figuresText(figures), details };
 		}
 	}
 ];

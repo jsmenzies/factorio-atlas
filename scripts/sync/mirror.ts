@@ -123,6 +123,12 @@ export interface PlanOptions {
 	signal?: AbortSignal;
 }
 
+/** The clone's origin as the Overview names it: "GitHub mirror owner/repo", else its URL. */
+export const sourceKind = (url: string) => {
+	const m = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(url.trim());
+	return m ? `GitHub mirror ${m[1]}` : `git mirror ${url.trim()}`;
+};
+
 const countPrints = async (clone: string, ref: string, signal?: AbortSignal) =>
 	(await git(clone, ['ls-tree', '-r', '--name-only', ref], signal)).split('\n').filter((p) => idOf(p)).length;
 
@@ -141,7 +147,21 @@ export async function planMirror(clone: string, o: PlanOptions): Promise<SourceP
 	const to = await cursorOf(clone, remoteRef, o.signal);
 	const moved = from.id !== to.id;
 	const prints = await countPrints(clone, remoteRef, o.signal);
-	const base = { site: MIRROR_SITE, from, to, prints, added: 0, edited: 0, favourites: 0, deleted: [] as string[], modern: 0 };
+	const kind = sourceKind(await git(clone, ['remote', 'get-url', 'origin'], o.signal));
+	const behind = moved ? Number((await git(clone, ['rev-list', '--count', `HEAD..${remoteRef}`], o.signal)).trim()) : 0;
+	const base = {
+		site: MIRROR_SITE,
+		kind,
+		behind,
+		from,
+		to,
+		prints,
+		added: 0,
+		edited: 0,
+		favourites: 0,
+		deleted: [] as string[],
+		modern: 0
+	};
 	if (moved && (await run(clone, ['merge-base', '--is-ancestor', 'HEAD', remoteRef], o.signal, [0, 1])).code === 1)
 		return { ...base, blocked: "the clone has commits the mirror doesn't (its history was rewritten?): clone it again before updating" };
 	const before = moved ? await countPrints(clone, 'HEAD', o.signal) : prints;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { lastJsonLine, lastLine, lineMatching } from './output';
+import { failureLine, lastJsonLine, lastLine, lineMatching } from './output';
 
 describe('step output', () => {
 	test('the JSON result is the last line that parses, whatever stderr wrote after it', () => {
@@ -13,5 +13,12 @@ describe('step output', () => {
 		expect(lastLine('a\nb\n')).toBe('b');
 		expect(lineMatching('x: done in 2s: 5\ny: 6\n', /^x: done in/)).toBe('x: done in 2s: 5');
 		expect(lineMatching('nothing\n', /^x:/)).toBe('nothing');
+	});
+
+	test("a failure's summary is its error line, not the counts printed on the way out", () => {
+		const text = 'run x\nerror: D1_ERROR: no such table: print_sources: SQLITE_ERROR\n✓ 0 analysed  ✗ 0 failed  ↷ 0 skipped\n';
+		expect(failureLine(text)).toBe('D1_ERROR: no such table: print_sources: SQLITE_ERROR');
+		expect(failureLine('TypeError: x is undefined\n    at foo\n')).toBe('TypeError: x is undefined');
+		expect(failureLine('✗ refused: a render run is live\n')).toBe('refused: a render run is live');
 	});
 });

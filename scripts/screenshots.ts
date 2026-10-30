@@ -4,9 +4,9 @@
  * shows, upload them, and keep up with deletions on Imgur.
  *
  *   bun run screenshots [--from-clone DIR] [--from-disk [DIR]] [--ids a,b] [--limit N]
- *                       [--rate N] [--in-flight N] [--recheck-dead] [--plan-only] [--no-canary]
+ *                       [--rate N] [--in-flight N] [--recheck-dead] [--plan-only] [--no-canary] [--json]
  *   bun run screenshots --make [--ids a,b] [--limit N] [--jobs N]
- *   bun run screenshots --upload local|prod [--ids a,b] [--limit N] [--jobs N] [--plan-only]
+ *   bun run screenshots --upload local|prod [--ids a,b] [--limit N] [--jobs N] [--plan-only] [--json]
  *   bun run screenshots --recheck [--ids a,b] [--limit N] [--rate N]
  *
  * The fetch (the default):
@@ -148,7 +148,15 @@ console.log(
 		(args.limit ? `, this run ${todo.length}` : '') +
 		` → ${dir}`
 );
-if (args.planOnly || todo.length === 0) process.exit(0);
+/** With --json: the fetch's counts as the last stdout line (the one-click update's step details). */
+const result = (r: { fetched: number; newlyDead: number; failed: number; stopped: boolean }) => {
+	if (args.json)
+		console.log(JSON.stringify({ mode: 'fetch', alreadyCopied: plan.done, dead: plan.dead, toFetch: plan.todo.length, dir, ...r }));
+};
+if (args.planOnly || todo.length === 0) {
+	result({ fetched: 0, newlyDead: 0, failed: 0, stopped: false });
+	process.exit(0);
+}
 
 // The run.
 const pace = pacer(args.rate);
@@ -300,8 +308,6 @@ if (failed.size) console.log(`screenshots: failures: ${list(failed)}`);
 const rep = guard.repeated();
 if (rep.sets)
 	console.log(`screenshots: identical bytes under several ids (state included): ${rep.sets} sets, ${rep.ids} ids, largest ${rep.largest}`);
-if (stopReason) {
-	console.error(`screenshots: STOPPED: ${stopReason}`);
-	process.exit(2);
-}
-process.exit(interrupted ? 130 : 0);
+if (stopReason) console.error(`screenshots: STOPPED: ${stopReason}`);
+result({ fetched, newlyDead: dead, failed: nFailed, stopped: !!stopReason || interrupted });
+process.exit(stopReason ? 2 : interrupted ? 130 : 0);

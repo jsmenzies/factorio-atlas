@@ -19,7 +19,8 @@ test('parseArgs defaults and flags', () => {
 		inFlight: 4,
 		recheckDead: false,
 		planOnly: false,
-		canary: true
+		canary: true,
+		json: false
 	});
 	const a = parseArgs(
 		[
@@ -36,7 +37,8 @@ test('parseArgs defaults and flags', () => {
 			'14',
 			'--recheck-dead',
 			'--plan-only',
-			'--no-canary'
+			'--no-canary',
+			'--json'
 		],
 		defaults
 	);
@@ -52,7 +54,8 @@ test('parseArgs defaults and flags', () => {
 		inFlight: 14,
 		recheckDead: true,
 		planOnly: true,
-		canary: false
+		canary: false,
+		json: true
 	});
 	expect(parseArgs(['--from-disk', 'raw'], defaults).disk).toBe('/repo/raw');
 });

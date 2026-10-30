@@ -12,6 +12,17 @@ export const lastLine = (text: string) => {
 	return (all.findLast((l) => /^[✓✗]/.test(l)) ?? all.at(-1) ?? '').replace(/^[✓✗]\s*/, '').slice(0, 300);
 };
 
+/**
+ * Why a command failed: its last error line ("error: no such table: …"), else lastLine's pick, so a
+ * summary line printed on the way out doesn't hide the cause.
+ */
+export const failureLine = (text: string) =>
+	(
+		lines(text)
+			.findLast((l) => /^(\w*error\b|.*\bError:)/i.test(l))
+			?.replace(/^error:\s*/i, '') ?? lastLine(text)
+	).slice(0, 300);
+
 /** The last line that matches `re`, else lastLine's pick. */
 export const lineMatching = (text: string, re: RegExp) => (lines(text).findLast((l) => re.test(l)) ?? lastLine(text)).slice(0, 300);
 

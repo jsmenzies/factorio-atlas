@@ -161,7 +161,7 @@ export const backfillComplete = (r: BackfillResult) =>
 
 // --- steps
 
-export type Outcome = Pick<SyncStep, 'status' | 'summary' | 'runId' | 'code'>;
+export type Outcome = Pick<SyncStep, 'status' | 'summary' | 'runId' | 'code' | 'details'>;
 
 export interface StepContext {
 	/** Aborts on Quit: for work the step does in this process (git). */

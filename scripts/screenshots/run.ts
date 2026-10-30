@@ -137,6 +137,21 @@ export async function runUpload(dir: string, entries: Map<string, StateEntry>, a
 	);
 	for (const f of failed.slice(0, 20)) console.log(`  ${f}`);
 	if (stop) console.error(`screenshots: STOPPED: ${stop}`);
+	if (args.json)
+		console.log(
+			JSON.stringify({
+				mode: 'upload',
+				target,
+				images: done,
+				made,
+				put,
+				bytes,
+				deleted,
+				alreadyUp: unchanged,
+				failed: failed.length,
+				stopped: !!stop
+			})
+		);
 	return stop ? 2 : failed.length ? 1 : 0;
 }
 
