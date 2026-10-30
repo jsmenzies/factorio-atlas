@@ -12,10 +12,15 @@
  *   are written.
  * - 'already': this site's record is already a source of `printId`; nothing is written, unless `update`
  *   (a polled site's changed record, scripts/polled.ts): then it is ingested again (`updated: true`), and
- *   shows if it is the print's credited source. A source that isn't shown and whose whole-print hash is no
- *   longer the print's is detached instead (its source row goes, the print's sources list follows) and
- *   added afresh, so a copy edited into something else never takes the print's identity with it: it comes
- *   out 'new' or joins whatever it now copies (`detachedFrom` names the print it left).
+ *   shows if it is the print's credited source. When the print has other live sources and the record's new
+ *   whole-print hash isn't the print's, the print splits, by who owns its URL (the first ingestion: the
+ *   source whose own id is the print's id):
+ *   - the print is this record's own: it keeps the print (and shows), and every other source moves to a
+ *     print of its own id with the content it has (`moved`);
+ *   - else this record leaves (`detachedFrom`): marked gone, the credit handed to the next source if it was
+ *     the one shown, the print's sources list put right, then added afresh ('new' under its own id, or a
+ *     join of whatever it now copies).
+ *   So a copy edited into something else never takes another source's print, or its identity, with it.
  * - 'blocked' (an approved removal), 'unreadable', 'too-big' (over `limits`: the Worker's caps; add it from
  *   a Bun run instead), 'failed' (storage: nothing or part written, safe to try again).
  * - Once written, the record's text is archived in RAW at `<site>/<siteId>.json` (source-record.ts
@@ -28,11 +33,11 @@ import { Effect, Layer } from 'effect';
 import { printIdFor, type Site } from '#lib/print-id.js';
 import { bumpPageVersion } from '../page-cache';
 import { admitRecord, type Admission, type AdmitLimits, type Suggestion } from './admit';
-import { blockedBy, sourcesOf } from './identity-db';
+import { blockedBy, liveSources, sourcesOf, type PrintSourceRow } from './identity-db';
 import { ingestRecord, postedLater, syncSources } from './pipeline';
 import { RawStoreR2 } from './raw-store';
 import { PrintRepositoryD1 } from './repository';
-import { rawKeyFor, toPipelineText, type SourceRecord } from './source-record';
+import { fromFactorioprints, fromPipelineText, rawKeyFor, toPipelineText, type SourceRecord } from './source-record';
 
 export interface AddBindings {
 	readonly DB: D1Database;
@@ -62,9 +67,50 @@ export type AddOutcome =
 
 export type AddResult = AddOutcome & {
 	readonly planned: boolean;
-	/** With `update`: the record left this print (its content no longer the print's, and not the one shown) before it was added. */
+	/** With `update`: the record left this print (its new content isn't the print's, and the print isn't its own) before it was added. */
 	readonly detachedFrom?: string;
+	/** With `update`, on the record's own print: the other sources that moved off it (`printId` null: kept, see `reason`). */
+	readonly moved?: readonly MovedSource[];
 };
+
+export interface MovedSource {
+	readonly site: Site;
+	readonly siteId: string;
+	readonly printId: string | null;
+	readonly reason?: string;
+}
+
+/** A source's record as archived in RAW (`<site>/<siteId>.json`; factorioprints' own text under its key). */
+export const archivedRecord = async (raw: R2Bucket, site: Site, siteId: string): Promise<SourceRecord | null> => {
+	const obj = await raw.get(rawKeyFor(site, siteId));
+	if (!obj) return null;
+	const text = await obj.text();
+	return site === 'factorioprints' ? fromFactorioprints(siteId, text) : fromPipelineText(text);
+};
+
+/**
+ * Whether an update of a known source splits its print: the print has other live sources, and the record's
+ * new whole-print hash isn't the print's. `owner`: the print is this source's own (its id is the source's,
+ * the first ingestion); `shown`: this source is the one the print shows; `next`: who'd be credited without it.
+ */
+async function planSplit(db: D1Database, record: SourceRecord, printId: string, newHash: string | null) {
+	const sources = await sourcesOf(db, printId);
+	const same = (s: PrintSourceRow) => s.site === record.site && s.site_id === record.siteId;
+	const others = liveSources(sources).filter((s) => !same(s));
+	if (!others.length) return null;
+	const current = await db
+		.prepare(`SELECT sha256 FROM print_fingerprints WHERE print_id = ? AND kind = 'print' AND current = 1`)
+		.bind(printId)
+		.first<{ sha256: string }>();
+	if ((current?.sha256 ?? null) === newHash) return null;
+	let own: string | null = null;
+	try {
+		own = printIdFor(record.site, record.siteId);
+	} catch {
+		// No print id of its own: never the owner.
+	}
+	return { owner: own === printId, shown: !postedLater(record, sources), next: others[0] ?? null, others };
+}
 
 /**
  * What a source is before its record is read: blocked by an approved removal, already a source of a live
@@ -121,32 +167,86 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 	if (planned) return done(join ? { status: 'joins', printId, shown: null, suggestions } : { status: 'new', printId, suggestions });
 
 	const layer = Layer.mergeAll(RawStoreR2(b.RAW), PrintRepositoryD1(b.DB));
+	const run = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof layer>>) => Effect.runPromise(Effect.provide(effect, layer));
+	const moved: MovedSource[] = [];
 	if (known && admission.status === 'existing') {
-		// A source the print doesn't show, whose content is no longer the print's: it must not become the print's
-		// identity (ingestRecord would make its hashes the print's current ones). Detach it and add it afresh.
-		let detach = false;
+		// The site changed a record that is one of several sources of this print, into something else: the
+		// print and its sources split (see the header). Never let the new content become another source's print.
+		let split;
 		try {
-			if (postedLater(record, await sourcesOf(b.DB, printId))) {
-				const current = await b.DB.prepare(`SELECT sha256 FROM print_fingerprints WHERE print_id = ? AND kind = 'print' AND current = 1`)
-					.bind(printId)
-					.first<{ sha256: string }>();
-				detach = (current?.sha256 ?? null) !== (admission.admitted.fingerprint.whole?.exact ?? null);
-			}
-			if (detach) {
+			split = await planSplit(b.DB, record, printId, admission.admitted.fingerprint.whole?.exact ?? null);
+		} catch (e) {
+			return done({ status: 'failed', reason: reasonOf(e) });
+		}
+		if (split?.owner === false) {
+			// Not the first ingestion of this print: this source leaves it. Marked gone first and the print's
+			// sources list (and credit, when it was the one shown) put right, then its row deleted and the record
+			// added afresh, so a run cut short anywhere does the rest next time.
+			try {
 				await b.DB.batch([
-					b.DB.prepare('DELETE FROM print_sources WHERE site = ? AND site_id = ? AND print_id = ?').bind(
+					b.DB.prepare('UPDATE print_sources SET gone_at = ? WHERE site = ? AND site_id = ? AND print_id = ? AND gone_at IS NULL').bind(
+						o.now ?? Date.now(),
 						record.site,
 						record.siteId,
 						printId
 					),
 					bumpPageVersion(b.DB, o.now)
 				]);
-				await Effect.runPromise(Effect.provide(syncSources(printId, { bump: false }), layer));
+				if (split.shown && split.next) {
+					const next = await archivedRecord(b.RAW, split.next.site, split.next.site_id);
+					if (next) {
+						const r = await addRecord(b, next, { ...o, update: true });
+						if (r.status === 'failed') throw new Error(`handing ${printId} to ${split.next.site}:${split.next.site_id}: ${r.reason}`);
+					}
+				}
+				await run(syncSources(printId, { bump: false }));
+				await b.DB.prepare('DELETE FROM print_sources WHERE site = ? AND site_id = ? AND print_id = ?')
+					.bind(record.site, record.siteId, printId)
+					.run();
+			} catch (e) {
+				return done({ status: 'failed', reason: reasonOf(e) });
 			}
-		} catch (e) {
-			return done({ status: 'failed', reason: reasonOf(e) });
+			return { ...(await addRecord(b, record, { ...o, update: false })), detachedFrom: printId };
 		}
-		if (detach) return { ...(await addRecord(b, record, { ...o, update: false })), detachedFrom: printId };
+		if (split?.owner === true) {
+			// This source's own print (the URL it was first ingested under): it keeps the print and the others move
+			// off, each to a print of its own (its own id) with the content it has. One at a time, each in one batch
+			// (its source row moves with the new print), so a run cut short moves the rest next time.
+			for (const other of split.others) {
+				try {
+					const rec = await archivedRecord(b.RAW, other.site, other.site_id);
+					const admitted = rec ? await admitRecord(b.DB, rec, o.maxInflatedBytes ? { maxInflatedBytes: o.maxInflatedBytes } : {}) : null;
+					if (!rec || !admitted || (admitted.status !== 'existing' && admitted.status !== 'new')) {
+						moved.push({
+							site: other.site,
+							siteId: other.site_id,
+							printId: null,
+							reason: rec ? `came out ${admitted?.status}` : 'no archived record'
+						});
+						continue;
+					}
+					const own = printIdFor(other.site, other.site_id);
+					const r = await run(
+						ingestRecord(
+							rec,
+							{ status: 'new', copyOf: null, admitted: admitted.admitted, printId: own },
+							{
+								extra: () => [bumpPageVersion(b.DB, o.now)],
+								...(o.maxInflatedBytes ? { maxInflatedBytes: o.maxInflatedBytes } : {})
+							}
+						)
+					);
+					moved.push({
+						site: other.site,
+						siteId: other.site_id,
+						printId: r.status === 'analysed' ? own : null,
+						reason: r.status === 'analysed' ? undefined : r.status
+					});
+				} catch (e) {
+					return done({ status: 'failed', reason: `moving ${other.site}:${other.site_id} off ${printId}: ${reasonOf(e)}` });
+				}
+			}
+		}
 	}
 
 	const full: Admission = admission.status === 'existing' ? admission : { ...admission, printId };
@@ -188,7 +288,7 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 				return done({ status: 'failed', reason: `archiving the record: ${reasonOf(e)}` });
 			}
 		}
-		return done({ status: 'already', printId, updated: true });
+		return { ...done({ status: 'already', printId, updated: true }), ...(moved.length ? { moved } : {}) };
 	}
 	// 'analysed' archived the text already (applyPlan); a source that doesn't show is archived here.
 	if (outcome.status === 'identified') {

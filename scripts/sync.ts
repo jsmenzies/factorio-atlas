@@ -443,25 +443,19 @@ async function admitPolled(backfill: Outcome, stopping: () => boolean): Promise<
 	let worst: 'done' | 'warning' | 'failed' = 'done';
 	for (const site of POLLED) {
 		if (!polledSettings(site.site)?.on || stopping()) continue;
-		const r = await script([
-			'scripts/polled.ts',
-			'--stage',
-			stage,
-			'--site',
-			site.site,
-			'--dir',
-			records,
-			'--max-change',
-			String(settings.maxChange),
-			'--yes',
-			'--json'
-		]);
+		const r = await script(['scripts/polled.ts', '--stage', stage, '--site', site.site, '--dir', records, '--yes', '--json']);
 		const result = lastJsonLine<PolledAdmitResult>(r.tail);
 		if (result) details.push(...polledIngestDetails(result));
 		const line = result?.summary.replace(/^[✓✗]\s*/, '') ?? failureLine(r.tail);
 		parts.push(`${site.site}: ${line}`);
 		if (r.code !== 0 || !result?.ok) worst = 'failed';
-		else if (result.counts.blocked || result.counts.undecodable || result.counts.refetch || result.gone.held || result.gone.waiting)
+		else if (
+			result.counts.blocked ||
+			result.counts.undecodable ||
+			result.counts.refetch ||
+			result.gone.waiting ||
+			result.gone.edgeNotPurged
+		)
 			worst = worst === 'failed' ? worst : 'warning';
 		if (result?.store)
 			details.push({
@@ -793,6 +787,7 @@ const steps: StepDef[] = [
 						...detail('already copied', sites.alreadyCopied),
 						...detail('copied now', sites.fetched),
 						...detail('gone at the source', sites.dead + sites.newlyDead, { tone: 'warn' }),
+						...detail('answered 404 once (asked again next update)', sites.maybeDead),
 						...detail('removed', sites.removed),
 						...detail('failed, tried again next update', sites.failed, { tone: 'bad' })
 					]

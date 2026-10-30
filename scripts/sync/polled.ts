@@ -222,6 +222,9 @@ export const admissionWork = (state: PollState, ledger: AdmittedLedger, force = 
 
 // --- plan
 
+/** The most prints one fetch believes gone (the plan holds back past it, the reads stop at it): maxChange of the known, at least 1. */
+export const goneLimit = (maxChange: number, known: number) => Math.max(1, Math.floor(maxChange * known));
+
 /** What a fetch would do: the records to read and the deletions to confirm, with the listing they came from. */
 export interface PollWork {
 	/** id → the revision listed, oldest change first (pending ones the listing no longer shows first of all). */
@@ -317,7 +320,7 @@ export async function planPoll(
 	let blocked: string | null = null;
 	if (first.total === 0 && knownCount > 0)
 		blocked = `the site lists no prints (this machine has ${knownCount.toLocaleString('en-US')}): check the site before fetching`;
-	else if (o.accept !== to.id && missing.length > Math.max(1, o.maxChange * knownCount))
+	else if (o.accept !== to.id && missing.length > goneLimit(o.maxChange, knownCount))
 		blocked =
 			`${missing.length.toLocaleString('en-US')} of ${knownCount.toLocaleString('en-US')} prints are missing from the site's list ` +
 			`(more than ${Math.round(o.maxChange * 100)}%): check the site, then accept it if they really went`;
@@ -404,7 +407,7 @@ export async function applyPoll(
 		failed: 0,
 		left: 0
 	};
-	const maxGone = work.accepted ? Infinity : Math.max(1, Math.floor(o.maxChange * Object.keys(state.records).length));
+	const maxGone = work.accepted ? Infinity : goneLimit(o.maxChange, Object.keys(state.records).length);
 	const readsBefore = http.reads;
 	let budget = o.perUpdate;
 	let sinceSave = 0;
@@ -614,7 +617,7 @@ interface AdmitFigures {
 	site: string;
 	waiting: number;
 	counts: Record<string, number>;
-	gone: { purged: number; kept: number; failed: number; held: number; waiting: number };
+	gone: { purged: number; kept: number; failed: number; waiting: number; edgeNotPurged: number };
 	suggested: number;
 	suggestedNew: number;
 	suggestions: Record<string, number>;
@@ -637,8 +640,8 @@ export const polledIngestDetails = (r: AdmitFigures): DetailGroup[] => [
 			...detail('gone: purged', r.gone.purged),
 			...detail('gone: kept (another source)', r.gone.kept),
 			...detail('gone: failed', r.gone.failed, { tone: 'bad' }),
-			...detail('gone: held (too many at once)', r.gone.held, { tone: 'warn' }),
-			...detail('gone: waiting for R2 keys', r.gone.waiting, { tone: 'warn' }),
+			...detail('gone: waiting (the stage lacks what a purge needs)', r.gone.waiting, { tone: 'warn' }),
+			...detail('gone: edge cache not purged', r.gone.edgeNotPurged, { tone: 'warn' }),
 			...detail('forgotten, read again next fetch', r.counts.refetch, { tone: 'warn' })
 		]
 	}

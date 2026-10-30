@@ -485,6 +485,9 @@ live, and needs the R2 API token ("Uploading renders"). `--json` puts the result
 - **Edge purge:** an API token (My Profile → API Tokens → Custom) with **Zone → Cache Purge →
   Purge**, limited to the zone of the renders and screenshots domains, as `CACHE_PURGE_TOKEN` in
   `.env`. The deploy binds it with the zone's id (`CACHE_ZONE_ID`) when the stage has those domains.
+  Deletions made outside the Worker (`bun run polled`, the update's other-sites step) read both from
+  `.env`, so add the zone's id there too as `CACHE_ZONE_ID` (the zone's Overview page, "API" → "Zone
+  ID"); without it, or without `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`, those deletions wait.
 
 ## Page views
 
@@ -602,9 +605,11 @@ an empty list, holds the site back until accepted. In the ingest step,
 after the backfill, `bun run polled --stage … --site codex` puts every new or changed record through
 the same gate as any print (blocks, joins with the same blueprint already here, suggestions), and
 each deletion as a source gone: kept while another site has the print, else deleted with its renders,
-the edge cache and our copy of its screenshot (on prod this needs `R2_ACCESS_KEY_ID` and
-`R2_SECRET_ACCESS_KEY`, and `CACHE_PURGE_TOKEN`/`CACHE_ZONE_ID` for the edge; without the R2 keys the
-deletions wait for a run that has them). `bun run polled … --dry-run` says what each record would become without
+the edge cache and our copy of its screenshot (on prod this needs `R2_ACCESS_KEY_ID`,
+`R2_SECRET_ACCESS_KEY`, `CACHE_PURGE_TOKEN` and `CACHE_ZONE_ID` in `.env`; without any of them the
+deletions wait for a run that has them). An edit that makes one of a print's sources a different
+blueprint splits it: the print stays with the source it was first added from (its URL), and the
+others become prints of their own. `bun run polled … --dry-run` says what each record would become without
 writing. The prints that are their own print then reach the record store (`bun run records`), so the
 render step draws them. A print's image on that site (codex's, on Backblaze B2) is never linked to: the
 screenshots step's `screenshots --from-sites …` copies the images the stage's prints show, from their

@@ -1,5 +1,5 @@
 /**
- * `bun run polled --stage local|prod --site codex [--dir DIR] [--dry-run] [--force] [--max-change F] [--yes] [--json]`:
+ * `bun run polled --stage local|prod --site codex [--dir DIR] [--dry-run] [--force] [--yes] [--json]`:
  * give the stage what a polled site's inbox holds (scripts/sync/polled.ts). Every record at a revision the
  * stage wasn't given goes through the one gate (`addRecord`, add-record.ts: admitRecord, then ingestRecord, in
  * Bun with no Worker caps; `update` for records the site changed, which detaches a copy edited into something
@@ -8,8 +8,8 @@
  * (uploads/gate.ts `workerGate`, on the stage's real bindings: sync/gate-env.ts): it stays while another source
  * has it (credit handed over if it was this one), else it is purged as 'gone' with its renders, the edge
  * cache, and our copy of its screenshot when no other print shows it. A deployed stage needs R2_ACCESS_KEY_ID /
- * R2_SECRET_ACCESS_KEY for that (and CACHE_PURGE_TOKEN / CACHE_ZONE_ID for the edge); without them the
- * deletions wait. More than `--max-change` (the update's setting) of the known prints gone at once are held.
+ * R2_SECRET_ACCESS_KEY, CACHE_PURGE_TOKEN and CACHE_ZONE_ID for that (gate-env.ts); without them the
+ * deletions wait (the fetch already held back a mass deletion until it was accepted).
  *
  * The one-click update runs it in its ingest step, after the backfill, for each polled site that is on. When
  * it wrote, the record store's copy of the site is pulled from the stage (records/polled.ts), so the render
@@ -22,11 +22,10 @@
  *   --dir DIR        the record store (default RECORDS_DIR, else ~/data/factorio-records); the inbox is DIR/.polled
  *   --dry-run        D1 reads only: say what each record would be, write nothing
  *   --force          every inbox record again, whatever the stage was given
- *   --max-change F   hold the deletions when more than this share of the known prints went at once (0.05)
  *   --yes            don't ask before writing to prod
  *   --json           the result as JSON on stdout (`PolledAdmitResult`); every other line to stderr
  *
- * Exit 0 when done (refusals and held deletions included), 2 on any error or when stopped (130 on the second
+ * Exit 0 when done (refusals and waiting deletions included), 2 on any error or when stopped (130 on the second
  * signal); the last line starts with ✓ or ✗.
  */
 import { writeSync } from 'node:fs';
@@ -48,7 +47,7 @@ import { confirmProd, n, parseStageArgs, requireSchema } from './stage-command';
 import { openStageGate } from './sync/gate-env';
 import { admissionWork, inboxDir, readLedger, readState, writeLedger, writeState } from './sync/polled';
 
-const USAGE = 'usage: bun run polled --stage local|prod --site <site> [--dir DIR] [--dry-run] [--force] [--max-change F] [--yes] [--json]';
+const USAGE = 'usage: bun run polled --stage local|prod --site <site> [--dir DIR] [--dry-run] [--force] [--yes] [--json]';
 const JSON_OUT = process.argv.includes('--json');
 
 export type AdmitOutcome =
@@ -81,9 +80,9 @@ export interface PolledAdmitResult {
 	counts: Record<AdmitOutcome, number>;
 	/**
 	 * Gone prints: purged (no source left), kept (another source has them; credit handed over if it was this
-	 * one), failed; held (more at once than --max-change believes) or waiting (no R2 keys to purge with).
+	 * one), failed; waiting (the stage lacks what a purge needs); and purges whose edge purge failed.
 	 */
-	gone: { purged: number; kept: number; failed: number; held: number; waiting: number };
+	gone: { purged: number; kept: number; failed: number; waiting: number; edgeNotPurged: number };
 	/** Records whose answer carried suggestions (never joins), and the suggestions by kind. */
 	suggested: number;
 	/** Of the new prints, those with suggestions: a near match for an admin to look at, never joined. */
@@ -107,7 +106,7 @@ const result: PolledAdmitResult = {
 	waiting: 0,
 	goneWaiting: 0,
 	counts: { new: 0, joined: 0, updated: 0, unchanged: 0, identified: 0, blocked: 0, undecodable: 0, failed: 0, refetch: 0 },
-	gone: { purged: 0, kept: 0, failed: 0, held: 0, waiting: 0 },
+	gone: { purged: 0, kept: 0, failed: 0, waiting: 0, edgeNotPurged: 0 },
 	suggested: 0,
 	suggestedNew: 0,
 	suggestions: {},
@@ -142,14 +141,8 @@ const { flags, stage, generation } = parseStageArgs(USAGE, {
 	site: { type: 'string' },
 	dir: { type: 'string' },
 	force: { type: 'boolean', default: false },
-	'max-change': { type: 'string', default: '0.05' },
 	json: { type: 'boolean', default: false }
 });
-const maxChange = Number(flags['max-change']);
-if (!(maxChange > 0 && maxChange <= 1)) {
-	console.error(`--max-change takes a share from 0 to 1\n${USAGE}`);
-	process.exit(2);
-}
 const site = POLLED_SITES.find((p) => p.site === flags.site)?.site;
 if (!site) {
 	console.error(`--site must be one of ${POLLED_SITES.map((p) => p.site).join(', ')}\n${USAGE}`);
@@ -198,7 +191,7 @@ let code = 0;
 try {
 	const env = target.env;
 	const db = env.DB;
-	const gate = workerGate(env);
+	const gate = workerGate(env, { offline: true });
 	await requireSchema(db, stage, 'SELECT site FROM print_sources LIMIT 0', 'print_sources table', '0022');
 	const state = await readState(inbox, site);
 	const ledger = await readLedger(inbox, site, stage);
@@ -209,7 +202,11 @@ try {
 		`${stage} ← ${site} inbox ${join(inbox, site)}: ${n(work.records.length)} records to admit, ${n(work.gone.length)} gone from the site`
 	);
 	if (!result.dryRun && (work.records.length || work.gone.length))
-		await confirmProd(stage, Boolean(flags.yes), `Admit ${n(work.records.length)} ${site} records into prod?`);
+		await confirmProd(
+			stage,
+			Boolean(flags.yes),
+			`Admit ${n(work.records.length)} ${site} records into prod, and delete or detach ${n(work.gone.length)} prints the site deleted?`
+		);
 
 	const layer = Layer.mergeAll(RawStoreR2(env.RAW), PrintRepositoryD1(db));
 	const run = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof layer>>) => Effect.runPromise(Effect.provide(effect, layer));
@@ -222,7 +219,6 @@ try {
 		}
 	};
 
-	/** One inbox record through the gate (admitRecord, then ingestRecord); throws on storage errors. */
 	/** One inbox record through the gate (addRecord: admitRecord, then ingestRecord); throws on storage errors. */
 	const admitOne = async (siteId: string, printId: string): Promise<{ outcome: AdmitOutcome; note: string }> => {
 		const record = await readStoreRecord(inbox, printId);
@@ -280,27 +276,35 @@ try {
 		await save();
 	}
 
-	// The site deleted these: a source gone, through the site's gate (src/lib/server/uploads/gate.ts): kept while
-	// another source has the print (credit handed over if it was this one), else purged as 'gone', with our copy of
-	// its screenshot when no other print shows it, its renders and the edge cache (gate-env.ts: the stage's real
-	// buckets and purge token). At most maxChange of the known prints at once; more waits for a look.
-	const maxGone = Math.max(1, Math.floor(maxChange * (Object.keys(state.records).length + work.gone.length)));
-	if (work.gone.length > maxGone && !result.dryRun) {
-		result.gone.held = work.gone.length;
-		say(
-			`✗ ${n(work.gone.length)} ${site} prints gone at once, more than ${n(maxGone)}: none deleted (check the site; --max-change to let them go)`
-		);
-	} else if (work.gone.length && !result.dryRun && !target.canPurge) {
+	// The site deleted these: a source gone, through the site's gate (src/lib/server/uploads/gate.ts, without the
+	// Worker's caps): kept while another source has the print (credit handed over if it was this one), else purged
+	// as 'gone', with our copy of its screenshot when no other print shows it, its renders and the edge cache
+	// (gate-env.ts: the stage's real buckets and purge token). The fetch already held back a mass deletion until
+	// accepted; one that can't purge everything waits.
+	if (work.gone.length && !result.dryRun && !target.canPurge) {
 		result.gone.waiting = work.gone.length;
-		say(
-			`! ${n(work.gone.length)} ${site} prints gone, but purging ${stage} needs R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY: left for the next run`
-		);
+		say(`! ${n(work.gone.length)} ${site} prints gone, but purging ${stage} needs ${target.missing.join(', ')}: left for the next run`);
 	} else
 		for (const siteId of work.gone) {
 			if (stopping || result.dryRun) break;
 			const key = rawKeyFor(site, siteId);
 			try {
-				const r = await gate.sourceGone(siteId, { extra: () => [], extraKeys: [key] }, site);
+				const r = await gate.sourceGone(
+					siteId,
+					{
+						extra: () => [],
+						extraKeys: [key],
+						onPurged: (p) => {
+							if (p.purgeError) {
+								result.gone.edgeNotPurged++;
+								say(
+									`! ${site}/${siteId}: the edge cache wasn't purged (${p.purgeError}): ${[...p.purge.prefixes, ...p.purge.urls].join(' ')}`
+								);
+							}
+						}
+					},
+					site
+				);
 				if (r === 'purged') result.gone.purged++;
 				else result.gone.kept++;
 				// Its archive goes too, unless it is still the record a print shows.
@@ -338,10 +342,12 @@ try {
 		`${n(c.blocked)} blocked, ${n(c.undecodable)} unreadable, ${n(c.failed)} failed; ${n(result.suggestedNew)} of the new with suggestions` +
 		(work.gone.length
 			? `; gone: ${n(result.gone.purged)} purged, ${n(result.gone.kept)} kept (another source), ${n(result.gone.failed)} failed` +
-				(result.gone.held ? `, ${n(result.gone.held)} held (too many at once)` : '') +
-				(result.gone.waiting ? `, ${n(result.gone.waiting)} waiting for R2 keys` : '')
+				(result.gone.waiting ? `, ${n(result.gone.waiting)} waiting (${target.missing.join(', ')})` : '') +
+				(result.gone.edgeNotPurged ? `, ${n(result.gone.edgeNotPurged)} not purged from the edge cache` : '')
 			: '') +
-		(result.dryRun ? ' (dry run: nothing written)' : '');
+		(result.dryRun
+			? `${work.gone.length ? `; ${n(work.gone.length)} gone from the site to delete or detach` : ''} (dry run: nothing written)`
+			: '');
 	if (stopping) {
 		code = 2;
 		report(false, `✗ stopped: ${line}`);

@@ -166,6 +166,8 @@ export interface FromSitesResult {
 	toFetch: number;
 	fetched: number;
 	newlyDead: number;
+	/** Answered 404 for the first time: not a failure, asked again next run (dead if it answers so again). */
+	maybeDead: number;
 	failed: number;
 }
 
@@ -200,6 +202,7 @@ export async function runFromSites(dir: string, stateFile: string, entries: Map<
 		const get = imageFetcher();
 		let fetched = 0;
 		let newlyDead = 0;
+		let maybeDead = 0;
 		const failed: string[] = [];
 		if (!args.planOnly) {
 			for (const s of todo) {
@@ -252,10 +255,14 @@ export async function runFromSites(dir: string, stateFile: string, entries: Map<
 				appendFileSync(stateFile, formatEntry(entry));
 				if (entry.status === 'fetched') fetched++;
 				else if (entry.status === 'dead') newlyDead++;
+				// A first 404 is not a failure of the run: the image is maybe dead, asked once more next run.
+				else if (entry.reason?.endsWith('(dead if again next run)')) maybeDead++;
 				else failed.push(`${entry.id}: ${entry.reason}`);
 				console.log(`screenshots: ${s.id} (${s.prints[0]}): ${entry.status}${entry.reason ? ` (${entry.reason})` : ''}`);
 			}
-			console.log(`screenshots: copied ${fetched} images from other sites, ${newlyDead} gone at the source, failed ${failed.length}`);
+			console.log(
+				`screenshots: copied ${fetched} images from other sites, ${newlyDead} gone at the source, ${maybeDead} answered 404 once (asked again next run), failed ${failed.length}`
+			);
 		}
 		if (args.json)
 			console.log(
@@ -269,6 +276,7 @@ export async function runFromSites(dir: string, stateFile: string, entries: Map<
 					toFetch: plan.todo.length,
 					fetched,
 					newlyDead,
+					maybeDead,
 					failed: failed.length
 				} satisfies FromSitesResult)
 			);

@@ -17,7 +17,8 @@ import { PrintRepositoryD1 } from '../pipeline/repository';
 import { sourceGone } from '../pipeline/source-gone';
 import { PrintSource } from '../pipeline/source';
 import { fromFactorioprints, fromPipelineText, rawKeyFor, type SourceRecord } from '../pipeline/source-record';
-import { purgePrintData, type TakedownEnv } from '../takedown';
+import { purgePrintData, type TakedownEnv, type TakedownResult } from '../takedown';
+import { OFFLINE_MAX_INFLATED_BYTES } from '../pipeline/decode';
 
 export type { SourceRecord, Suggestion };
 
@@ -49,6 +50,8 @@ export type GateOutcome =
 export interface PurgeExtras {
 	extra: (db: D1Database) => D1PreparedStatement[];
 	extraKeys: string[];
+	/** Told how each purge went (its edge purge may have failed: `purgeError`), for a caller that reports it. */
+	onPurged?: (result: TakedownResult) => void;
 }
 
 export interface UploadGate {
@@ -60,7 +63,7 @@ export interface UploadGate {
 	/**
 	 * The upload's source is gone (its owner deleted it, or the account): if another source keeps the
 	 * print it stays (hand-over), else the print is purged with `extras`. `site` (default 'upload') lets a
-	 * polled site's script (fprints) use the same hand-over and purge.
+	 * polled site's script (scripts/polled.ts) use the same hand-over and purge.
 	 */
 	sourceGone(siteId: string, extras: PurgeExtras, site?: Site): Promise<'purged' | 'kept' | 'none'>;
 	/** Whether an upload image is blocked: removal_blocks kind 'image', value `upload.<16 hex>` (`imageId` is the 16 hex). */
@@ -160,8 +163,13 @@ export const ingestDue = async (db: D1Database) =>
 /** What the gate needs: the pipeline's bindings and the purge's (the site Worker's env, or the cron Worker's). */
 export type GateEnv = PipelineEnv & TakedownEnv;
 
-/** The gate on this stage's bindings. */
-export const workerGate = (env: GateEnv): UploadGate => {
+/**
+ * The gate on this stage's bindings. In the Worker a hand-over admits the next source within the Worker's
+ * caps; a Bun caller (scripts/polled.ts) passes `offline`, so no print is purged only for being too big.
+ */
+export const workerGate = (env: GateEnv, o: { offline?: boolean } = {}): UploadGate => {
+	const limits = o.offline ? {} : { limits: WORKER_LIMITS };
+	const inflate = o.offline ? { maxInflatedBytes: OFFLINE_MAX_INFLATED_BYTES } : {};
 	const layer = pipelineLayer(env);
 	const run = <A, E>(effect: Effect.Effect<A, E, Layer.Success<typeof layer>>) => Effect.runPromise(Effect.provide(effect, layer));
 
@@ -183,9 +191,9 @@ export const workerGate = (env: GateEnv): UploadGate => {
 			record = obj ? fromPipelineText(await obj.text()) : null;
 		}
 		if (!record) throw new Error(`no record for ${winner.site}:${winner.site_id}`);
-		const r = await admitRecord(env.DB, record, { limits: WORKER_LIMITS });
+		const r = await admitRecord(env.DB, record, { ...limits, ...inflate });
 		if (r.status !== 'existing' || r.printId !== printId) throw new Error(`${winner.site}:${winner.site_id} came out ${r.status}`);
-		const outcome = await run(ingestRecord(record, r));
+		const outcome = await run(ingestRecord(record, r, inflate));
 		if (outcome.status !== 'analysed' && outcome.status !== 'unchanged') throw new Error(`ingest answered ${outcome.status}`);
 	};
 
@@ -201,8 +209,16 @@ export const workerGate = (env: GateEnv): UploadGate => {
 	return {
 		admit: (record, printId, extra) => admitUpload(env, record, printId, extra, WORKER_LIMITS),
 		sourceGone: async (siteId, extras, site = 'upload') => {
-			const purge = async (printId: string) =>
-				purgePrintData(env, printId, { kind: 'gone', screenshotToo: await ownImage(printId), ...extras });
+			const purge = async (printId: string) => {
+				const result = await purgePrintData(env, printId, {
+					kind: 'gone',
+					screenshotToo: await ownImage(printId),
+					extra: extras.extra,
+					extraKeys: extras.extraKeys
+				});
+				extras.onPurged?.(result);
+				return result;
+			};
 			const r = await sourceGone(env.DB, site, siteId, {
 				purge,
 				// If the next source can't be ingested here (over the Worker's caps, the mirror unreachable), the
