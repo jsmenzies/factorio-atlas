@@ -11,7 +11,7 @@
 	<meta name="robots" content="noindex, nofollow" />
 </svelte:head>
 
-<nav class="mb-6 flex items-center gap-3 text-sm" aria-label="Admin">
+<nav class="mb-6 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm" aria-label="Admin">
 	<span class="rounded bg-stone-800 px-1.5 py-0.5 text-xs font-medium tracking-wide text-stone-400 uppercase">Admin</span>
 	<!-- The Overview and Settings run updates on this machine: local only. -->
 	{#if dev}
@@ -35,6 +35,11 @@
 		href="/admin/reports"
 		class={page.url.pathname.startsWith('/admin/reports') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
 		aria-current={page.url.pathname === '/admin/reports' ? 'page' : undefined}>Reports</a
+	>
+	<a
+		href="/admin/accounts"
+		class={page.url.pathname.startsWith('/admin/accounts') ? 'text-stone-100' : 'text-stone-400 hover:text-amber-300'}
+		aria-current={page.url.pathname === '/admin/accounts' ? 'page' : undefined}>Accounts</a
 	>
 	{#if dev}
 		<a

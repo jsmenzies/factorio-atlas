@@ -14,7 +14,7 @@
  * back as it was).
  */
 import { printIdFor, siteOfPrintId } from '#lib/print-id.js';
-import type { Account } from '../auth/users';
+import { deleteAccount, markDeleting, type Account } from '../auth/users';
 import { bumpPageVersion } from '../page-cache';
 import { analysisKey, withAuthorName } from '../pipeline/print-doc';
 import { fromPipelineText, rawKeyFor, toPipelineText, type SourceRecord } from '../pipeline/source-record';
@@ -373,9 +373,12 @@ export interface UploadRow {
 
 const ROW_SQL = `SELECT u.*, i.ext AS image_ext, i.status AS image_status FROM uploads u LEFT JOIN upload_images i ON i.id = u.image_id`;
 
+/** The statement behind listUploads, for a caller that reads it in a batch (lib/server/admin/accounts.ts). */
+export const uploadsOf = (db: D1Database, userId: string) =>
+	db.prepare(`${ROW_SQL} WHERE u.user_id = ? ORDER BY u.created_at DESC`).bind(userId);
+
 /** An account's uploads, newest first. */
-export const listUploads = async (db: D1Database, userId: string) =>
-	(await db.prepare(`${ROW_SQL} WHERE u.user_id = ? ORDER BY u.created_at DESC`).bind(userId).all<UploadRow>()).results;
+export const listUploads = async (db: D1Database, userId: string) => (await uploadsOf(db, userId).all<UploadRow>()).results;
 
 /** One upload of this account's, or null (someone else's, or none). */
 export const ownUpload = (db: D1Database, userId: string, printId: string) =>
@@ -537,6 +540,24 @@ export const deleteAccountUploads = async (
 		}
 	}
 	return { deleted, left: ids.length - deleted };
+};
+
+/**
+ * One step of deleting an account, the one path for its owner (routes/account) and an admin
+ * (routes/admin/accounts/[id]): marks it deleting (from then on it can't upload, edit or rename; a step
+ * cut short leaves an account that can only go on deleting), deletes as many of its uploads as one request
+ * has time for, then the account once none are left (users.ts deleteAccount). Not `done`: post again for
+ * the rest (`left` is then at least 1).
+ */
+export const deleteAccountStep = async (
+	deps: Pick<UploadDeps, 'db' | 'raw' | 'gate'>,
+	userId: string,
+	options?: { budgetMs?: number; clock?: () => number }
+) => {
+	await markDeleting(deps.db, userId);
+	const { deleted, left } = await deleteAccountUploads(deps, userId, options);
+	const done = left === 0 && (await deleteAccount(deps.db, userId));
+	return { deleted, left: done ? 0 : Math.max(left, 1), done };
 };
 
 /** How long the account page spends putting a new name on the account's uploads; the sync does the rest. */

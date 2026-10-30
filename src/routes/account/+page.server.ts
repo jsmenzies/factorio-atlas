@@ -6,9 +6,9 @@ import { ACCOUNT_DELETED_MARK } from '#lib/last-sign-in.js';
 import { safeReturn } from '#lib/server/auth/oauth.js';
 import { SPECS, isProvider } from '#lib/server/auth/providers.js';
 import { deleteSession } from '#lib/server/auth/sessions.js';
-import { accountProviders, deleteAccount, markDeleting, NAME_MAX, NAME_RULE, renameAccount } from '#lib/server/auth/users.js';
+import { accountProviders, NAME_MAX, NAME_RULE, renameAccount } from '#lib/server/auth/users.js';
 import { workerGate } from '#lib/server/uploads/gate.js';
-import { deleteAccountUploads, listUploads, refreshUploadNames, RENAME_BUDGET_MS } from '#lib/server/uploads/uploads.js';
+import { deleteAccountStep, listUploads, refreshUploadNames, RENAME_BUDGET_MS } from '#lib/server/uploads/uploads.js';
 import type { Actions, PageServerLoad } from './$types';
 
 /** The signed-in account, or off to sign in and back here. */
@@ -60,17 +60,15 @@ export const actions: Actions = {
 	},
 	/**
 	 * Its uploads first (decided 2026-10-30: deleting an account deletes its uploads), as many as one request
-	 * has time for; the account is marked deleting first, so a request cut short leaves an account that can
-	 * only go on deleting. Then the account, signed out. With uploads left, the page posts here again.
+	 * has time for (deleteAccountStep, shared with the admin's delete), then the account, signed out. With
+	 * uploads left, the page posts here again.
 	 */
 	delete: async ({ locals, request, cookies }) => {
 		const account = await required(locals);
-		if (!account.deleting) {
-			if ((await request.formData()).get('confirm') !== 'yes') return fail(400, { deleteProblem: 'Tick the box to confirm.' });
-			await markDeleting(env.DB, account.id);
-		}
-		const { deleted, left } = await deleteAccountUploads({ db: env.DB, raw: env.RAW, gate: workerGate(env) }, account.id);
-		if (left > 0 || !(await deleteAccount(env.DB, account.id))) return { deleting: { deleted, left: Math.max(left, 1) } };
+		if (!account.deleting && (await request.formData()).get('confirm') !== 'yes')
+			return fail(400, { deleteProblem: 'Tick the box to confirm.' });
+		const { deleted, left, done } = await deleteAccountStep({ db: env.DB, raw: env.RAW, gate: workerGate(env) }, account.id);
+		if (!done) return { deleting: { deleted, left } };
 		clearSessionCookies(cookies, dev);
 		// The fragment tells the browser to forget the service it signed in with (lib/last-sign-in.ts).
 		redirect(303, `/${ACCOUNT_DELETED_MARK}`);
