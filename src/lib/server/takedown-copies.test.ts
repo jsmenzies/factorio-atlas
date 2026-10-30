@@ -75,10 +75,11 @@ const setup = async () => {
 describe('a removal with identical copies', () => {
 	test('the queue lists them, the same author’s first and marked; others aren’t copies', async () => {
 		const h = await setup();
+		// Both later copies are folded into the original, whoever posted them.
 		expect(h.folds()).toEqual([
 			{ id: ID, duplicate_of: null, identical_to: null },
 			{ id: UNRELATED, duplicate_of: null, identical_to: null },
-			{ id: OTHER, duplicate_of: null, identical_to: ID },
+			{ id: OTHER, duplicate_of: ID, identical_to: null },
 			{ id: SAME, duplicate_of: ID, identical_to: null }
 		]);
 		const { open } = await reportQueue(h.db);
@@ -104,7 +105,7 @@ describe('a removal with identical copies', () => {
 			{ id: UNRELATED, duplicate_of: null, identical_to: null },
 			{ id: OTHER, duplicate_of: null, identical_to: null }
 		]);
-		expect(h.doc(OTHER)?.print.identical_to).toBeUndefined();
+		expect(h.doc(OTHER)?.print.copy_of).toBeUndefined();
 		expect(h.doc(SAME)).toBeNull();
 		expect([...h.renders.objects.keys()]).toEqual([`${OTHER}/index.json`]);
 		// Each print has its own blocks, the content's hash among the first's.
@@ -147,16 +148,16 @@ describe('a removal with identical copies', () => {
 		});
 	});
 
-	test('nothing ticked: only the print goes; its copies stay up and stand on their own', async () => {
+	test('nothing ticked: only the print goes; its copies stay up, folded into the next earliest', async () => {
 		const h = await setup();
 		await decide(h.env, { subjectKind: 'print', subjectId: ID, approve: true, note: null, by: 'dev' });
 		expect(h.folds()).toEqual([
 			{ id: UNRELATED, duplicate_of: null, identical_to: null },
-			// The same author's re-post is now the earliest; the other print is identical to it.
-			{ id: OTHER, duplicate_of: null, identical_to: SAME },
+			// The same author's re-post is now the earliest; the other print is folded into it.
+			{ id: OTHER, duplicate_of: SAME, identical_to: null },
 			{ id: SAME, duplicate_of: null, identical_to: null }
 		]);
 		expect(h.doc(SAME)?.print.copy_of).toBeUndefined();
-		expect(h.doc(OTHER)?.print.identical_to).toEqual({ id: SAME });
+		expect(h.doc(OTHER)?.print.copy_of).toEqual({ id: SAME });
 	});
 });

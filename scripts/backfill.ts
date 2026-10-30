@@ -499,7 +499,7 @@ const refold = async () => {
 	const changed = result.success.members.filter((m) => m.changed);
 	if (changed.length) {
 		const folded = changed.filter((m) => m.duplicateOf).length;
-		term.log(`folds: ${changed.length} prints changed (${folded} now folded into an earlier print by the same author)`);
+		term.log(`folds: ${changed.length} prints changed (${folded} now folded into an earlier print)`);
 	}
 };
 

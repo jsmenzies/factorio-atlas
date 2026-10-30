@@ -8,6 +8,7 @@ import { matchExpression, parseSearch, searchStatements } from '#lib/server/quer
 import { admitRecord, WORKER_LIMITS } from './admit';
 import { d1FromSqlite } from './d1-sqlite';
 import { decodeExchangeString, encodeExchangeString } from './decode';
+import { removeToken } from './facet-token';
 import { FOLDED_TOKEN } from './fold';
 import { fingerprintBlockValues, identityPurgeStatements, sourcesOf } from './identity-db';
 import { applyPlan, ingestRecord, ingestText, planIngest, refoldAll, syncFold, syncSources } from './pipeline';
@@ -503,18 +504,74 @@ describe('the soft fold', () => {
 		}
 	});
 
-	test('someone else’s copy stays visible, noted as identical to the earliest', async () => {
+	test('someone else’s later copy is folded too, into the group’s earliest; every copy points there', async () => {
 		const h = setup();
-		await h.ingest(ID, FIXTURE);
 		await h.ingest(OTHER_ID, repost('other'));
 		await h.ingest(COPY_ID, repost('same', 2));
+		// The same author's copy points at the earliest, someone else's, until the original comes.
+		expect(folds(h)).toEqual([
+			{ id: COPY_ID, duplicate_of: OTHER_ID, identical_to: null },
+			{ id: OTHER_ID, duplicate_of: null, identical_to: null }
+		]);
+		await h.ingest(ID, FIXTURE);
 		expect(folds(h)).toEqual([
 			{ id: ID, duplicate_of: null, identical_to: null },
 			{ id: COPY_ID, duplicate_of: ID, identical_to: null },
-			{ id: OTHER_ID, duplicate_of: null, identical_to: ID }
+			{ id: OTHER_ID, duplicate_of: ID, identical_to: null }
 		]);
-		expect(h.doc(OTHER_ID)?.print.identical_to).toEqual({ id: ID });
+		expect(h.doc(OTHER_ID)?.print.copy_of).toEqual({ id: ID });
+		expect(h.doc(OTHER_ID)?.print.identical_to).toBeUndefined();
+		expect(ids(h, { q: 'belts' })).toEqual([ID]);
+		expect(ids(h, {})).toEqual([ID]);
+	});
+
+	test('an old identical_to (the rule before 2026-10-30) is cleared and the copy folded by a refold', async () => {
+		const h = setup();
+		await h.ingest(ID, FIXTURE);
+		await h.ingest(OTHER_ID, repost('other'));
+		// As the old rule left the row: listed, noted as identical (a refold rewrites the document from the row).
+		await h.db.prepare('UPDATE prints SET duplicate_of = NULL, identical_to = ? WHERE id = ?').bind(ID, OTHER_ID).run();
+		await h.db
+			.prepare(`UPDATE print_search SET ${removeToken(FOLDED_TOKEN)} WHERE print_id = ?`)
+			.bind(OTHER_ID)
+			.run();
 		expect(ids(h, { q: 'belts' }).sort()).toEqual([ID, OTHER_ID].sort());
+		const { members } = await h.run(refoldAll({ bump: true }));
+		expect(members.filter((m) => m.changed).map((m) => [m.printId, m.duplicateOf, m.identicalTo])).toEqual([[OTHER_ID, ID, null]]);
+		expect(folds(h)).toEqual([
+			{ id: ID, duplicate_of: null, identical_to: null },
+			{ id: OTHER_ID, duplicate_of: ID, identical_to: null }
+		]);
+		expect(h.doc(OTHER_ID)?.print).toMatchObject({ copy_of: { id: ID } });
+		expect(h.doc(OTHER_ID)?.print.identical_to).toBeUndefined();
+		expect(ids(h, { q: 'belts' })).toEqual([ID]);
+	});
+
+	test('under 50 entities and tiles nothing is folded or noted, whoever posted it', async () => {
+		const h = setup();
+		const small = await encodeExchangeString({
+			blueprint: {
+				item: 'blueprint',
+				version: 562949954076672,
+				entities: Array.from({ length: 6 }, (_, i) => ({ entity_number: i + 1, name: 'solar-panel', position: { x: i * 3 + 1.5, y: 1.5 } }))
+			}
+		});
+		const smallRepost = (by: 'same' | 'other') =>
+			withRecord(repost(by), (r) => {
+				r.blueprintString = small;
+			});
+		await h.ingest(
+			ID,
+			withRecord(FIXTURE, (r) => (r.blueprintString = small))
+		);
+		await h.ingest(COPY_ID, smallRepost('same'));
+		await h.ingest(OTHER_ID, smallRepost('other'));
+		expect(folds(h)).toEqual([
+			{ id: ID, duplicate_of: null, identical_to: null },
+			{ id: COPY_ID, duplicate_of: null, identical_to: null },
+			{ id: OTHER_ID, duplicate_of: null, identical_to: null }
+		]);
+		expect((await h.run(refoldAll({ bump: false, dryRun: true }))).members).toEqual([]);
 	});
 
 	test('a reordered book is not a copy', async () => {

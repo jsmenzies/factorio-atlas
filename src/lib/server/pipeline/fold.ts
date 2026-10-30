@@ -1,28 +1,35 @@
 /**
- * The soft fold (user, 2026-10-30), within one author. Prints whose whole content is exactly the same
- * (the whole-print hash, from JOIN_MIN_SIZE entities + tiles up, current versions, live prints) form a
- * group; the earliest by its live sources' upload time (factorioprints: `createdDate`), then by id, is
- * the group's original.
+ * The soft fold. Prints whose whole content is exactly the same (the whole-print hash, from JOIN_MIN_SIZE
+ * entities + tiles up, current versions, live prints) form a group; the earliest by its live sources'
+ * upload time (factorioprints: `createdDate`), then by id, is the group's original.
  *
- * - A later copy by the same author (same site, same author id: a double post) is folded:
- *   `prints.duplicate_of` names that author's earliest print of the group. It stays out of search,
- *   landing pages and the sitemap (the `folded_yes` facet token, queries.ts `matchExpression`, and the
- *   column for unfiltered searches and facet_counts); its page's canonical link points at the earlier
- *   print and says "Same blueprint as …".
- * - A copy by anyone else stays fully visible, with its own canonical; `prints.identical_to` names the
- *   group's original and its page says "Identical to …, posted earlier".
+ * Every later copy is folded, whoever posted it (user, 2026-10-30; until then only the same author's
+ * double posts were, and anyone else's copy stayed listed with `identical_to`): `prints.duplicate_of`
+ * names the group's original. A copy stays out of search, landing pages and the sitemap (the `folded_yes`
+ * facet token, queries.ts `matchExpression`, and the column for unfiltered searches and facet_counts); its
+ * page's canonical link points at the original and says "Same blueprint as …, posted earlier by …".
+ * Prints under JOIN_MIN_SIZE form no group: small standard designs are often built alike.
+ *
+ * `prints.identical_to` (and the document's `identical_to`) is no longer set by the rule: a refold clears
+ * it; the page still reads it, for documents written before.
  *
  * Both are mirrored into the print's R2 document (`copy_of`, `identical_to`, ids only: the page reads
  * the other print's title and author from that print's document), written before the D1 rows, so a page
- * cached under a new page-cache version always agrees. A print with no author id is nobody's double post.
+ * cached under a new page-cache version always agrees.
  *
  * `planFold` reads the groups one print touches (its own, and those of prints pointing at it: it may
  * have changed or gone); `planAllFolds` reads them all (`bun run fold`). `foldStatements` writes the
- * differences. Narrowing or widening the rule is `foldGroup` alone.
+ * differences. Narrowing or widening the rule is `foldGroup` alone, plus a FOLD_VERSION bump.
  */
 import { bumpPageVersion } from '../page-cache';
 import { addToken, hasToken, removeToken } from './facet-token';
 import { JOIN_MIN_SIZE } from './identity-db';
+
+/**
+ * The rule's version: bump it when `foldGroup` changes, so the next backfill (and so the next update's
+ * ingest step, whose skip key carries it) refolds every group. 2: every later copy folded, whoever posted it.
+ */
+export const FOLD_VERSION = 2;
 
 /** The facet token of a folded print (first in its `facets` column, as `render_yes`). */
 export const FOLDED_TOKEN = 'folded_yes';
@@ -41,8 +48,7 @@ export interface FoldMember extends FoldState {
 
 export interface MemberRow {
 	readonly id: string;
-	/** '<site>:<author id>', or null when the print has no author id. */
-	readonly author: string | null;
+	/** The earliest upload time of its live sources, or null when none says. */
 	readonly posted: number | null;
 }
 
@@ -51,18 +57,12 @@ const NONE: FoldState = { duplicateOf: null, identicalTo: null };
 const order = (a: MemberRow, b: MemberRow) =>
 	(a.posted ?? Number.MAX_SAFE_INTEGER) - (b.posted ?? Number.MAX_SAFE_INTEGER) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
-/** The rule: where each member of one group should point. Pure. */
+/** The rule: where each member of one group should point (the earliest is the original; no posting time sorts last, ties by id). Pure. */
 export const foldGroup = (rows: readonly MemberRow[]): Map<string, FoldState> => {
-	const members = [...rows].sort(order);
+	const [first, ...later] = [...rows].sort(order);
 	const out = new Map<string, FoldState>();
-	const firstBy = new Map<string, string>();
-	for (const [i, m] of members.entries()) {
-		const earlierOwn = m.author ? firstBy.get(m.author) : undefined;
-		if (m.author && !earlierOwn) firstBy.set(m.author, m.id);
-		if (i === 0) out.set(m.id, NONE);
-		else if (earlierOwn) out.set(m.id, { duplicateOf: earlierOwn, identicalTo: null });
-		else out.set(m.id, { duplicateOf: null, identicalTo: members[0].id });
-	}
+	if (first) out.set(first.id, NONE);
+	for (const m of later) out.set(m.id, { duplicateOf: first.id, identicalTo: null });
 	return out;
 };
 
@@ -75,7 +75,6 @@ interface Row extends MemberRow {
 /** Members of the groups whose whole-print hash `shaFilter` picks. */
 const members = (shaFilter: string) => `
 	SELECT f.sha256 AS sha256, f.print_id AS id, p.duplicate_of AS duplicate_of, p.identical_to AS identical_to,
-		CASE WHEN p.author_id IS NULL THEN NULL ELSE p.source || ':' || p.author_id END AS author,
 		(SELECT MIN(COALESCE(s.uploaded_at, s.first_seen)) FROM print_sources s WHERE s.print_id = f.print_id AND s.gone_at IS NULL) AS posted
 	FROM print_fingerprints f JOIN prints p ON p.id = f.print_id
 	WHERE f.kind = 'print' AND f.current = 1 AND f.size >= ${JOIN_MIN_SIZE} AND f.sha256 IN (${shaFilter})`;
@@ -179,9 +178,11 @@ export const FOLDED_PREFIX_SQL = `CASE WHEN EXISTS (SELECT 1 FROM prints WHERE i
 /**
  * `meta.fold_dirty`: set while a backfill has written prints whose folds it hasn't recomputed yet (from the
  * first print it hands over until its refold at the end succeeds). A run that is quit, or whose refold
- * fails, leaves it set; the next backfill and `bun run fold` refold, then clear it.
+ * fails, leaves it set; the next backfill and `bun run fold` refold, then clear it. `meta.fold_version`
+ * is the FOLD_VERSION the last full refold applied: any other value (or none) counts as dirty too.
  */
 export const FOLD_DIRTY = 'fold_dirty';
+const FOLD_VERSION_KEY = 'fold_version';
 
 export const markFoldDirty = (db: D1Database, now = Date.now()) =>
 	db
@@ -189,7 +190,21 @@ export const markFoldDirty = (db: D1Database, now = Date.now()) =>
 		.bind(String(now))
 		.run();
 
-export const clearFoldDirty = (db: D1Database) => db.prepare(`DELETE FROM meta WHERE key = '${FOLD_DIRTY}'`).run();
+/** After a full refold under this FOLD_VERSION: nothing left to recompute. */
+export const clearFoldDirty = (db: D1Database) =>
+	db.batch([
+		db.prepare(`DELETE FROM meta WHERE key = '${FOLD_DIRTY}'`),
+		db
+			.prepare(`INSERT INTO meta (key, value) VALUES ('${FOLD_VERSION_KEY}', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`)
+			.bind(String(FOLD_VERSION))
+	]);
 
-export const isFoldDirty = async (db: D1Database) =>
-	(await db.prepare(`SELECT 1 AS hit FROM meta WHERE key = '${FOLD_DIRTY}'`).first()) !== null;
+/** Whether every group must be refolded: a backfill left it to do, or the rule changed since the last full refold. */
+export const isFoldDirty = async (db: D1Database) => {
+	const row = await db
+		.prepare(
+			`SELECT EXISTS (SELECT 1 FROM meta WHERE key = '${FOLD_DIRTY}') AS dirty, (SELECT value FROM meta WHERE key = '${FOLD_VERSION_KEY}') AS version`
+		)
+		.first<{ dirty: number; version: string | null }>();
+	return row?.dirty === 1 || row?.version !== String(FOLD_VERSION);
+};

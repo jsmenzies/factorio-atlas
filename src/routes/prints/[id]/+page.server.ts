@@ -93,7 +93,7 @@ export const load: PageServerLoad = async ({ params }) => {
 		cover,
 		thumbs: await thumbs,
 		shot,
-		// The soft fold (fold.ts): the earlier print a same-author copy points at, or the earliest one an identical print by someone else does.
+		// The soft fold (fold.ts): the earliest print a later exact copy points at.
 		related,
 		// Links to the landing pages of what it makes and is built with (the sidebar's "Search for more blueprints"),
 		// what it makes ranked as the page ranks it.

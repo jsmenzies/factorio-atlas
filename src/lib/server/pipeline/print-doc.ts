@@ -36,9 +36,9 @@ export interface PrintDoc {
 		 * Absent when the only one is the site the print's id names, and from documents written before it.
 		 */
 		sources?: PrintSource[];
-		/** Only on a later exact copy by the same author (the soft fold, fold.ts): their earlier print. */
+		/** Only on a later exact copy, whoever posted it (the soft fold, fold.ts): the earliest print of that content. */
 		copy_of?: { id: string };
-		/** Only on an exact copy by someone else (fold.ts): the earliest print of that content. */
+		/** An exact copy by someone else, as fold.ts used to mark it (until 2026-10-30; a refold clears it): the earliest print. */
 		identical_to?: { id: string };
 	};
 	analysis: PrintAnalysis;

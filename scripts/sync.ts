@@ -58,6 +58,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ANALYZER_VERSION } from '#lib/server/pipeline/analyze.js';
+import { FOLD_VERSION } from '#lib/server/pipeline/fold.js';
 import { IDENTITY_VERSION } from '#lib/server/pipeline/identity.js';
 import { INDEX_VERSION } from '#lib/server/pipeline/repository.js';
 import { newRunId } from '#lib/server/pipeline/runs.js';
@@ -376,7 +377,9 @@ const backfillStep = async (): Promise<Outcome> => {
 			analyzer: ANALYZER_VERSION,
 			index: INDEX_VERSION,
 			viewer: VIEWER_VERSION,
-			identity: IDENTITY_VERSION
+			identity: IDENTITY_VERSION,
+			// A new fold rule: the backfill refolds every group (fold.ts isFoldDirty).
+			fold: FOLD_VERSION
 		},
 		run.sources.find((s) => s.ingestDue)?.ingestDue ?? null
 	);

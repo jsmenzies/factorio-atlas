@@ -154,11 +154,11 @@ const readPrintHead = async (id: string): Promise<RelatedPrint | null> => {
 };
 
 export interface Related {
-	/** The earlier print by the same author a folded copy points at. */
+	/** The earliest print of the same content, which a folded copy points at. */
 	readonly copyOf: RelatedPrint | null;
 	/** Its blueprint pages' paths in book order, so the copy's page N names the original's page N. */
 	readonly copyPages: readonly string[];
-	/** The earliest print an identical print by someone else points at. */
+	/** The earliest print an identical print points at (documents folded before 2026-10-30 only: fold.ts no longer sets it). */
 	readonly identicalTo: RelatedPrint | null;
 }
 
