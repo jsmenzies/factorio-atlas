@@ -9,14 +9,13 @@ import { writeSync } from 'node:fs';
 import { parseArgs, type ParseArgsOptionsConfig } from 'node:util';
 import { openTarget, STAGES, TargetError, type Stage, type Target } from './backfill/stage';
 import { Terminal } from './backfill/terminal';
+import { errorText } from '#lib/error-text.js';
 
 /** Print the message and exit with status 2. */
 export const fail = (message: string): never => {
 	console.error(message);
 	process.exit(2);
 };
-
-const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export { formatCount as n } from '#lib/format.js';
 
@@ -38,7 +37,7 @@ export const parseStageArgs = <O extends ParseArgsOptionsConfig>(usage: string, 
 		try {
 			return parseArgs({ options: { ...COMMON, ...options }, strict: true, allowPositionals });
 		} catch (e) {
-			return fail(`${messageOf(e)}\n${usage}`);
+			return fail(`${errorText(e)}\n${usage}`);
 		}
 	})();
 	// The common flags by themselves: TypeScript can't see them through the generic result.
@@ -91,7 +90,7 @@ export const runOn = async (target: Target, body: () => Promise<void>): Promise<
 		await body();
 	} catch (e) {
 		await target.dispose();
-		return fail(`✗ ${messageOf(e)}`);
+		return fail(`✗ ${errorText(e)}`);
 	}
 	await target.dispose();
 	process.exit(0);

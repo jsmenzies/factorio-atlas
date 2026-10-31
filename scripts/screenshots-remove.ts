@@ -28,6 +28,7 @@ import { formatEntry, parseState, STATE_FILE, type StateEntry } from './screensh
 import { openShotStore } from './screenshots/store.js';
 import { syncImage } from './screenshots/upload.js';
 import { confirmProd, fail, openStage, parseStageArgs, requireSchema } from './stage-command';
+import { errorText } from '#lib/error-text.js';
 
 const USAGE =
 	'usage: bun run screenshots:remove --stage local|prod --ids=<print or Imgur ids, comma-separated> [--reason TEXT] [--dry-run] [--yes]';
@@ -49,7 +50,7 @@ const { entries } = parseState(await readFile(stateFile, 'utf8').catch(() => '')
 const { held } = readLedger(await readFile(ledger, 'utf8').catch(() => ''));
 
 // One process, one set of bindings: locally the store's proxy also gives the D1.
-const opened = await openShotStore(stage).catch((e: unknown) => fail(`✗ ${e instanceof Error ? e.message : String(e)}`));
+const opened = await openShotStore(stage).catch((e: unknown) => fail(`✗ ${errorText(e)}`));
 const target = stage === 'local' ? null : await openStage(stage, generation);
 const db = (opened.db ?? target?.env.DB)!;
 const dispose = async () => {
@@ -107,7 +108,7 @@ try {
 	}
 } catch (e) {
 	await dispose();
-	fail(`✗ ${e instanceof Error ? e.message : String(e)}`);
+	fail(`✗ ${errorText(e)}`);
 }
 await dispose();
 process.exit(0);

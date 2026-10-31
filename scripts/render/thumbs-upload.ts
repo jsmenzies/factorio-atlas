@@ -22,6 +22,7 @@ import { THUMB_FILE, THUMBS_INDEX, thumbFile, type ThumbsIndex } from '#lib/view
 import { retrying } from './queue.js';
 import { StoreError, withRetries, type RenderStore } from './store.js';
 import { mapPool } from './thumbs.js';
+import { errorText } from '#lib/error-text.js';
 
 /** Every thumbnail file a thumbs.json lists, relative to its print. */
 export const thumbKeys = (index: ThumbsIndex | null): Set<string> =>
@@ -218,7 +219,7 @@ export async function createThumbUploader(opts: ThumbUploaderOptions) {
 				gone.push(r.key);
 			} catch (e) {
 				stats.failed++;
-				log(`  ${r.key}: delete failed: ${e instanceof Error ? e.message : String(e)}`);
+				log(`  ${r.key}: delete failed: ${errorText(e)}`);
 			}
 		});
 		await db.cancelDeletes(target, [...keep, ...gone]);
@@ -305,7 +306,7 @@ export async function createThumbUploader(opts: ThumbUploaderOptions) {
 			return true;
 		} catch (e) {
 			stats.failed++;
-			log(`  thumbnails ${id}: ${e instanceof Error ? e.message : String(e)}`);
+			log(`  thumbnails ${id}: ${errorText(e)}`);
 			if (e instanceof StoreError && e.fatal) broken = e.message;
 			return false;
 		}

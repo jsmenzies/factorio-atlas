@@ -8,6 +8,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { LIVE_STATES, type RunControl } from '#lib/server/pipeline/runs.js';
 import { RENDER_STALE_MS, type JobStatus, type RenderJobRow, type RenderRunRow } from '#lib/server/render-queue.js';
 import type { DueDelete, UploadRow } from './upload.js';
+import { errorText } from '#lib/error-text.js';
 
 /** Attempts a page gets at one input key before it's left failed. */
 export const MAX_ATTEMPTS = 3;
@@ -36,7 +37,7 @@ export async function retrying<T>(what: string, f: () => Promise<T>): Promise<T>
 		try {
 			return await f();
 		} catch (e) {
-			const msg = e instanceof Error ? e.message : String(e);
+			const msg = errorText(e);
 			if (attempt >= 8 || !/busy|locked|SQLITE_BUSY|network connection lost|internal error/i.test(msg)) throw new Error(`${what}: ${msg}`);
 			await sleep(100 * 2 ** attempt);
 		}

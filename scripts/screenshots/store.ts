@@ -8,6 +8,7 @@ import { screenshotsBucket } from '../../infra/databases';
 import { accountId } from '../backfill/stage.js';
 import { bindingStore, s3Store, withRetries, type RenderStore } from '../render/store.js';
 import type { UploadTarget } from './ledger.js';
+import { errorText } from '#lib/error-text.js';
 
 export interface OpenStore {
 	store: RenderStore;
@@ -37,7 +38,7 @@ export async function openShotStore(target: UploadTarget, env: Record<string, st
 	try {
 		await withRetries(() => store.list('x.json'), { attempts: 3 });
 	} catch (e) {
-		throw new Error(`${bucket}: ${e instanceof Error ? e.message : String(e)} (is it deployed, and does the token cover it?)`);
+		throw new Error(`${bucket}: ${errorText(e)} (is it deployed, and does the token cover it?)`);
 	}
 	return { store, db: null, dispose: async () => {} };
 }

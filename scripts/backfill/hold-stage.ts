@@ -7,6 +7,7 @@
  * to stderr; exit 1 when the stage can't be opened.
  */
 import { openSharedStage, STAGES, type Stage } from './stage';
+import { errorText } from '#lib/error-text.js';
 
 const stage = process.argv[2] as Stage | undefined;
 if (!stage || stage === 'local' || !STAGES.includes(stage)) {
@@ -15,7 +16,7 @@ if (!stage || stage === 'local' || !STAGES.includes(stage)) {
 }
 
 const shared = await openSharedStage(stage, { log: (line) => console.error(line) }).catch((e: unknown) => {
-	console.error(`✗ ${e instanceof Error ? e.message : String(e)}`);
+	console.error(`✗ ${errorText(e)}`);
 	return process.exit(1);
 });
 

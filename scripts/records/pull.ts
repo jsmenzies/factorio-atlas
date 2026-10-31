@@ -6,6 +6,7 @@
  */
 import type { SourceRecord } from '#lib/server/pipeline/source-record.js';
 import { dropRecord, putRecord, readIndex, writeIndex, type StoreIndex, type StoreSite } from './store';
+import { errorText } from '#lib/error-text.js';
 
 /** One record as a site lists it: its id, and a revision that changes whenever the record does. */
 export interface Listed {
@@ -121,7 +122,7 @@ export async function pullSite(dir: string, adapter: StoreAdapter, o: PullOption
 				throw new Error(`the record says it is ${record.site}/${record.siteId}`);
 		} catch (e) {
 			counts.failed++;
-			log(`${site}/${l.siteId}: ✗ ${e instanceof Error ? e.message : e}`);
+			log(`${site}/${l.siteId}: ✗ ${errorText(e)}`);
 			return;
 		}
 		const had = index.records[l.siteId];

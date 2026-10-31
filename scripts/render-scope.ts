@@ -21,6 +21,7 @@ import { checkSources, favoritesCacheFile, favoritesDb, refreshFavorites } from 
 import { ROOT } from './render/settings.js';
 import { cloneSource, diskSource, withStore } from './render/source.js';
 import { recordsDir } from './records/store.js';
+import { errorText } from '#lib/error-text.js';
 
 const USAGE =
 	'usage: render-scope top <N> --from-clone <dir> | --from-disk [dir] [--json]\n' +
@@ -84,7 +85,7 @@ try {
 			);
 	}
 } catch (e) {
-	console.error(e instanceof Error ? e.message : String(e));
+	console.error(errorText(e));
 	code = 1;
 } finally {
 	await proxy.dispose();

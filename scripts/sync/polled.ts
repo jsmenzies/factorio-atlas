@@ -40,6 +40,7 @@ import type { SourceRecord } from '#lib/server/pipeline/source-record.js';
 import { dropRecord, putRecord, type StoreSite } from '../records/store';
 import type { PlanOptions, SourceAdapter } from './mirror';
 import { progress } from './progress';
+import { errorText } from '#lib/error-text.js';
 
 /** One print as a site lists it: its id, a revision that changes whenever the record does, and that change's time (unix ms). */
 export interface ListedPrint {
@@ -528,7 +529,7 @@ export async function applyPoll(
 			if (o.signal?.aborted) throw e;
 			c.failed++;
 			if (rev !== null) state.pending[siteId] = rev;
-			log(`${site.site}/${siteId}: ✗ ${e instanceof Error ? e.message : e}`);
+			log(`${site.site}/${siteId}: ✗ ${errorText(e)}`);
 			progress({ t: 'record', site: site.site, outcome: 'failed' });
 			return 'failed' as const;
 		}

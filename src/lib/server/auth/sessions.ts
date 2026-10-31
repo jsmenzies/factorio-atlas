@@ -10,6 +10,7 @@
 import { sha256Hex } from '../hash.js';
 import { randomToken } from './oauth.js';
 import { accountOf, NAME_HOLD_DAYS, type Account, type AccountRow } from './users.js';
+import { errorText } from '#lib/error-text.js';
 
 export const SESSION_DAYS = 30;
 /** Signed-in browsers per account; signing in on one more ends the oldest. */
@@ -102,6 +103,6 @@ export const accountChores = async (db: D1Database, now = Date.now()) => {
 			`accounts: ${sessions.meta.changes ?? 0} expired sessions, ${names.meta.changes ?? 0} name holds and ${quota.meta.changes ?? 0} old upload counts deleted`
 		);
 	} catch (e) {
-		console.error(`accounts: daily chores failed: ${e instanceof Error ? e.message : String(e)}`);
+		console.error(`accounts: daily chores failed: ${errorText(e)}`);
 	}
 };

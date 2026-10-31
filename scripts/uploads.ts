@@ -26,6 +26,7 @@ import { admitUpload, ingestDue } from '#lib/server/uploads/gate.js';
 import { admitProcessing, processingUploads, refreshUploadNames, uploadChores } from '#lib/server/uploads/uploads.js';
 import { confirmProd, jsonScript, n, openStage, parseStageArgs, requireSchema } from './stage-command';
 import { uploadsDigest, type UploadsResult } from './sync/uploads';
+import { errorText } from '#lib/error-text.js';
 
 const USAGE = 'usage: bun run uploads --stage local|prod [--plan] [--dry-run] [--yes] [--json]';
 
@@ -114,7 +115,7 @@ try {
 	}
 } catch (e) {
 	code = 2;
-	report(false, `✗ ${e instanceof Error ? e.message : String(e)}`);
+	report(false, `✗ ${errorText(e)}`);
 } finally {
 	await target.dispose();
 }

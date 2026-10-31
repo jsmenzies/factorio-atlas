@@ -3,6 +3,7 @@
 	import { HOLD_FLOOR, MEM_CAP_MIN_MB, memCapMaxMb, type SyncSettings } from '#lib/sync.js';
 	import { bytes, duration, int } from '../metrics.js';
 	import Toggle from './Toggle.svelte';
+	import { errorText } from '#lib/error-text.js';
 
 	/**
 	 * How the next update runs, under the flow: the steps that can be turned off (authors, screenshots, render)
@@ -50,7 +51,7 @@
 				top = out.result ?? null;
 				topError = null;
 			} catch (e) {
-				topError = e instanceof Error ? e.message : String(e);
+				topError = errorText(e);
 			}
 		}, 400);
 		return () => clearTimeout(timer);

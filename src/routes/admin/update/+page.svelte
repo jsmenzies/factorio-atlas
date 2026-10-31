@@ -13,6 +13,7 @@
 	import type { LogProgress } from '#lib/sync-progress.js';
 	import type { SyncSettings } from '#lib/sync.js';
 	import type { PageProps } from './$types';
+	import { errorText } from '#lib/error-text.js';
 
 	let { data, form }: PageProps = $props();
 
@@ -98,7 +99,7 @@
 				save = { state: 'error', message: d.message ?? `HTTP ${res.status}`, errors: d.errors ?? [] };
 			} else save = { state: 'error', message: `HTTP ${res.status}`, errors: [] };
 		} catch (e) {
-			save = { state: 'error', message: e instanceof Error ? e.message : String(e), errors: [] };
+			save = { state: 'error', message: errorText(e), errors: [] };
 		} finally {
 			inFlight = false;
 			if (again) {

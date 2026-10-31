@@ -40,6 +40,7 @@ import { rawKeyFor } from './pipeline/source-record.js';
 import { FACTORIOPRINTS, insertBlocks, printBlocks, sourceBlock, type Block, type BlockRow } from './removal-blocks.js';
 import { removalRecordStatements, removedRowStatement } from './screenshot-flags.js';
 import { uploadPurgeExtras } from './uploads/uploads.js';
+import { errorText } from '#lib/error-text.js';
 
 export interface TakedownEnv {
 	readonly DB: D1Database;
@@ -262,7 +263,7 @@ async function purge(
 				await purgeCache(env.CACHE_PURGE_TOKEN!, env.CACHE_ZONE_ID!, purge);
 				purged = true;
 			} catch (e) {
-				purgeError = e instanceof Error ? e.message : String(e);
+				purgeError = errorText(e);
 			}
 		}
 
@@ -271,7 +272,7 @@ async function purge(
 		bumped = true;
 		return { d1Rows, rawObjects, renderObjects, screenshot: fate, screenshotObjects, purge, purged, purgeError };
 	} catch (e) {
-		throw new TakedownError(e instanceof Error ? e.message : String(e), { prefixes, urls: unique(urls) }, { cause: e });
+		throw new TakedownError(errorText(e), { prefixes, urls: unique(urls) }, { cause: e });
 	} finally {
 		// Cut short: bump anyway (a takedown's pages answer 410 once the tombstone is in), but a failed bump
 		// never hides why it stopped.

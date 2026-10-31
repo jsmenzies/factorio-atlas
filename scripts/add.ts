@@ -30,6 +30,7 @@ import { factoriobinStoreAdapter } from './records/factoriobin';
 import { pullOne } from './records/pull';
 import { recordsDir } from './records/store';
 import { confirmProd, openStage, parseStageArgs, requireSchema } from './stage-command';
+import { errorText } from '#lib/error-text.js';
 
 const USAGE = 'usage: bun run add <factoriobin link> --stage local|prod [--plan] [--yes] [--json] [--dir DIR]';
 const JSON_OUT = process.argv.includes('--json');
@@ -95,7 +96,7 @@ try {
 	say(summary);
 	code = summary.startsWith('✓') ? 0 : 2;
 } catch (e) {
-	const message = e instanceof Error ? e.message : String(e);
+	const message = errorText(e);
 	out = { ok: false, problem: 'error', message, summary: `✗ ${message}`, stage, link, stored: null };
 	say(out.summary);
 	code = 2;

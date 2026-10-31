@@ -59,6 +59,7 @@ import { formatEntry, parseState, STATE_FILE, type StateEntry } from './screensh
 import { openShotStore } from './screenshots/store.js';
 import { syncImage } from './screenshots/upload.js';
 import { confirmProd, jsonScript, n, openStage, parseStageArgs, requireSchema } from './stage-command';
+import { errorText } from '#lib/error-text.js';
 
 const USAGE = 'usage: bun run removals --stage local|prod [--dry-run] [--yes] [--json]';
 
@@ -283,7 +284,7 @@ try {
 	}
 } catch (e) {
 	code = 2;
-	report(false, `✗ ${e instanceof Error ? e.message : String(e)}`);
+	report(false, `✗ ${errorText(e)}`);
 } finally {
 	if (local !== target) await local.dispose();
 	await target.dispose();

@@ -22,6 +22,7 @@ import { syncFold } from './pipeline/pipeline.js';
 import { RawStoreR2 } from './pipeline/raw-store.js';
 import { PrintRepositoryD1 } from './pipeline/repository.js';
 import { TakedownError, takedownPrint, type PurgeList, type TakedownEnv, type TakedownResult } from './takedown.js';
+import { errorText } from '#lib/error-text.js';
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
@@ -283,7 +284,7 @@ export async function applyTakedown(env: TakedownEnv, printId: string, screensho
 		await refoldAfter(env, [printId, ...copies]);
 		result = joinResults(results, copies);
 	} catch (e) {
-		const message = e instanceof Error ? e.message : String(e);
+		const message = errorText(e);
 		const pending = joinPurge([purgeAlso, ...results.map((r) => r.purge), ...(e instanceof TakedownError ? [e.purge] : [])]);
 		await env.DB.prepare(`UPDATE reports SET pending_purge = ?, apply_error = ? WHERE ${UNAPPLIED}`)
 			.bind(JSON.stringify(pending), message.slice(0, 500), printId)

@@ -3,6 +3,7 @@
 	import { PIPELINE_DEP } from '../live.svelte.js';
 	import type { RenderScopes, ScopeFigures } from '#lib/server/admin/render-scope.js';
 	import { ago, int, percent } from '../metrics.js';
+	import { errorText } from '#lib/error-text.js';
 
 	/**
 	 * What the renders cover: prints with a 2.0+ page, the top-N favourites (pre-2.0 pages drawn too)
@@ -42,7 +43,7 @@
 						: (out.output ?? 'Done.');
 			await invalidate(PIPELINE_DEP);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorText(e);
 		} finally {
 			busy = null;
 		}

@@ -12,6 +12,7 @@ import { env } from 'cloudflare:workers';
 import { readDataFile } from './dev-files.js';
 import { PAGE_DATA_VERSION, type RenderIndex, type RenderPageData, type RenderSidecar } from '#lib/viewer/game-render.js';
 import { THUMBS_INDEX, thumbSrcset, type PageThumb, type ThumbsIndex } from '#lib/viewer/thumbs.js';
+import { errorText } from '#lib/error-text.js';
 
 export interface RenderFile {
 	body: ReadableStream;
@@ -47,7 +48,7 @@ async function getJson<T extends { v: number }>(key: string, v: T['v']): Promise
 		const json = (await new Response(file.body).json()) as T;
 		return json.v === v ? json : null;
 	} catch (e) {
-		console.warn(`render file ${key}: ${e instanceof Error ? e.message : String(e)}`);
+		console.warn(`render file ${key}: ${errorText(e)}`);
 		return null;
 	}
 }

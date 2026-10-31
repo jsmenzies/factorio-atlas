@@ -201,6 +201,7 @@ import { createThumbUploader, thumbUploadDb } from './render/thumbs-upload.js';
 import { FLAGS_TIMEOUT_MS, needsPageBump, runStageFlags, withDeadline } from './render/stage-flags.js';
 import { snapshot, stageTally } from './render/stages.js';
 import { stageSite, type CleanupStage, type FlagsStage, type RenderStages } from '#lib/render-stages.js';
+import { errorText } from '#lib/error-text.js';
 
 /** Decoded pages kept between enqueueing and rendering, so small runs decode each print once. */
 const PAGE_CACHE_BYTES = 256 * 1024 * 1024;
@@ -216,7 +217,7 @@ const parsed = (() => {
 	try {
 		return parseArgs(argv, join(ROOT, 'data', 'raw', 'factorioprints'));
 	} catch (e) {
-		usage(e instanceof Error ? e.message : String(e));
+		usage(errorText(e));
 	}
 })();
 function usage(problem?: string): never {
@@ -268,7 +269,7 @@ try {
 		resumedFrom = latest!.id;
 	} else args = resolveArgs(parsed.given, defaults);
 } catch (e) {
-	await bail(e instanceof Error ? e.message : String(e), e instanceof UsageError);
+	await bail(errorText(e), e instanceof UsageError);
 }
 args = args!;
 // Runs recorded before --mem-reserve-mb existed resume with the default.
@@ -311,7 +312,7 @@ if (args.idsFile) {
 		const lines = (await readFile(args.idsFile, 'utf8')).split('\n').map((l) => l.trim());
 		wanted = [...new Set(lines.filter((l) => l && !l.startsWith('#')))];
 	} catch (e) {
-		await bail(`--ids-file ${args.idsFile}: ${e instanceof Error ? e.message : e}`);
+		await bail(`--ids-file ${args.idsFile}: ${errorText(e)}`);
 	}
 }
 
@@ -324,7 +325,7 @@ try {
 	store = await openStore(args.upload, proxy.env.RENDERS);
 	if (store) graceMs = deleteGraceMs(process.env.RENDER_DELETE_GRACE_S, args.upload!);
 } catch (e) {
-	await bail(e instanceof Error ? e.message : String(e));
+	await bail(errorText(e));
 }
 /**
  * Prints the upload target's stage deleted or blocked are never uploaded (scripts/render/removed-guard.ts):
@@ -341,7 +342,7 @@ if (store) {
 		}
 	} catch (e) {
 		await guardTarget?.dispose().catch(() => undefined);
-		await bail(`✗ can't read the ${args.upload} stage's deleted prints, so nothing may be uploaded: ${e instanceof Error ? e.message : e}`);
+		await bail(`✗ can't read the ${args.upload} stage's deleted prints, so nothing may be uploaded: ${errorText(e)}`);
 	}
 }
 
@@ -692,7 +693,7 @@ const beat = (async () => {
 		try {
 			await heartbeat();
 		} catch (e) {
-			log(`heartbeat failed: ${e instanceof Error ? e.message : e}`);
+			log(`heartbeat failed: ${errorText(e)}`);
 		}
 	}
 })();
@@ -825,7 +826,7 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 	} catch (e) {
 		// BlueprintDecodeError carries its message in `reason`.
 		const reason = (e as { reason?: unknown })?.reason;
-		const why = typeof reason === 'string' ? reason : e instanceof Error ? e.message : String(e);
+		const why = typeof reason === 'string' ? reason : errorText(e);
 		// Not a failure to retry: the string will never decode (mostly the pre-0.15 format), so it can't render.
 		await rowWrites([{ ...failedRow(id, record.title, 'undecodable', `undecodable: ${why}`, t, existing.get('')), status: 'skipped' }]);
 		tally.page(id, 'skipped');
@@ -1203,7 +1204,7 @@ async function renderAll() {
 		const [w] = todo.splice(Math.max(0, pick), 1);
 		if (!w) continue;
 		const prep = await pageJson(w).catch((e: unknown) => {
-			log(`  ${w.id} ${pageBase(w.path)}: could not read the page again: ${e instanceof Error ? e.message : e}`);
+			log(`  ${w.id} ${pageBase(w.path)}: could not read the page again: ${errorText(e)}`);
 			return null;
 		});
 		if (prep === null || inputKey(prep.json, assets) !== w.key) {
@@ -1239,7 +1240,7 @@ async function renderAll() {
 		const p: Promise<void> = pool
 			.run(slot, job, timeoutMs(w.entities, w.attempts))
 			.then((o) => complete(w, o))
-			.catch((e: unknown) => log(`  ${w.id} ${pageBase(w.path)}: bookkeeping failed: ${e instanceof Error ? e.message : e}`))
+			.catch((e: unknown) => log(`  ${w.id} ${pageBase(w.path)}: bookkeeping failed: ${errorText(e)}`))
 			.finally(() => {
 				inFlight--;
 				progress.ended(w);
@@ -1381,7 +1382,7 @@ try {
 	// (`removal_blocks`, copied from the stage by `bun run removals`). Their renders stay as they are here
 	// until that command sweeps them.
 	const removed = await loadRemovedPrintIds(proxy.env.DB).catch((e: unknown) => {
-		throw new Error(`can't read removal_blocks (run \`bun run db:migrate\`): ${e instanceof Error ? e.message : String(e)}`);
+		throw new Error(`can't read removal_blocks (run \`bun run db:migrate\`): ${errorText(e)}`);
 	});
 	const selected = withTopFirst(topPicked, wanted ?? (await source.ids()));
 	const ids = selected.filter((id) => !removed.has(id));
@@ -1462,7 +1463,7 @@ try {
 	endState = 'failed';
 	// Still live (the drain and the flags step come), but not 'running'.
 	run.state = 'stopping';
-	run.error = e instanceof Error ? e.message : String(e);
+	run.error = errorText(e);
 	console.error(run.error);
 	exitCode = 1;
 	// Pages in flight go back to pending; uploads in flight go up next time.
@@ -1571,9 +1572,9 @@ async function flagsStep(): Promise<boolean> {
 		flagsStage = { state: 'done', stage: args.upload!, rowsWritten: done.rowsWritten, bumped: done.bumped };
 		return true;
 	} catch (e) {
-		flagsStage = { state: 'failed', stage: args.upload!, error: e instanceof Error ? e.message : String(e) };
+		flagsStage = { state: 'failed', stage: args.upload!, error: errorText(e) };
 		log(
-			`flags: failed: ${e instanceof Error ? e.message : String(e)}\n` +
+			`flags: failed: ${errorText(e)}\n` +
 				`  the renders and uploads stand; run by hand: bun run render:flags --stage ${args.upload}${bump ? ' --bump' : ''}`
 		);
 		return false;

@@ -144,6 +144,7 @@ import {
 	type ScriptResult,
 	type StepDef
 } from './sync/runner';
+import { errorText } from '#lib/error-text.js';
 
 const USAGE =
 	'usage: bun run sync [--stage prod|local] [--yes] | --plan [--json] | --accept <commit|site|site:id> | --figures [--stage S] [--json] | --top-preview N';
@@ -165,7 +166,7 @@ const { values: flags } = (() => {
 			strict: true
 		});
 	} catch (e) {
-		return fail(`${e instanceof Error ? e.message : e}\n${USAGE}`);
+		return fail(`${errorText(e)}\n${USAGE}`);
 	}
 })();
 if (flags.help) {
@@ -228,7 +229,7 @@ const saveStorePrints = async () => {
 		await writeMeta(db, 'store-prints', prints);
 		return { ...prints, decoded };
 	} catch (e) {
-		console.error(`store prints: ${e instanceof Error ? e.message : String(e)}`);
+		console.error(`store prints: ${errorText(e)}`);
 		return null;
 	}
 };
@@ -275,7 +276,7 @@ const planAll = async (signal?: AbortSignal) => {
 		try {
 			sources.push(await s.plan({ maxChange: settings.maxChange, accept: accepted[s.site], signal }));
 		} catch (e) {
-			const error = e instanceof Error ? e.message : String(e);
+			const error = errorText(e);
 			console.error(`✗ ${s.site}: ${error}`);
 			sources.push(failedPlan(s, error));
 		}
@@ -362,9 +363,7 @@ const assetsDir =
 		: fail('no sprite assets: set FPSR_ASSETS_DIR (a folder with manifest.json)');
 if (stage === 'prod' && !(process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY))
 	fail('uploading renders to prod needs R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY (docs/deploy.md, "Uploading renders")');
-await confirmProd(stage, flags.yes, 'Update PROD from the print sources?').catch((e: unknown) =>
-	fail(`✗ ${e instanceof Error ? e.message : e}`)
-);
+await confirmProd(stage, flags.yes, 'Update PROD from the print sources?').catch((e: unknown) => fail(`✗ ${errorText(e)}`));
 
 const logDir = join(rendersDir(ROOT), 'logs');
 const started = new Date();
@@ -546,7 +545,7 @@ const steps: StepDef[] = [
 				try {
 					plans.push(await source.plan({ maxChange: settings.maxChange, accept: accepted[source.site], signal }));
 				} catch (e) {
-					const error = e instanceof Error ? e.message : String(e);
+					const error = errorText(e);
 					errors.push(`${source.site}: ${error}`);
 					// Kept in the saved plan with its error, so the Overview never calls it up to date.
 					plans.push(failedPlan(source, error));

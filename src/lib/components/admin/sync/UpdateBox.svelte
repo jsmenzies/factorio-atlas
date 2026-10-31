@@ -6,6 +6,7 @@
 	import { PIPELINE_DEP } from '../live.svelte.js';
 	import { ago, bytes, clock, duration, int } from '../metrics.js';
 	import { PLAN_FRESH_MS, previewCost, unchecked, uncheckedText, updateState, upToDateLine } from './view.js';
+	import { errorText } from '#lib/error-text.js';
 
 	/**
 	 * The Update tab's head: one calm sentence for what is happening now (or what an update would do), Check
@@ -67,7 +68,7 @@
 			await post('plan');
 			await invalidate(PIPELINE_DEP);
 		} catch (e) {
-			const why = e instanceof Error ? e.message : String(e);
+			const why = errorText(e);
 			// `sync --plan` refuses while an update runs: its own fetch step checks the sources. Not an error.
 			if (/an update is running/.test(why)) {
 				note = 'Sources are checked by the running update.';
@@ -88,7 +89,7 @@
 			starting = { since: Date.now(), prev };
 			await invalidate(PIPELINE_DEP);
 		} catch (e) {
-			error = `The update didn't start: ${e instanceof Error ? e.message : e}`;
+			error = `The update didn't start: ${errorText(e)}`;
 		} finally {
 			busy = null;
 		}

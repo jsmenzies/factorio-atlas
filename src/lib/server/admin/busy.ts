@@ -7,6 +7,7 @@
  * drop ("fetch failed", from miniflare's undici). The admin pages retry those, and only those, and
  * read in as few calls as they can (one `db.batch` per load), since each call can meet the lock.
  */
+import { errorText } from '#lib/error-text.js';
 
 const BUSY = /SQLITE_BUSY|database is locked|session commit token|^TypeError: fetch failed$|^fetch failed$/i;
 
@@ -37,7 +38,7 @@ export async function orBusy<T>(f: () => Promise<T>, attempts?: number): Promise
 		return await retryBusy(f, attempts);
 	} catch (e) {
 		if (isBusy(e)) {
-			console.warn(`admin: the local database stayed busy: ${e instanceof Error ? e.message : e}`);
+			console.warn(`admin: the local database stayed busy: ${errorText(e)}`);
 			return BUSY_RESULT;
 		}
 		throw e;

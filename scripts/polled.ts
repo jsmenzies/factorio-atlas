@@ -51,6 +51,7 @@ import { openStageGate } from './sync/gate-env';
 import { otherLiveUpdate } from './sync/local-db';
 import { admissionWork, inboxDir, readLedger, readState, retriedAs, writeLedger, writeState } from './sync/polled';
 import { progress } from './sync/progress';
+import { errorText } from '#lib/error-text.js';
 
 const USAGE = 'usage: bun run polled --stage local|prod --site <site> [--dir DIR] [--dry-run] [--force] [--yes] [--json]';
 
@@ -145,7 +146,7 @@ const inbox = inboxDir(storeDir);
 
 onSignals();
 const target = await openStageGate(stage, generation).catch((e: unknown) => {
-	console.error(`✗ ${e instanceof Error ? e.message : String(e)}`);
+	console.error(`✗ ${errorText(e)}`);
 	process.exit(2);
 });
 onSignals();

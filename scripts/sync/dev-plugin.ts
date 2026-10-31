@@ -25,6 +25,7 @@ import { rendersDir } from '#lib/server/renders-dir.js';
 import { findBun, json, jsonBody, runToEnd } from '../render/dev-plugin.js';
 import { foldProgress, progressFileOf } from '#lib/sync-progress.js';
 import { lastJsonLine } from './output.js';
+import { errorText } from '#lib/error-text.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const LOG_NAME = /^sync-[0-9TZ-]+\.log$/;
@@ -144,7 +145,7 @@ export function syncControl(): Plugin {
 					}
 					return json(res, 404, { error: 'not found' });
 				} catch (e) {
-					return json(res, 500, { error: e instanceof Error ? e.message : String(e) });
+					return json(res, 500, { error: errorText(e) });
 				}
 			});
 		}

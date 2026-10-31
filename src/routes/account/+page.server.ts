@@ -10,6 +10,7 @@ import { accountProviders, NAME_MAX, NAME_RULE, renameAccount } from '#lib/serve
 import { workerGate } from '#lib/server/uploads/gate.js';
 import { deleteAccountStep, listUploads, refreshUploadNames, RENAME_BUDGET_MS } from '#lib/server/uploads/uploads.js';
 import type { Actions, PageServerLoad } from './$types';
+import { errorText } from '#lib/error-text.js';
 
 /** The signed-in account, or off to sign in and back here. */
 const required = async (locals: App.Locals) => {
@@ -45,9 +46,7 @@ export const actions: Actions = {
 		if (!result.ok) return fail(400, { problem: result.problem, name });
 		// The new name on the account's uploads; what doesn't fit in this request, the next update does.
 		const names = await refreshUploadNames({ db: env.DB, raw: env.RAW }, account.id, { budgetMs: RENAME_BUDGET_MS }).catch((e) => {
-			console.warn(
-				`account: putting the new name on ${account.id}'s uploads failed, left to the sync: ${e instanceof Error ? e.message : e}`
-			);
+			console.warn(`account: putting the new name on ${account.id}'s uploads failed, left to the sync: ${errorText(e)}`);
 			return { done: 0, left: 1 };
 		});
 		return { renamed: result.name, namesLeft: names.left };

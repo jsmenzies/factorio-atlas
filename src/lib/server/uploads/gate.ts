@@ -19,6 +19,7 @@ import { PrintSource } from '../pipeline/source.js';
 import { fromFactorioprints, fromPipelineText, rawKeyFor, type SourceRecord } from '../pipeline/source-record.js';
 import { purgePrintData, type TakedownEnv, type TakedownResult } from '../takedown.js';
 import { OFFLINE_MAX_INFLATED_BYTES } from '../pipeline/decode.js';
+import { errorText } from '#lib/error-text.js';
 
 export type { SourceRecord, Suggestion };
 
@@ -70,8 +71,6 @@ export interface UploadGate {
 	imageBlocked(imageId: string): Promise<boolean>;
 }
 
-const reasonOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
 /** What admitting an upload needs: the stage's D1 and RAW (the Worker's env, or a Bun script's stage bindings). */
 export interface AdmitBindings {
 	readonly DB: D1Database;
@@ -95,8 +94,8 @@ export const admitUpload = async (
 		r = await admitRecord(b.DB, record, limits ? { limits } : {});
 	} catch (e) {
 		// Storage, not the record: the caller keeps it 'processing' for the sync, as a failed ingest.
-		console.warn(`uploads: ${printId} deferred to the sync, admitting failed: ${reasonOf(e)}`);
-		return { status: 'deferred', reason: reasonOf(e) };
+		console.warn(`uploads: ${printId} deferred to the sync, admitting failed: ${errorText(e)}`);
+		return { status: 'deferred', reason: errorText(e) };
 	}
 	switch (r.status) {
 		case 'too-big':
@@ -124,8 +123,8 @@ const ingest = async (b: AdmitBindings, record: SourceRecord, admission: Admissi
 			Effect.provide(ingestRecord(record, admission, { extra: () => extra }), Layer.mergeAll(RawStoreR2(b.RAW), PrintRepositoryD1(b.DB)))
 		);
 	} catch (e) {
-		console.warn(`uploads: ${admission.printId} deferred to the sync: ${reasonOf(e)}`);
-		return { status: 'deferred', reason: reasonOf(e) };
+		console.warn(`uploads: ${admission.printId} deferred to the sync: ${errorText(e)}`);
+		return { status: 'deferred', reason: errorText(e) };
 	}
 	switch (outcome.status) {
 		case 'analysed':
@@ -227,7 +226,7 @@ export const workerGate = (env: GateEnv, o: { offline?: boolean } = {}): UploadG
 				// `polled` (identity-db.ts lostSources). A factoriobin post comes back when it is added again.
 				reingest: (printId, winner) =>
 					reingest(printId, winner).catch(async (e) => {
-						console.warn(`${site}: ${printId} hand-over to ${winner.site}:${winner.site_id} failed, purged instead: ${reasonOf(e)}`);
+						console.warn(`${site}: ${printId} hand-over to ${winner.site}:${winner.site_id} failed, purged instead: ${errorText(e)}`);
 						await purge(printId);
 						await run(syncFold(printId));
 						// The backfill admits that source again, but the sync skips it while nothing else changed.

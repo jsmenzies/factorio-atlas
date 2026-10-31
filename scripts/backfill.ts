@@ -48,6 +48,7 @@ import { ComputePool, ComputeTimeout } from './backfill/pool';
 import { cloneSource, githubSource, type RecordSource, type SourceEntry } from './backfill/records';
 import { openTarget, STAGES, TargetError, type Stage, type Target } from './backfill/stage';
 import { Terminal, type Key } from './backfill/terminal';
+import { errorText } from '#lib/error-text.js';
 
 const USAGE = `usage: bun run backfill --stage local|prod [options]
        bun run backfill:status --stage local|prod [--runs N]
@@ -110,7 +111,7 @@ const { values: flags } = (() => {
 		});
 	} catch (e) {
 		// An unknown flag, or a flag without its value.
-		return fail(`${e instanceof Error ? e.message : String(e)}\n\n${USAGE}`);
+		return fail(`${errorText(e)}\n\n${USAGE}`);
 	}
 })();
 if (flags.help) {
@@ -138,7 +139,7 @@ const now = () => Date.now();
 // backfill:status
 
 if (flags.status) {
-	const target = await openTarget(stage, { generation }).catch((e: unknown) => fail(e instanceof Error ? e.message : String(e)));
+	const target = await openTarget(stage, { generation }).catch((e: unknown) => fail(errorText(e)));
 	try {
 		const runs = await latestRuns(target.env.DB, whole('runs', flags.runs, 1));
 		if (runs.length === 0) console.log(`no pipeline runs in ${target.database}`);
@@ -205,7 +206,7 @@ const listing = await (async () => {
 	return { records, targets };
 })().catch(async (e: unknown) => {
 	await target.dispose();
-	return fail(`✗ ${e instanceof Error ? e.message : String(e)}`);
+	return fail(`✗ ${errorText(e)}`);
 });
 const { records } = listing;
 const { entries, label: source } = records;
@@ -368,7 +369,7 @@ const beat = () =>
 						counters.overheadRows++;
 					}
 				} catch (e) {
-					term.log(`! heartbeat failed: ${e instanceof Error ? e.message : String(e)}`);
+					term.log(`! heartbeat failed: ${errorText(e)}`);
 				} finally {
 					beating = null;
 				}
@@ -429,7 +430,7 @@ const message = (e: unknown): string => {
 		const tagged = e as { _tag: string; op?: string; cause?: unknown };
 		return `${tagged._tag}${tagged.op ? ` ${tagged.op}` : ''}: ${message(tagged.cause)}`;
 	}
-	return e instanceof Error ? e.message : String(e);
+	return errorText(e);
 };
 
 const processOne = async (entry: SourceEntry) => {

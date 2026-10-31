@@ -6,6 +6,7 @@
 	import { formatCount as count, formatDate } from '#lib/format.js';
 	import { plainText } from '#lib/richtext.js';
 	import type { PageProps } from './$types';
+	import { errorText } from '#lib/error-text.js';
 
 	// Add one print by its link on another site (factoriobin.com). Deployed: the form actions, in the Worker
 	// (+page.server.ts). Under `vite dev`: `bun run add` through the dev plugin (scripts/add/dev-plugin.ts).
@@ -44,7 +45,7 @@
 			if (!res.ok || !out.view) throw new Error(out.error ?? `HTTP ${res.status}`);
 			devView = out.view;
 		} catch (e) {
-			devProblem = e instanceof Error ? e.message : String(e);
+			devProblem = errorText(e);
 		} finally {
 			busy = null;
 		}

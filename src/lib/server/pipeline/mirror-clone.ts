@@ -11,6 +11,7 @@ import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { FACTORIOPRINTS_ID_PATTERN } from '#lib/print-id.js';
 import { mirrorPath } from './source.js';
+import { errorText } from '#lib/error-text.js';
 
 export interface CloneEntry {
 	readonly id: string;
@@ -35,7 +36,7 @@ export const listClone = async (dir: string): Promise<CloneEntry[]> => {
 	try {
 		top = await readdir(dir, { withFileTypes: true });
 	} catch (e) {
-		throw new CloneError(`can't read the mirror clone at ${dir}: ${e instanceof Error ? e.message : String(e)}`);
+		throw new CloneError(`can't read the mirror clone at ${dir}: ${errorText(e)}`);
 	}
 	const shards = top.filter((d) => d.isDirectory() && !d.name.startsWith('.')).map((d) => d.name);
 	const perShard = await Promise.all(

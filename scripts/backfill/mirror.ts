@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { FACTORIOPRINTS_ID_PATTERN } from '#lib/print-id.js';
 import { mirrorPath } from '#lib/server/pipeline/source.js';
+import { errorText } from '#lib/error-text.js';
 
 export const MIRROR_REPO = 'motlin/factorio-blueprint-firebase-cdn';
 const UA = 'factorio-atlas backfill';
@@ -51,7 +52,7 @@ const api = async (path: string, token: string | null, accept = 'application/vnd
 			headers: { accept, 'user-agent': UA, ...(token ? { authorization: `Bearer ${token}` } : {}) }
 		});
 	} catch (e) {
-		if (attempt >= 4) throw new MirrorError(`GitHub API ${path}: ${e instanceof Error ? e.message : String(e)}`);
+		if (attempt >= 4) throw new MirrorError(`GitHub API ${path}: ${errorText(e)}`);
 		await sleep(backoff(attempt));
 		return api(path, token, accept, attempt + 1);
 	}
@@ -146,7 +147,7 @@ export class MirrorFetcher {
 				});
 			} catch (e) {
 				signal?.throwIfAborted();
-				last = `network: ${e instanceof Error ? e.message : String(e)}`;
+				last = `network: ${errorText(e)}`;
 				await sleep(backoff(attempt));
 				continue;
 			}

@@ -19,6 +19,7 @@ import sharp from 'sharp';
 import { THUMB } from '#lib/viewer/thumbs.js';
 import type { ThumbUploader } from './thumbs-upload.js';
 import { finishPrint, hasThumbs, makePage, planPrint } from './thumbs.js';
+import { errorText } from '#lib/error-text.js';
 
 /** Memory one print's thumbnails may take in the runner (a decoded overview and sharp's buffers), counted against --mem-budget-mb. */
 export const THUMB_STEP_MB = 200;
@@ -135,7 +136,7 @@ export function createThumbStep(opts: ThumbStepOptions) {
 					stats.bytes += Object.values(r.bytes).reduce((a, b) => a + b, 0);
 				} catch (e) {
 					stats.failed++;
-					opts.log(`  thumbnails ${id} ${job.path || 'root'}: ${e instanceof Error ? e.message : String(e)}`);
+					opts.log(`  thumbnails ${id} ${job.path || 'root'}: ${errorText(e)}`);
 				}
 			}
 			if (opts.stopped()) {
@@ -169,7 +170,7 @@ export function createThumbStep(opts: ThumbStepOptions) {
 			working.add(id);
 			active++;
 			work(id)
-				.catch((e: unknown) => opts.log(`  thumbnails ${id}: ${e instanceof Error ? e.message : String(e)}`))
+				.catch((e: unknown) => opts.log(`  thumbnails ${id}: ${errorText(e)}`))
 				.finally(() => {
 					active--;
 					working.delete(id);

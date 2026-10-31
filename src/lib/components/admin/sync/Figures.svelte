@@ -6,6 +6,7 @@
 	import { PIPELINE_DEP } from '../live.svelte.js';
 	import { ago, int } from '../metrics.js';
 	import { BUCKET_TEXT, NO_NAMES, NOT_APPLICABLE, r2Panel, siteTable, size, type SiteRow } from './site-figures.js';
+	import { errorText } from '#lib/error-text.js';
 
 	/**
 	 * The Overview's "What the site has": headline cards, then one row per source (the site each print is credited
@@ -32,7 +33,7 @@
 			if (!res.ok || !out.ok) throw new Error(out.error ?? `HTTP ${res.status}`);
 			await invalidate(PIPELINE_DEP);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorText(e);
 		} finally {
 			refreshing = false;
 		}

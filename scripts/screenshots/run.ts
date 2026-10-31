@@ -14,6 +14,7 @@ import { openShotStore } from './store.js';
 import { syncImage } from './upload.js';
 import { megabytes as mb } from '#lib/format.js';
 import { isUploadImage } from '#lib/screenshots.js';
+import { errorText } from '#lib/error-text.js';
 
 const secs = (ms: number) => `${Math.round(ms / 1000)}s`;
 
@@ -57,7 +58,7 @@ export async function runMake(dir: string, entries: Map<string, StateEntry>, arg
 				const { made } = await ensureMade(dir, e);
 				bytes += Object.values(made.bytes).reduce((a, b) => a + b, 0);
 			} catch (err) {
-				failed.push(`${e.id}: ${err instanceof Error ? err.message : String(err)}`);
+				failed.push(`${e.id}: ${errorText(err)}`);
 			}
 			done++;
 		},
@@ -111,7 +112,7 @@ export async function runUpload(dir: string, entries: Map<string, StateEntry>, a
 	try {
 		opened = await openShotStore(target);
 	} catch (e) {
-		console.error(`screenshots: ${e instanceof Error ? e.message : String(e)}`);
+		console.error(`screenshots: ${errorText(e)}`);
 		return 2;
 	}
 	const started = Date.now();
@@ -159,7 +160,7 @@ export async function runUpload(dir: string, entries: Map<string, StateEntry>, a
 					}
 				}
 			} catch (err) {
-				const msg = err instanceof Error ? err.message : String(err);
+				const msg = errorText(err);
 				failed.push(`${e.id}: ${msg}`);
 				if (upload) uploads.failed++;
 				// The store refusing us (401/403) won't get better for the next image.

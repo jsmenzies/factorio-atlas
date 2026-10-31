@@ -27,6 +27,7 @@ import { factoriobinStoreAdapter } from './records/factoriobin';
 import { uploadsStoreAdapter } from './records/uploads';
 import { polledStoreAdapter } from './records/polled';
 import { POLLED_SITES } from '#lib/sync.js';
+import { errorText } from '#lib/error-text.js';
 
 const USAGE = 'usage: bun run records --stage local|prod [--dir DIR] [--dry-run] [--json]';
 
@@ -102,7 +103,7 @@ try {
 	} else report(true, `✓ ${line}`);
 } catch (e) {
 	code = 2;
-	report(false, `✗ ${e instanceof Error ? e.message : String(e)}`);
+	report(false, `✗ ${errorText(e)}`);
 } finally {
 	await target.dispose();
 }

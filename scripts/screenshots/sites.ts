@@ -32,6 +32,7 @@ import { EXT, imageSize, md5, sniff } from './image.js';
 import { imageUrlOf, MAX_IMAGE_BYTES } from './site-images.js';
 import { formatEntry, originalPath, type StateEntry } from './state.js';
 import { progress } from '../sync/progress.js';
+import { errorText } from '#lib/error-text.js';
 
 /** One GET, body included: an image at MAX_IMAGE_BYTES needs ≈ 0.9 MB/s (codex's 97 MB one took 7 s here). */
 const FETCH_TIMEOUT_MS = 120_000;
@@ -155,7 +156,7 @@ export function imageFetcher(
 					signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
 				});
 			} catch (e) {
-				if (attempt >= (o.tries ?? 3)) return { status: 0, reason: e instanceof Error ? e.message : String(e) };
+				if (attempt >= (o.tries ?? 3)) return { status: 0, reason: errorText(e) };
 				await sleep(5000 * attempt);
 				continue;
 			}
@@ -226,7 +227,7 @@ export async function runFromSites(dir: string, stateFile: string, entries: Map<
 	try {
 		target = await openTarget(stage, { log: (line) => console.log(line) });
 	} catch (e) {
-		console.error(`screenshots: ${e instanceof Error ? e.message : String(e)}`);
+		console.error(`screenshots: ${errorText(e)}`);
 		return 2;
 	}
 	try {
@@ -300,7 +301,7 @@ export async function runFromSites(dir: string, stateFile: string, entries: Map<
 						}
 					}
 				} catch (e) {
-					entry = settle('failed', e instanceof Error ? e.message : String(e));
+					entry = settle('failed', errorText(e));
 				}
 				appendFileSync(stateFile, formatEntry(entry));
 				const site = siteCounts(plan.bySite, s.id);
@@ -345,7 +346,7 @@ export async function runFromSites(dir: string, stateFile: string, entries: Map<
 			);
 		return failed.length ? 1 : 0;
 	} catch (e) {
-		console.error(`screenshots: ${e instanceof Error ? e.message : String(e)}`);
+		console.error(`screenshots: ${errorText(e)}`);
 		return 2;
 	} finally {
 		await target.dispose();

@@ -7,6 +7,7 @@ import { Database } from 'bun:sqlite';
 import { d1FromSqlite } from '#lib/server/pipeline/d1-sqlite.js';
 import { LIVE_SYNC_WHERE, liveSyncParams, SYNC_RUN_ENV } from '#lib/server/sync.js';
 import { localD1File } from '../local-d1';
+import { errorText } from '#lib/error-text.js';
 
 const BUSY_TIMEOUT_MS = 10_000;
 
@@ -43,7 +44,7 @@ export const liveUpdateBesides = (sqlite: Database, own: string | null, now = Da
 		} | null;
 		return row?.id ?? null;
 	} catch (e) {
-		if (/no such table/.test(e instanceof Error ? e.message : String(e))) return null;
+		if (/no such table/.test(errorText(e))) return null;
 		throw e;
 	}
 };

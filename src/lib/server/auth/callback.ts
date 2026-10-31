@@ -13,6 +13,7 @@ import { exchangeCode } from './oauth.js';
 import { isProvider, providerClient, SPECS, type Profile, type ProviderVars } from './providers.js';
 import { createSession } from './sessions.js';
 import { signInAccount } from './users.js';
+import { errorText } from '#lib/error-text.js';
 
 export interface CallbackDeps {
 	db: D1Database;
@@ -40,7 +41,7 @@ export const finishSignIn = async (provider: string, url: URL, deps: CallbackDep
 	try {
 		profile = await SPECS[provider].profile(await exchangeCode(flow, code, client, url.origin, fetcher), fetcher);
 	} catch (e) {
-		console.warn(`auth: ${provider} sign-in failed: ${e instanceof Error ? e.message : String(e)}`);
+		console.warn(`auth: ${provider} sign-in failed: ${errorText(e)}`);
 		return back('provider');
 	}
 	const result = await signInAccount(db, provider, profile, now);

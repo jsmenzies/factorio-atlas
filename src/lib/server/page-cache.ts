@@ -14,6 +14,7 @@
  * purge, except for the JSON endpoints in BROWSER_KEEPS; `x-page-cache` says hit or miss. A cached page keeps the CSP header (and nonce) it was
  * made with, which still matches its HTML.
  */
+import { errorText } from '#lib/error-text.js';
 
 /** Cached routes and how long a location keeps an entry (seconds). A purge needs no wait either way. */
 export const CACHED_ROUTES: Record<string, number> = {
@@ -122,14 +123,14 @@ export async function cachedPage(
 		const hit = await deps.cache.match(key);
 		if (hit) return forClient(hit, 'hit', keepFor);
 	} catch (e) {
-		console.warn(`page cache: lookup failed, rendering: ${e instanceof Error ? e.message : String(e)}`);
+		console.warn(`page cache: lookup failed, rendering: ${errorText(e)}`);
 		return render();
 	}
 	const res = await render();
 	if (!storable(res, isDataRequest(request.url))) return res;
 	deps.waitUntil(
 		deps.cache.put(key, forCache(res.clone(), ttl)).catch((e: unknown) => {
-			console.warn(`page cache: store failed: ${e instanceof Error ? e.message : String(e)}`);
+			console.warn(`page cache: store failed: ${errorText(e)}`);
 		})
 	);
 	return forClient(res, 'miss', keepFor);

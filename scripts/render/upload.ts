@@ -63,6 +63,7 @@ import { buildIndex, comparePaths, readSidecar } from './files.js';
 import type { RenderJobRow } from '#lib/server/render-queue.js';
 import { mebibytes as mb } from '#lib/format.js';
 import { isAbort, StoreError, withRetries, type RenderStore, type RetryOptions } from './store.js';
+import { errorText } from '#lib/error-text.js';
 
 export const UPLOAD_TARGETS = ['local', 'prod'] as const;
 
@@ -254,7 +255,6 @@ const LISTING_CACHE = 64;
 const ROW_WRITES = 8;
 /** Due deletions read per query. */
 const DUE_BATCH = 1000;
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Run `n` workers to the end, every one of them, even after one throws (none is left writing after the caller moved on); then throw the first error. */
 async function allWorkers(n: number, worker: () => Promise<void>) {
@@ -374,7 +374,7 @@ export function createUploader(opts: UploaderOptions) {
 			}
 		}).catch((e: unknown) => {
 			// At once, not when the page's other files are done: no other page starts another request.
-			if (e instanceof StoreError && e.fatal) breakOff(`${what}: ${message(e)}`, e);
+			if (e instanceof StoreError && e.fatal) breakOff(`${what}: ${errorText(e)}`, e);
 			throw e;
 		});
 
@@ -726,7 +726,7 @@ export function createUploader(opts: UploaderOptions) {
 			failures++;
 			failingPages.add(`${id}\n${job.path}`);
 			failed(id, job.path, e);
-			await db.recordFailure(target, id, job.path, message(e), now()).catch(() => undefined);
+			await db.recordFailure(target, id, job.path, errorText(e), now()).catch(() => undefined);
 		};
 		/** Pages whose files are up and that the remote index doesn't list yet. */
 		const waiting: PageUp[] = [];
@@ -907,8 +907,8 @@ export function createUploader(opts: UploaderOptions) {
 			}
 		} catch (e) {
 			if (!isAbort(e)) {
-				stats.lastError = `deletions: ${message(e)}`;
-				log(`  upload: deletions: ${message(e)}; the next run tries again`);
+				stats.lastError = `deletions: ${errorText(e)}`;
+				log(`  upload: deletions: ${errorText(e)}; the next run tries again`);
 			}
 		}
 		try {
@@ -932,7 +932,7 @@ export function createUploader(opts: UploaderOptions) {
 	/** The store refuses us (401, 403): no more requests this run. */
 	function breakOff(msg: string, e: unknown) {
 		if (broken) return;
-		broken = message(e);
+		broken = errorText(e);
 		stats.lastError = msg;
 		settleAll();
 		log(`upload: ${msg}\nupload: stopping uploads for this run; rendering goes on, and the next run uploads what's left`);
@@ -940,7 +940,7 @@ export function createUploader(opts: UploaderOptions) {
 	}
 
 	function failed(id: string, path: string | null, e: unknown) {
-		const msg = `${id}${path === null ? '' : ` ${pageBase(path)}`}: ${message(e)}`;
+		const msg = `${id}${path === null ? '' : ` ${pageBase(path)}`}: ${errorText(e)}`;
 		if (e instanceof StoreError && e.fatal && !broken) breakOff(msg, e);
 		else {
 			stats.lastError = msg;

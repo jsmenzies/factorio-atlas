@@ -26,6 +26,7 @@
  */
 import { runStageFlags } from './render/stage-flags';
 import { confirmProd, fail, parseStageArgs } from './stage-command';
+import { errorText } from '#lib/error-text.js';
 
 const USAGE = 'usage: bun run render:flags --stage local|prod [--db N] [--dry-run] [--yes] [--bump]';
 
@@ -41,5 +42,5 @@ try {
 	});
 	process.exit(0);
 } catch (e) {
-	fail(`✗ ${e instanceof Error ? e.message : String(e)}`);
+	fail(`✗ ${errorText(e)}`);
 }

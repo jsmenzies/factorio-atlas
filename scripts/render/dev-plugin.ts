@@ -37,6 +37,7 @@ import { rendersDir } from '#lib/server/renders-dir.js';
 import { LIVE_SYNC_WHERE, liveSyncParams } from '#lib/server/sync.js';
 import { localD1File } from '../local-d1.js';
 import { defaultAssets } from './assets-dir.js';
+import { errorText } from '#lib/error-text.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 /** The run logs, in the renders folder (RENDERS_DIR from .env or the environment; set in configResolved). */
@@ -152,7 +153,7 @@ export async function jsonBody(req: IncomingMessage, res: ServerResponse): Promi
 	try {
 		return { body: JSON.parse(await readBody(req)) as unknown };
 	} catch (e) {
-		json(res, 400, { error: `bad JSON: ${e instanceof Error ? e.message : e}` });
+		json(res, 400, { error: `bad JSON: ${errorText(e)}` });
 		return null;
 	}
 }
@@ -206,7 +207,7 @@ async function liveRun(): Promise<LiveRun | null | 'busy'> {
 		}
 		return null;
 	} catch (e) {
-		if (LOCKED.test(e instanceof Error ? e.message : String(e))) return 'busy';
+		if (LOCKED.test(errorText(e))) return 'busy';
 		// No render tables yet (migrations not applied).
 		return null;
 	} finally {
@@ -234,7 +235,7 @@ async function liveSync(): Promise<{ id: string } | null | 'busy'> {
 		}
 	} catch (e) {
 		// Busy, or no sync tables yet (migration 0020 not applied).
-		return LOCKED.test(e instanceof Error ? e.message : String(e)) ? 'busy' : null;
+		return LOCKED.test(errorText(e)) ? 'busy' : null;
 	}
 }
 
@@ -422,7 +423,7 @@ export function renderControl(): Plugin {
 					}
 					return json(res, 404, { error: 'not found' });
 				} catch (e) {
-					return json(res, 500, { error: e instanceof Error ? e.message : String(e) });
+					return json(res, 500, { error: errorText(e) });
 				}
 			});
 		}

@@ -19,6 +19,7 @@ import { clearOldReportText } from '#lib/server/reports.js';
 import { finishAbandonedDeletions } from '#lib/server/uploads/abandoned.js';
 import { workerGate, type GateEnv } from '#lib/server/uploads/gate.js';
 import { fetchViews, syncViews } from '#lib/server/views.js';
+import { errorText } from '#lib/error-text.js';
 
 export interface ViewsCronEnv extends GateEnv {
 	/** API token with Account Analytics: Read (a secret). */
@@ -28,8 +29,6 @@ export interface ViewsCronEnv extends GateEnv {
 	VIEWS_DATASET: string;
 }
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
 /** Runs the daily jobs (exported for tests); throws once all have run if any failed. */
 export const dailyJobs = async (env: ViewsCronEnv) => {
 	const failed: string[] = [];
@@ -38,7 +37,7 @@ export const dailyJobs = async (env: ViewsCronEnv) => {
 			await run();
 		} catch (e) {
 			failed.push(name);
-			console.error(`${name}: failed: ${message(e)}`);
+			console.error(`${name}: failed: ${errorText(e)}`);
 		}
 	};
 	await job('reports', async () => {

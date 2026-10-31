@@ -10,6 +10,7 @@
  */
 import { env } from 'cloudflare:workers';
 import { isImgurId, isOwnImage, manifestKey, parseManifest, shotView, type ShotManifest, type ShotView } from '#lib/screenshots.js';
+import { errorText } from '#lib/error-text.js';
 
 /** URL prefix of the screenshot files: the bucket's custom domain, or this site's `/screenshots` route. */
 export const screenshotsBase = (): string => {
@@ -40,7 +41,7 @@ export async function getShotManifest(imageId: string | null): Promise<ShotManif
 		const file = await getShotFile(manifestKey(imageId));
 		return file ? parseManifest(await new Response(file.body).json()) : null;
 	} catch (e) {
-		console.warn(`screenshot manifest ${imageId}: ${e instanceof Error ? e.message : String(e)}`);
+		console.warn(`screenshot manifest ${imageId}: ${errorText(e)}`);
 		return null;
 	}
 }

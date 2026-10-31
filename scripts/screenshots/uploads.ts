@@ -20,6 +20,7 @@ import { openTarget } from '../backfill/stage.js';
 import type { ShotArgs } from './args.js';
 import { EXT, imageSize, md5, sniff } from './image.js';
 import { formatEntry, originalPath, type StateEntry } from './state.js';
+import { errorText } from '#lib/error-text.js';
 
 /** An approved upload image, as the stage's D1 has it. */
 export interface ApprovedImage {
@@ -95,7 +96,7 @@ export async function runFromUploads(dir: string, stateFile: string, entries: Ma
 	try {
 		target = await openTarget(stage, { log: (line) => console.log(line) });
 	} catch (e) {
-		console.error(`screenshots: ${e instanceof Error ? e.message : String(e)}`);
+		console.error(`screenshots: ${errorText(e)}`);
 		return 2;
 	}
 	try {
@@ -105,7 +106,7 @@ export async function runFromUploads(dir: string, stateFile: string, entries: Ma
 		)
 			.all<{ id: string; ext: ImageExt; sha256: string; prints: string }>()
 			.catch((e: unknown) => {
-				throw new Error(`the ${stage} D1 database has no upload_images table (migration 0024): ${e instanceof Error ? e.message : e}`);
+				throw new Error(`the ${stage} D1 database has no upload_images table (migration 0024): ${errorText(e)}`);
 			});
 		let approved: ApprovedImage[] = results.map((r) => ({
 			id: r.id,
@@ -156,7 +157,7 @@ export async function runFromUploads(dir: string, stateFile: string, entries: Ma
 						}
 					}
 				} catch (e) {
-					entry = failure(e instanceof Error ? e.message : String(e));
+					entry = failure(errorText(e));
 				}
 				appendFileSync(stateFile, formatEntry(entry));
 				if (entry.status === 'fetched') fetched++;
@@ -180,7 +181,7 @@ export async function runFromUploads(dir: string, stateFile: string, entries: Ma
 			);
 		return failed.length ? 1 : 0;
 	} catch (e) {
-		console.error(`screenshots: ${e instanceof Error ? e.message : String(e)}`);
+		console.error(`screenshots: ${errorText(e)}`);
 		return 2;
 	} finally {
 		await target.dispose();

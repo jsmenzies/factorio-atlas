@@ -38,6 +38,7 @@ import { ingestRecord, postedLater, syncSources } from './pipeline.js';
 import { RawStoreR2 } from './raw-store.js';
 import { PrintRepositoryD1 } from './repository.js';
 import { fromFactorioprints, fromPipelineText, rawKeyFor, toPipelineText, type SourceRecord } from './source-record.js';
+import { errorText } from '#lib/error-text.js';
 
 export interface AddBindings {
 	readonly DB: D1Database;
@@ -129,8 +130,6 @@ export async function knownSource(
 	return row ? { status: 'already', printId: row.print_id } : null;
 }
 
-const reasonOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
 /** Admit `record` and, unless planning, ingest it: see the header. */
 export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOptions = {}): Promise<AddResult> {
 	const planned = Boolean(o.plan);
@@ -142,7 +141,7 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 			...(o.maxInflatedBytes ? { maxInflatedBytes: o.maxInflatedBytes } : {})
 		});
 	} catch (e) {
-		return done({ status: 'failed', reason: reasonOf(e) });
+		return done({ status: 'failed', reason: errorText(e) });
 	}
 	switch (admission.status) {
 		case 'blocked':
@@ -176,7 +175,7 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 		try {
 			split = await planSplit(b.DB, record, printId, admission.admitted.fingerprint.whole?.exact ?? null);
 		} catch (e) {
-			return done({ status: 'failed', reason: reasonOf(e) });
+			return done({ status: 'failed', reason: errorText(e) });
 		}
 		if (split?.owner === false) {
 			// Not the first ingestion of this print: this source leaves it. Marked gone first and the print's
@@ -205,7 +204,7 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 					.bind(record.site, record.siteId, printId)
 					.run();
 			} catch (e) {
-				return done({ status: 'failed', reason: reasonOf(e) });
+				return done({ status: 'failed', reason: errorText(e) });
 			}
 			return { ...(await addRecord(b, record, { ...o, update: false })), detachedFrom: printId };
 		}
@@ -244,7 +243,7 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 						reason: r.status === 'analysed' ? undefined : r.status
 					});
 				} catch (e) {
-					return done({ status: 'failed', reason: `moving ${other.site}:${other.site_id} off ${printId}: ${reasonOf(e)}` });
+					return done({ status: 'failed', reason: `moving ${other.site}:${other.site_id} off ${printId}: ${errorText(e)}` });
 				}
 			}
 			// A source that couldn't move and was posted first would still be the one shown: the edited content
@@ -260,7 +259,7 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 						moved
 					};
 			} catch (e) {
-				return done({ status: 'failed', reason: reasonOf(e) });
+				return done({ status: 'failed', reason: errorText(e) });
 			}
 		}
 	}
@@ -278,7 +277,7 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 			)
 		);
 	} catch (e) {
-		return done({ status: 'failed', reason: reasonOf(e) });
+		return done({ status: 'failed', reason: errorText(e) });
 	}
 	switch (outcome.status) {
 		case 'analysed':
@@ -301,7 +300,7 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 					httpMetadata: { contentType: 'application/json' }
 				});
 			} catch (e) {
-				return done({ status: 'failed', reason: `archiving the record: ${reasonOf(e)}` });
+				return done({ status: 'failed', reason: `archiving the record: ${errorText(e)}` });
 			}
 		}
 		return { ...done({ status: 'already', printId, updated: true }), ...(moved.length ? { moved } : {}) };
@@ -311,7 +310,7 @@ export async function addRecord(b: AddBindings, record: SourceRecord, o: AddOpti
 		try {
 			await b.RAW.put(rawKeyFor(record.site, record.siteId), toPipelineText(record), { httpMetadata: { contentType: 'application/json' } });
 		} catch (e) {
-			return done({ status: 'failed', reason: `archiving the record: ${reasonOf(e)}` });
+			return done({ status: 'failed', reason: `archiving the record: ${errorText(e)}` });
 		}
 	}
 	return done(

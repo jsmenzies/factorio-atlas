@@ -23,6 +23,7 @@ import { parsePostLink, postUrl, type PostLink } from '#lib/factoriobin-link.js'
 import type { AdmitLimits } from './admit.js';
 import { addRecord, knownSource, type AddBindings, type AddResult } from './add-record.js';
 import type { SourceRecord } from './source-record.js';
+import { errorText } from '#lib/error-text.js';
 
 const CDN = 'https://cdn.factoriobin.com/';
 export const FACTORIOBIN_USER_AGENT = 'BlueprintAtlas/1.0 (+https://github.com/jsmenzies/factorio-atlas; adds posts shared by link)';
@@ -139,7 +140,7 @@ export async function readPost(id: string, o: { fetch: Fetcher; maxStringBytes?:
 		}
 		info = parseInfo(id, await res.json());
 	} catch (e) {
-		return { ok: false, problem: 'fetch-failed', message: `reading post ${id}: ${e instanceof Error ? e.message : String(e)}` };
+		return { ok: false, problem: 'fetch-failed', message: `reading post ${id}: ${errorText(e)}` };
 	}
 	if (!info.stringUrl)
 		return { ok: false, problem: 'processing', message: `factoriobin is still processing post ${id}; try again shortly`, info };
@@ -165,7 +166,7 @@ export async function readPost(id: string, o: { fetch: Fetcher; maxStringBytes?:
 		return {
 			ok: false,
 			problem: 'fetch-failed',
-			message: `reading post ${id}'s string: ${e instanceof Error ? e.message : String(e)}`,
+			message: `reading post ${id}'s string: ${errorText(e)}`,
 			info
 		};
 	}

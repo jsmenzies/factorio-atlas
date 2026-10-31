@@ -15,6 +15,7 @@ import { loadEnv } from 'vite';
 import { parsePostLink, postUrl } from '#lib/factoriobin-link.js';
 import { findBun, json, jsonBody, runToEnd } from '../render/dev-plugin.js';
 import { lastJsonLine } from '../sync/output.js';
+import { errorText } from '#lib/error-text.js';
 
 const errorOf = (r: { code: number | null; stdout: string; stderr: string }) =>
 	(r.stderr || r.stdout).trim().split('\n').slice(-6).join('\n') || `exit code ${r.code}`;
@@ -75,7 +76,7 @@ export function addControl(): Plugin {
 						busy = false;
 					}
 				} catch (e) {
-					return json(res, 500, { error: e instanceof Error ? e.message : String(e) });
+					return json(res, 500, { error: errorText(e) });
 				}
 			});
 		}

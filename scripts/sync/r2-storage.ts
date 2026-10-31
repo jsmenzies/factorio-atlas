@@ -7,6 +7,7 @@
  */
 import { PREFIX, SPRITES_BUCKET, screenshotsBucket, type Stage } from '../../infra/databases';
 import type { R2Bucket, R2Storage } from '#lib/sync.js';
+import { errorText } from '#lib/error-text.js';
 
 const GRAPHQL = 'https://api.cloudflare.com/client/v4/graphql';
 const WINDOW_MS = 7 * 24 * 3600 * 1000;
@@ -85,6 +86,6 @@ export async function readR2Storage(o: {
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		return { at, buckets: parseR2Storage(await res.json(), wanted) };
 	} catch (e) {
-		return { at, error: e instanceof Error ? e.message : String(e) };
+		return { at, error: errorText(e) };
 	}
 }

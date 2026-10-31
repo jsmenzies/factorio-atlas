@@ -32,6 +32,7 @@ import { rendersDir, thumbsDir } from '#lib/server/renders-dir.js';
 import { THUMB, THUMB_TIERS, type ThumbPage } from '#lib/viewer/thumbs.js';
 import { ROOT } from './render/settings.js';
 import { finishPrint, makePage, mapPool, planPrint, type PageResult } from './render/thumbs.js';
+import { errorText } from '#lib/error-text.js';
 
 const USAGE =
 	'usage: render-thumbs (--ids a,b | --ids-file f | --all) [--force] [--jobs N]\n' +
@@ -133,7 +134,7 @@ async function runWrite() {
 			if (r) byKey.set(`${job.id}\n${job.path}`, r);
 		} catch (e) {
 			failedPages++;
-			console.warn(`${job.id} ${job.path || 'root'}: ${e instanceof Error ? e.message : String(e)}`);
+			console.warn(`${job.id} ${job.path || 'root'}: ${errorText(e)}`);
 		}
 		const n = left.get(job.id)! - 1;
 		left.set(job.id, n);
@@ -212,7 +213,7 @@ async function runUpload(target: 'local' | 'prod') {
 		if (stats.failed) code = 2;
 		thumbDeletes = stats.deletesScheduled;
 	} catch (e) {
-		console.error(e instanceof Error ? e.message : String(e));
+		console.error(errorText(e));
 		code = 1;
 	} finally {
 		await stage?.dispose().catch(() => undefined);
@@ -226,7 +227,7 @@ async function runUpload(target: 'local' | 'prod') {
 			await runStageFlags(target, { confirm: async () => {}, bump, log: (line) => console.log(line) });
 		} catch (e) {
 			console.log(
-				`flags: failed: ${e instanceof Error ? e.message : String(e)}\n` +
+				`flags: failed: ${errorText(e)}\n` +
 					`  the thumbnails are up; run by hand: bun run render:flags --stage ${target}${bump ? ' --bump' : ''}`
 			);
 			code ||= 4;

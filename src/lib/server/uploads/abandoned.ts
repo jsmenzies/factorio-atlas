@@ -11,6 +11,7 @@
  * - one account that fails is logged and the others go on.
  */
 import { deleteAccountStep, type UploadDeps } from './uploads.js';
+import { errorText } from '#lib/error-text.js';
 
 /** How long after its owner started a deletion the cron may finish it. */
 export const DELETION_GRACE_MS = 60 * 60_000;
@@ -70,9 +71,7 @@ export const finishAbandonedDeletions = async (
 		} catch (e) {
 			result.failed++;
 			result.left++;
-			console.error(
-				`accounts: finishing the deletion of ${account.id} failed, left for the next run: ${e instanceof Error ? e.message : e}`
-			);
+			console.error(`accounts: finishing the deletion of ${account.id} failed, left for the next run: ${errorText(e)}`);
 		}
 		// What this account may have used of the run's bound (failed uploads count too).
 		uploadsLeft -= Math.min(account.uploads, uploadsLeft);

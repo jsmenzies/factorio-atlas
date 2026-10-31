@@ -20,6 +20,7 @@ import { bumpPageVersion } from '../page-cache.js';
 import { analysisKey, withAuthorName } from '../pipeline/print-doc.js';
 import { fromPipelineText, rawKeyFor, toPipelineText, type SourceRecord } from '../pipeline/source-record.js';
 import type { GateOutcome, PurgeExtras, Suggestion, UploadGate } from './gate.js';
+import { errorText } from '#lib/error-text.js';
 
 export const TITLE_MAX = 120;
 export const DESCRIPTION_MAX = 20_000;
@@ -539,7 +540,7 @@ export const deleteAccountUploads = async (
 		try {
 			if (await deleteUpload(deps, userId, print_id)) deleted++;
 		} catch (e) {
-			console.warn(`uploads: deleting ${print_id} with its account failed, left for the next try: ${e instanceof Error ? e.message : e}`);
+			console.warn(`uploads: deleting ${print_id} with its account failed, left for the next try: ${errorText(e)}`);
 		}
 	}
 	return { deleted, left: ids.length - deleted };
@@ -607,11 +608,7 @@ export const refreshUploadNames = async (
 		await Promise.all(
 			stale
 				.slice(i, i + concurrency)
-				.map((u) =>
-					one(u).catch((e) =>
-						console.warn(`uploads: renaming ${u.print_id} failed, left for the next try: ${e instanceof Error ? e.message : e}`)
-					)
-				)
+				.map((u) => one(u).catch((e) => console.warn(`uploads: renaming ${u.print_id} failed, left for the next try: ${errorText(e)}`)))
 		);
 	}
 	for (let i = 0; i < done.length; i += 40) {

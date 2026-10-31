@@ -5,8 +5,7 @@
 import { accountId, boundGeneration, resourceNames } from '../backfill/stage.js';
 import { bindingStore, s3Store, withRetries, type RenderStore } from './store.js';
 import { DELETE_GRACE_MS, MIN_DELETE_GRACE_MS, type UploadTarget } from './upload.js';
-
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+import { errorText } from '#lib/error-text.js';
 
 /**
  * The store for `target`, or null without one. `local` is the miniflare RENDERS binding; `prod` is
@@ -39,7 +38,7 @@ export async function openStore(
 		await withRetries(() => store.list('index.json'), { attempts: 3 });
 		return store;
 	} catch (e) {
-		throw new Error(`--upload prod: ${message(e)}`);
+		throw new Error(`--upload prod: ${errorText(e)}`);
 	}
 }
 

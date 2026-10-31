@@ -7,6 +7,7 @@
 import { Effect } from 'effect';
 import { planIngest } from '#lib/server/pipeline/pipeline.js';
 import type { ComputeRequest, ComputeResponse } from './protocol';
+import { errorText } from '#lib/error-text.js';
 
 declare const self: Worker;
 
@@ -29,7 +30,7 @@ self.onmessage = async (event: MessageEvent<ComputeRequest>) => {
 				: { type: 'error', job, ms, reason: reasonOf(result.failure) }
 		);
 	} catch (e) {
-		post({ type: 'error', job, ms: performance.now() - t0, reason: `worker: ${e instanceof Error ? e.message : String(e)}` });
+		post({ type: 'error', job, ms: performance.now() - t0, reason: `worker: ${errorText(e)}` });
 	}
 };
 

@@ -71,6 +71,7 @@ import {
 	type StateEntry,
 	type Wanted
 } from './screenshots/state.js';
+import { errorText } from '#lib/error-text.js';
 
 const root = join(import.meta.dirname, '..');
 
@@ -118,7 +119,7 @@ let records: PrintImage[];
 try {
 	records = await readClone(args.clone);
 } catch (e) {
-	console.error(`screenshots: ${e instanceof Error ? e.message : String(e)}`);
+	console.error(`screenshots: ${errorText(e)}`);
 	process.exit(1);
 }
 const inClone = records.length;

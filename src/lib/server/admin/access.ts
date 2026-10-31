@@ -6,6 +6,7 @@
  * Worker without passing Access (a misconfigured path, the workers.dev URL, a missing app) is
  * refused. RS256 with WebCrypto against the team's public keys, which are cached per isolate.
  */
+import { errorText } from '#lib/error-text.js';
 
 export const ACCESS_JWT_HEADER = 'cf-access-jwt-assertion';
 
@@ -131,7 +132,7 @@ export const verifyAccessRequest = async (request: Request, config: AccessConfig
 	try {
 		return await verifyAccessJwt(token, config, teamKeys(config.issuer, fetcher));
 	} catch (e) {
-		return { ok: false, reason: `verify failed: ${e instanceof Error ? e.message : String(e)}` };
+		return { ok: false, reason: `verify failed: ${errorText(e)}` };
 	}
 };
 

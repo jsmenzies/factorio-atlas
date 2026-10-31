@@ -32,6 +32,7 @@ import {
 import { alive } from '../render/queue';
 import { progress } from './progress';
 import type { PolledAdmitResult } from '../polled';
+import { errorText } from '#lib/error-text.js';
 
 /** How long a step may take to end after Quit before its process group is killed. */
 export const QUIT_GRACE_MS = 30_000;
@@ -304,7 +305,7 @@ export class SyncRunner {
 				while (this.stopRequests < wanted) this.requestStop(control === 'quit' ? 'Quit now, from the Overview' : 'from the Overview');
 			} catch (e) {
 				// The database was busy past its timeout: the next beat tries again.
-				this.say(`! couldn't write the run row: ${e instanceof Error ? e.message : e}`);
+				this.say(`! couldn't write the run row: ${errorText(e)}`);
 			}
 		}));
 	}
@@ -362,7 +363,7 @@ export class SyncRunner {
 			try {
 				out = await def.run({ signal: this.abort.signal, stopping: this.stopping });
 			} catch (e) {
-				out = { status: 'failed', summary: e instanceof Error ? e.message : String(e) };
+				out = { status: 'failed', summary: errorText(e) };
 			}
 			// Stopped mid-step: unfinished work, not a result. A failure stays a failure, unless it is the
 			// stop's own exit (130: a second Ctrl-C).
@@ -388,7 +389,7 @@ export class SyncRunner {
 				return writeSyncRun(this.db, this.run);
 			});
 		} catch (e) {
-			this.say(`! couldn't write the final run row: ${e instanceof Error ? e.message : e}`);
+			this.say(`! couldn't write the final run row: ${errorText(e)}`);
 		}
 		this.say(
 			`\nsync ${this.run.id}: ${this.run.state}${this.run.error ? ` (${this.run.error})` : ''} in ${Math.round((this.run.finished_at - this.run.started_at) / 1000)} s`

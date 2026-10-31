@@ -4,6 +4,7 @@
 	import type { RenderRun } from '#lib/server/admin/render.js';
 	import RunControls from '../RunControls.svelte';
 	import { RENDER_STOP_NOTE } from './metrics.js';
+	import { errorText } from '#lib/error-text.js';
 
 	/**
 	 * Start a render batch (`--next N`, optionally `--top N` so the top favourites go first) or resume the last run, from the page. Only under `vite dev`:
@@ -63,7 +64,7 @@
 			if (!status.prodReady && upload === 'prod') upload = 'none';
 		} catch (e) {
 			// Keep the last status (a run keeps the dev server busy); only say so when there is none yet.
-			if (!status) statusError = `Can't reach the dev server's render control (${e instanceof Error ? e.message : e}).`;
+			if (!status) statusError = `Can't reach the dev server's render control (${errorText(e)}).`;
 			retryTimer = setTimeout(loadStatus, 5000);
 		}
 	};
@@ -126,7 +127,7 @@
 			waitingFor = { since: Date.now(), prev: run?.id ?? null, pid: out.pid, log: out.log };
 			await invalidate(PIPELINE_DEP);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			error = errorText(e);
 		} finally {
 			busy = null;
 		}

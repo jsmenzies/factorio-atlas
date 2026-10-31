@@ -18,6 +18,7 @@ import { fetchViews, syncViews, VIEW_DAYS } from '#lib/server/views.js';
 import { viewsDataset } from '../infra/databases';
 import { accountId } from './backfill/stage';
 import { confirmProd, fail, n, openStage, parseStageArgs, requireSchema, runOn } from './stage-command';
+import { errorText } from '#lib/error-text.js';
 
 const USAGE = 'usage: bun run views:sync --stage local|prod [--db N] [--dry-run] [--yes]';
 
@@ -28,9 +29,7 @@ const token =
 
 // Views always come from prod: it's the only stage with visitors.
 const dataset = viewsDataset('prod');
-const wanted = await fetchViews({ accountId: accountId(), token, dataset }).catch((e: unknown) =>
-	fail(`✗ ${e instanceof Error ? e.message : String(e)}`)
-);
+const wanted = await fetchViews({ accountId: accountId(), token, dataset }).catch((e: unknown) => fail(`✗ ${errorText(e)}`));
 const total = [...wanted.values()].reduce((a, b) => a + b, 0);
 console.log(`${dataset}: ${n(total)} views of ${n(wanted.size)} prints in the last ${VIEW_DAYS} days`);
 

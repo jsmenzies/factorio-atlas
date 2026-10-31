@@ -7,6 +7,7 @@ import { retryBusy } from '#lib/server/admin/busy.js';
 import { applyTakedown, decide, markPurgedByHand, reportQueue } from '#lib/server/reports.js';
 import type { TakedownResult } from '#lib/server/takedown.js';
 import type { Actions, PageServerLoad } from './$types';
+import { errorText } from '#lib/error-text.js';
 
 /** Open reports by subject, and the latest decisions (src/lib/server/reports.ts). */
 export const load: PageServerLoad = async () => ({
@@ -27,8 +28,7 @@ const fields = async (request: Request) => {
 const by = (request: Request) => accessEmail(request, dev ? 'dev' : 'admin');
 
 /** A takedown that threw: the page says why, and the request stays "not finished" (reports.ts records it). */
-const takedownFailed = (printId: string, e: unknown) =>
-	fail(500, { printId, error: `Takedown stopped: ${e instanceof Error ? e.message : String(e)}. Run it again.` });
+const takedownFailed = (printId: string, e: unknown) => fail(500, { printId, error: `Takedown stopped: ${errorText(e)}. Run it again.` });
 
 export const actions: Actions = {
 	approve: async ({ request }) => {

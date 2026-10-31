@@ -36,6 +36,7 @@ import {
 	unknownAuthors
 } from '#lib/server/pipeline/authors.js';
 import { confirmProd, fail, n, openStage, parseStageArgs, requireSchema, runOn } from './stage-command';
+import { errorText } from '#lib/error-text.js';
 
 const USAGE = 'usage: bun run authors --stage local|prod [--db N] [--rate R] [--dry-run] [--yes] [--json]';
 const CACHE = join(import.meta.dirname, '..', '.cache', 'authors', 'firebase.json');
@@ -128,7 +129,7 @@ await runOn(target, async () => {
 					name = await fetchDisplayName(id);
 				} catch (e) {
 					if (attempt === 3) {
-						failure = e instanceof Error ? e.message : String(e);
+						failure = errorText(e);
 						break;
 					}
 					await sleep(attempt * 5000);

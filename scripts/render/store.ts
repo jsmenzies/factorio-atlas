@@ -13,6 +13,7 @@
 import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { AwsClient } from 'aws4fetch';
+import { errorText } from '#lib/error-text.js';
 
 export interface RenderStore {
 	/** For logs, e.g. `local RENDERS bucket`. */
@@ -62,7 +63,7 @@ export async function withRetries<T>(f: () => Promise<T>, opts: RetryOptions = {
 			return await f();
 		} catch (e) {
 			if (isAbort(e) && opts.signal?.aborted) throw e;
-			const err = e instanceof StoreError ? e : new StoreError(e instanceof Error ? e.message : String(e), true);
+			const err = e instanceof StoreError ? e : new StoreError(errorText(e), true);
 			if (!err.retryable || attempt >= attempts) throw err;
 			const ms = Math.min(max, err.retryAfterMs ?? base * 2 ** (attempt - 1) * (0.75 + Math.random() / 2));
 			opts.onRetry?.(err, attempt, ms);
