@@ -709,7 +709,7 @@ export const polledIngestDetails = (r: AdmitFigures): DetailGroup[] => [
 			...detail('new prints', r.counts.new, { always: r.waiting > 0 }),
 			...detail('joined an existing print', r.counts.joined, { always: r.waiting > 0 }),
 			...detail('updated', r.counts.updated),
-			...detail('unchanged', (r.counts.unchanged ?? 0) + (r.counts.identified ?? 0)),
+			...detail('unchanged', r.counts.unchanged),
 			...detail('new, with suggestions to look at', r.suggestedNew),
 			...detail('blocked', r.counts.blocked, { tone: 'warn' }),
 			...detail('unreadable', r.counts.undecodable, { tone: 'warn' }),

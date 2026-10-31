@@ -135,7 +135,7 @@ describe('the ingest skip key', () => {
 	});
 
 	test('a polled admission: a few records failing after their retries is a warning, a crash or a failed deletion is a failure', () => {
-		const counts = { new: 364, joined: 64, updated: 0, unchanged: 0, identified: 0, blocked: 0, undecodable: 0, failed: 0, refetch: 0 };
+		const counts = { new: 364, joined: 64, updated: 0, unchanged: 0, blocked: 0, undecodable: 0, failed: 0, refetch: 0 };
 		const gone = { purged: 0, kept: 0, failed: 0, waiting: 0, edgeNotPurged: 0 };
 		const r = (o: Partial<Parameters<typeof polledAdmitStatus>[1] & object> = {}) => ({
 			ok: true,

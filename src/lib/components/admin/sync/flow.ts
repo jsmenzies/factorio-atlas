@@ -279,7 +279,7 @@ function gateStage(run: SyncRun | null, lane: string, progress: LogProgress | nu
 			of,
 			new: s.new ?? 0,
 			joined: s.joined ?? 0,
-			other: (s.updated ?? 0) + (s.unchanged ?? 0) + (s.blocked ?? 0) + (s.identified ?? 0),
+			other: (s.updated ?? 0) + (s.unchanged ?? 0) + (s.blocked ?? 0),
 			suggest: 0,
 			unreadable: s.undecodable ?? 0,
 			failed: s.failed ?? 0

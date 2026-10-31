@@ -64,8 +64,6 @@ export type AdmitOutcome =
 	/** Its own print, changed. */
 	| 'updated'
 	| 'unchanged'
-	/** Its print shows an earlier source's record: only its source row and hashes were written. */
-	| 'identified'
 	| 'blocked'
 	| 'undecodable'
 	/** Storage or the like: tried again next run. */
@@ -117,7 +115,7 @@ const result: PolledAdmitResult = {
 	finished: false,
 	waiting: 0,
 	goneWaiting: 0,
-	counts: { new: 0, joined: 0, updated: 0, unchanged: 0, identified: 0, blocked: 0, undecodable: 0, failed: 0, refetch: 0 },
+	counts: { new: 0, joined: 0, updated: 0, unchanged: 0, blocked: 0, undecodable: 0, failed: 0, refetch: 0 },
 	gone: { purged: 0, kept: 0, failed: 0, waiting: 0, edgeNotPurged: 0 },
 	suggested: 0,
 	suggestedNew: 0,
@@ -360,7 +358,7 @@ try {
 
 	const c = result.counts;
 	const line =
-		`${n(c.new)} new, ${n(c.joined)} joined an existing print, ${n(c.updated)} updated, ${n(c.unchanged + c.identified)} unchanged, ` +
+		`${n(c.new)} new, ${n(c.joined)} joined an existing print, ${n(c.updated)} updated, ${n(c.unchanged)} unchanged, ` +
 		`${n(c.blocked)} blocked, ${n(c.undecodable)} unreadable, ${n(c.failed)} failed; ${n(result.suggestedNew)} of the new with suggestions` +
 		(work.gone.length
 			? `; gone: ${n(result.gone.purged)} purged, ${n(result.gone.kept)} kept (another source), ${n(result.gone.failed)} failed` +
