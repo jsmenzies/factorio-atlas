@@ -150,8 +150,9 @@ describe('fprints through the polled framework', () => {
 		const fetchOnce = async () => {
 			const state = await readState(inbox, 'fprints');
 			const { plan, work } = await planPoll(fprintsSite, state, http, { maxChange: 0.5 });
-			if (plan.blocked || plan.from.id === plan.to.id) return { plan, counts: null, state };
-			const counts = await applyPoll(fprintsSite, inbox, state, work, http, { perUpdate: 100, maxChange: 0.5 });
+			// A first import is held back for Accept: let through here, as if accepted.
+			if ((plan.blocked && !plan.blocked.includes('a first import')) || plan.from.id === plan.to.id) return { plan, counts: null, state };
+			const counts = await applyPoll(fprintsSite, inbox, state, work, http, { maxChange: 0.5 });
 			return { plan, counts, state: await readState(inbox, 'fprints') };
 		};
 		return { calls, fetchOnce };

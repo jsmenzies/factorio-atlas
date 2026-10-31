@@ -10,10 +10,11 @@
  *   2. fetch        each source: what's new (for the mirror: GitHub's latest commit against the
  *                   clone's), then fetch it (fast-forward). Polled sites (codex, fprints; scripts/sync/polled.ts):
  *                   list until past the cursor, read new and changed records into the record store's
- *                   inbox, at most POLLED_READS_PER_UPDATE reads (#lib/sync.js), ≈ 1 request a second. A source is held back, and only it, when
- *                   adds, deletions and moves are more than `maxChange` of its prints (a layout
- *                   change; `--accept <commit>` lets one through), it would have no prints, or its
- *                   history was rewritten. Then `records --stage S --json`: the record store
+ *                   inbox, every one of them (no read cap), ≈ 1 request a second. A source is held back, and only
+ *                   it, by the one rule (#lib/sync.js holdBack): new and removed prints (the mirror's moves too)
+ *                   more than `maxChange` of the prints known from it and at least 25, or a first import
+ *                   (`--accept <id>` lets one through); or when it would have no prints, or its history was
+ *                   rewritten. Then `records --stage S --json`: the record store
  *                   (RECORDS_DIR, default ~/data/factorio-records) brought in line with every other
  *                   site's records on the stage (today live uploads), for the render step
  *   3. ingest       `backfill --stage S --from-clone … --json`; skipped when neither the sources'
@@ -72,7 +73,6 @@ import {
 	estimateRender,
 	freshSteps,
 	parseSettings,
-	POLLED_READS_PER_UPDATE,
 	parseSyncRun,
 	sourceDigest,
 	sourceMoved,
@@ -190,7 +190,7 @@ const SOURCES: SourceAdapter[] = [
 	...POLLED.map((site) =>
 		polledSource(site, {
 			recordsDir: records,
-			settings: () => ({ on: polledSettings(site.site).on, perUpdate: POLLED_READS_PER_UPDATE }),
+			settings: () => ({ on: polledSettings(site.site).on }),
 			log: (line) => say(line),
 			stopping: () => stopRequested()
 		})

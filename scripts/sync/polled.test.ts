@@ -72,22 +72,35 @@ afterEach(async () => {
 
 const NOW = 10_000_000_000;
 
-/** Plan then apply, as the update's fetch step does; the state as saved. */
-const fetchOnce = async (site: PolledSite, perUpdate = 100, maxChange = 0.05, accept?: string) => {
+/**
+ * Plan then apply, as the update's fetch step does; the state as saved. A first import is held back for Accept:
+ * here it is let through as if accepted (`holdFirst` keeps it held), so the tests start from an imported site.
+ */
+const fetchOnce = async (site: PolledSite, o: { maxChange?: number; accept?: string; holdFirst?: boolean; stopAfter?: number } = {}) => {
+	const maxChange = o.maxChange ?? 0.05;
 	const state = await readState(inbox, 'codex');
+	const first = Object.keys(state.records).length === 0;
 	const h = http();
-	const { plan, work } = await planPoll(site, state, h, { maxChange, accept, now: NOW });
-	if (plan.blocked || plan.from.id === plan.to.id) return { plan, counts: null, state };
-	const counts = await applyPoll(site, inbox, state, work, h, { perUpdate, maxChange, now: () => NOW });
+	const { plan, work } = await planPoll(site, state, h, { maxChange, accept: o.accept, now: NOW });
+	const firstImport = first && !o.holdFirst && plan.blocked?.includes('a first import');
+	if ((plan.blocked && !firstImport) || plan.from.id === plan.to.id) return { plan, counts: null, state };
+	const counts = await applyPoll(site, inbox, state, work, h, {
+		maxChange,
+		now: () => NOW,
+		stopping: o.stopAfter === undefined ? undefined : () => h.reads >= o.stopAfter!
+	});
 	return { plan, counts, state: await readState(inbox, 'codex') };
 };
+/** A site of `n` prints, 1…n, changed at 100…; listed `per` a page. */
+const many = (n: number) => new Map([...Array(n)].map((_, i) => [String(i + 1), 100 + i] as [string, number]));
 
 describe('polled sites: fetch', () => {
 	test('the first fetch lists every page and reads every print, oldest change first', async () => {
 		const prints = new Map([...Array(7)].map((_, i) => [String(i + 1), 100 + i] as [string, number]));
 		const { site, calls } = fakeSite(prints);
 		const { plan, counts, state } = await fetchOnce(site);
-		expect(plan).toMatchObject({ polled: true, added: 7, edited: 0, prints: 7, blocked: null });
+		expect(plan).toMatchObject({ polled: true, added: 7, edited: 0, prints: 7 });
+		expect(plan.blocked).toBe('7 new, 0 removed: a first import; check the site, then accept it to import them');
 		expect(calls.filter((c) => c.startsWith('list'))).toEqual(['list 1', 'list 2', 'list 3']);
 		expect(calls.filter((c) => c.startsWith('read'))).toEqual(['1', '2', '3', '4', '5', '6', '7'].map((i) => `read ${i}`));
 		expect(counts).toMatchObject({ new: 7, reads: 7, left: 0 });
@@ -126,16 +139,23 @@ describe('polled sites: fetch', () => {
 		expect(counts).toMatchObject({ changed: 7 });
 	});
 
-	test('the per-update cap leaves the rest pending, read first next time', async () => {
-		const prints = new Map([...Array(5)].map((_, i) => [String(i + 1), 100 + i] as [string, number]));
+	test('no read cap: every new and changed record is read; a stop leaves the rest pending, read first next time', async () => {
+		const prints = many(5);
 		const { site, calls } = fakeSite(prints);
-		const first = await fetchOnce(site, 2);
+		const first = await fetchOnce(site, { stopAfter: 2 });
 		expect(first.counts).toMatchObject({ new: 2, left: 3 });
 		expect(Object.keys(first.state.pending).sort()).toEqual(['3', '4', '5']);
 		calls.length = 0;
-		const second = await fetchOnce(site, 10);
+		const second = await fetchOnce(site);
 		expect(second.counts).toMatchObject({ new: 3, left: 0 });
 		expect(calls).toEqual(['list 1', 'read 3', 'read 4', 'read 5']);
+		// 1,200 changed at once, more than the old cap of 1,000: all read in one update.
+		const big = many(1200);
+		const b = fakeSite(big, { per: 400 });
+		await rm(join(inbox, 'codex'), { recursive: true, force: true });
+		await fetchOnce(b.site);
+		for (const [id, t] of big) big.set(id, t + 10_000);
+		expect((await fetchOnce(b.site)).counts).toMatchObject({ changed: 1200, left: 0 });
 	});
 
 	test('prints never read (every read failed last time) count as new, not changed, listed on page 1 or not', async () => {
@@ -206,32 +226,72 @@ describe('polled sites: fetch', () => {
 		expect(Object.keys(all.state.gone).length).toBe(0);
 	});
 
-	test('the reads find at most maxChange of the known prints gone in one fetch, whatever the plan said', async () => {
-		const prints = new Map([...Array(40)].map((_, i) => [String(i + 1), 100 + i] as [string, number]));
-		const { site } = fakeSite(prints, { per: 10 });
+	test('the reads find at most the hold-back limit of the known prints gone in one fetch, whatever the plan said', async () => {
+		const prints = many(600);
+		const { site } = fakeSite(prints, { per: 100 });
 		await fetchOnce(site);
-		for (const id of ['1', '2', '3']) prints.delete(id);
+		for (let i = 1; i <= 40; i++) prints.delete(String(i));
 		const state = await readState(inbox, 'codex');
 		const h = http();
 		const { work } = await planPoll(site, state, h, { maxChange: 1, now: NOW });
-		expect(work.missing.length).toBe(3);
-		const counts = await applyPoll(site, inbox, state, work, h, { perUpdate: 100, maxChange: 0.05, now: () => NOW });
-		expect(counts).toMatchObject({ gone: 2, goneHeld: 1 });
-		expect(Object.keys((await readState(inbox, 'codex')).records).length).toBe(38);
+		expect(work.missing.length).toBe(40);
+		// 5% of 600 is 30.
+		const counts = await applyPoll(site, inbox, state, work, h, { maxChange: 0.05, now: () => NOW });
+		expect(counts).toMatchObject({ gone: 30, goneHeld: 10 });
+		expect(Object.keys((await readState(inbox, 'codex')).records).length).toBe(570);
 	});
 
-	test('held back when too many prints vanish from the list, or it is empty; an accepted plan goes through', async () => {
-		const prints = new Map([...Array(20)].map((_, i) => [String(i + 1), 100 + i] as [string, number]));
-		const { site } = fakeSite(prints, { per: 10 });
-		await fetchOnce(site);
-		for (const id of ['1', '2', '3']) prints.delete(id);
-		const held = await fetchOnce(site, 100, 0.1);
-		expect(held.plan.blocked).toContain('3 of 20 prints are missing');
-		const accepted = await fetchOnce(site, 100, 0.1, held.plan.to.id);
-		expect(accepted.plan.blocked).toBeNull();
-		expect(accepted.counts).toMatchObject({ gone: 3 });
-		prints.clear();
-		expect((await fetchOnce(site)).plan.blocked).toContain('lists no prints');
+	describe('held back by the one rule: new + removed past max(maxChange × known, 25)', () => {
+		test('the floor: a small site is not held back for normal activity', async () => {
+			const prints = many(20);
+			const { site } = fakeSite(prints, { per: 10 });
+			await fetchOnce(site);
+			for (const id of ['1', '2', '3']) prints.delete(id);
+			for (let i = 21; i <= 30; i++) prints.set(String(i), 1000 + i);
+			const r = await fetchOnce(site);
+			expect(r.plan).toMatchObject({ added: 10, blocked: null });
+			expect(r.counts).toMatchObject({ new: 10, gone: 3 });
+		});
+
+		test('removed only, then accepted', async () => {
+			const prints = many(100);
+			const { site } = fakeSite(prints, { per: 50 });
+			await fetchOnce(site);
+			for (let i = 1; i <= 26; i++) prints.delete(String(i));
+			const held = await fetchOnce(site);
+			expect(held.plan.blocked).toBe("0 new, 26 removed: more than 5% (25 at least) of 100; check the site, then accept it if it's right");
+			expect(held.counts).toBeNull();
+			const accepted = await fetchOnce(site, { accept: held.plan.to.id });
+			expect(accepted.plan.blocked).toBeNull();
+			expect(accepted.counts).toMatchObject({ gone: 26 });
+		});
+
+		test('new only; changed prints never count', async () => {
+			const prints = many(100);
+			const { site } = fakeSite(prints, { per: 50 });
+			await fetchOnce(site);
+			for (const [id, t] of prints) prints.set(id, t + 5000);
+			const edited = await fetchOnce(site);
+			expect(edited.plan).toMatchObject({ edited: 100, blocked: null });
+			for (let i = 101; i <= 130; i++) prints.set(String(i), 9000 + i);
+			expect((await fetchOnce(site)).plan.blocked).toContain('30 new, 0 removed: more than 5% (25 at least) of 100');
+		});
+
+		test('a first import is held back once; Accept lets it through', async () => {
+			const { site } = fakeSite(many(3));
+			const held = await fetchOnce(site, { holdFirst: true });
+			expect(held.plan.blocked).toContain('3 new, 0 removed: a first import');
+			const accepted = await fetchOnce(site, { holdFirst: true, accept: held.plan.to.id });
+			expect(accepted.counts).toMatchObject({ new: 3 });
+		});
+
+		test('an empty list while prints are known is a hard stop, whatever the share', async () => {
+			const prints = many(20);
+			const { site } = fakeSite(prints, { per: 10 });
+			await fetchOnce(site);
+			prints.clear();
+			expect((await fetchOnce(site, { maxChange: 1 })).plan.blocked).toContain('lists no prints');
+		});
 	});
 });
 
@@ -308,7 +368,7 @@ describe('PoliteHttp', () => {
 
 	test('the source carries its kind, for the Overview even when its plan fails', () => {
 		const { site } = fakeSite(new Map());
-		expect(polledSource(site, { recordsDir: inbox, settings: () => ({ on: true, perUpdate: 1 }) })).toMatchObject({
+		expect(polledSource(site, { recordsDir: inbox, settings: () => ({ on: true }) })).toMatchObject({
 			site: 'codex',
 			kind: 'test',
 			polled: true

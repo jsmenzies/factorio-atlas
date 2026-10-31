@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { ScopeFigures } from '#lib/server/admin/render-scope.js';
-	import type { SyncSettings } from '#lib/sync.js';
+	import { HOLD_FLOOR, type SyncSettings } from '#lib/sync.js';
 	import { bytes, duration, int } from '../metrics.js';
 	import Toggle from './Toggle.svelte';
 
@@ -167,11 +167,11 @@
 						onchange();
 					}}
 				/>
-				% of its prints change at once
+				% of its prints (at least {HOLD_FLOOR} prints) are new or removed in one update
 			</label>
 			<p class="mt-1 text-xs text-stone-500">
-				The mirror: prints added, deleted or moved since the last fetch (edits don’t count), as in the layout change of 11 Oct. Other sites: prints missing from their
-				list. A held-back source shows Accept on its lane.
+				The same rule for the mirror (its moved files count too, as in the layout change of 11 Oct) and the other sites; edits never count. A first import is held
+				back once. A held-back source shows Accept in its Changes cell.
 			</p>
 		</details>
 	</section>

@@ -94,17 +94,63 @@ describe('planMirror on a real git clone', () => {
 		expect(await planMirror(clone, { maxChange: 10 })).toMatchObject({ added: 0, deleted: [], from: plan.to, to: plan.to });
 	});
 
-	test('stops before reading records when too much changed at once', async () => {
+	test('a small change is never held back: the floor of 25 prints', async () => {
 		const clone = join(dir, 'clone2');
 		git(dir, 'clone', '-q', 'origin', 'clone2');
 		git(clone, 'reset', '-q', '--hard', 'HEAD~1');
-		// Added -D, deleted -C, moved -E: 3 of 4 prints.
-		const plan = await planMirror(clone, { maxChange: 0.5 });
-		expect(plan.blocked).toContain('3 of 4 prints were added, deleted or moved since the last fetch (more than 50%)');
-		expect(plan.modern).toBe(0);
-		// Accepted, that commit goes through; another wouldn't.
-		expect((await planMirror(clone, { maxChange: 0.5, accept: plan.to.id })).blocked).toBeNull();
-		expect((await planMirror(clone, { maxChange: 0.5, accept: plan.from.id })).blocked).not.toBeNull();
+		// Added -D, deleted -C, moved -E: 3 of 4 prints, but under 25.
+		expect((await planMirror(clone, { maxChange: 0.05 })).blocked).toBeNull();
+	});
+
+	test('held back past the share of the clone’s prints: new only, removed only; edits never count; accept lets it through', async () => {
+		const origin = join(dir, 'big');
+		mkdirSync(origin);
+		git(origin, 'init', '-q');
+		const ids = Array.from({ length: 60 }, (_, i) => `-P${String(i).padStart(3, '0')}`);
+		for (const id of ids) put(origin, `${id.slice(0, 2).toLowerCase()}/${id}.json`, record(id, 1));
+		git(origin, 'add', '.');
+		git(origin, 'commit', '-qm', 'base');
+		git(dir, 'clone', '-q', 'big', 'bigclone');
+		const clone = join(dir, 'bigclone');
+		const commit = (msg: string, change: () => void) => {
+			change();
+			git(origin, 'add', '-A');
+			git(origin, 'commit', '-qm', msg);
+			return git(origin, 'rev-parse', 'HEAD');
+		};
+		// Every print edited: not held back.
+		commit('edits', () => ids.forEach((id) => put(origin, `${id.slice(0, 2).toLowerCase()}/${id}.json`, record(`${id} edited`, 1))));
+		expect((await planMirror(clone, { maxChange: 0.05 })).blocked).toBeNull();
+		await pullMirror(clone, git(origin, 'rev-parse', 'HEAD'));
+		// 30 new (over 25 and 5% of 60): held back, with its counts.
+		const added = commit('new', () => Array.from({ length: 30 }, (_, i) => put(origin, `-n/-N${i}.json`, record(`n${i}`, 0))));
+		const held = await planMirror(clone, { maxChange: 0.05 });
+		expect(held.blocked).toBe(
+			"30 new, 0 removed: more than 5% (25 at least) of 60; check the mirror (a layout change?), then accept it if it's right"
+		);
+		expect(held.modern).toBe(0);
+		expect((await planMirror(clone, { maxChange: 0.05, accept: added })).blocked).toBeNull();
+		expect((await planMirror(clone, { maxChange: 0.05, accept: held.from.id })).blocked).not.toBeNull();
+		await pullMirror(clone, added);
+		// 30 removed of 90: held back too.
+		commit('gone', () => ids.slice(0, 30).forEach((id) => rmSync(join(origin, `${id.slice(0, 2).toLowerCase()}/${id}.json`))));
+		expect((await planMirror(clone, { maxChange: 0.05 })).blocked).toContain('0 new, 30 removed: more than 5% (25 at least) of 90');
+	});
+
+	test('a first import (a clone with no prints yet) is held back once for Accept', async () => {
+		const origin = join(dir, 'fresh');
+		mkdirSync(origin);
+		git(origin, 'init', '-q');
+		put(origin, 'README.md', 'mirror');
+		git(origin, 'add', '.');
+		git(origin, 'commit', '-qm', 'empty');
+		git(dir, 'clone', '-q', 'fresh', 'freshclone');
+		put(origin, '-a/-A.json', record('a', 1));
+		git(origin, 'add', '.');
+		git(origin, 'commit', '-qm', 'first');
+		const plan = await planMirror(join(dir, 'freshclone'), { maxChange: 0.05 });
+		expect(plan.blocked).toContain('1 new, 0 removed: a first import');
+		expect((await planMirror(join(dir, 'freshclone'), { maxChange: 0.05, accept: plan.to.id })).blocked).toBeNull();
 	});
 
 	test("names the source from the clone's origin", () => {

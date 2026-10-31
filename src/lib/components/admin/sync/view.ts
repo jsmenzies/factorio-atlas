@@ -3,7 +3,6 @@ import {
 	detail,
 	estimateRender,
 	planTotals,
-	POLLED_READS_PER_UPDATE,
 	sourceMoved,
 	SYNC_STALE_MS,
 	type DetailGroup,
@@ -118,7 +117,7 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 			.filter((p) => (p.ingestsItself || p.polled) && sourceMoved(p) && !p.blocked)
 			.map(
 				(p) =>
-					`${p.site}: ${p.stateText ?? 'something waiting'}${p.polled ? ` (≈ ${int(Math.min(p.added + p.edited + p.deleted.length, POLLED_READS_PER_UPDATE))} reads at 1 a second)` : ''}`
+					`${p.site}: ${p.stateText ?? 'something waiting'}${p.polled ? ` (≈ ${int(p.added + p.edited + p.deleted.length)} reads at 1 a second)` : ''}`
 			)
 	];
 	return [

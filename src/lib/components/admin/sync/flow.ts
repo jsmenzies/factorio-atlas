@@ -21,7 +21,6 @@ import { recordsSeen } from '#lib/sync-progress.js';
 import { SOURCE_SITES } from '#lib/sources.js';
 import type { Site } from '#lib/print-id.js';
 import {
-	POLLED_READS_PER_UPDATE,
 	POLLED_SITES,
 	SITE_SHOTS_GROUP,
 	sourceMoved,
@@ -166,8 +165,8 @@ const notRun = (step: SyncStep): Cell =>
 /** The step hasn't reached this cell: before an update, or still pending. */
 const waiting = (mode: BoardMode, step: SyncStep | undefined): step is undefined => mode === 'before' || !step || step.status === 'pending';
 
-/** What a polled site would read now: its new, changed and gone prints, up to the built-in cap. */
-const toRead = (p: SourcePlan) => Math.min(p.added + p.edited + p.deleted.length, POLLED_READS_PER_UPDATE);
+/** What a polled site would read now: every new, changed and gone print. */
+const toRead = (p: SourcePlan) => p.added + p.edited + p.deleted.length;
 
 function changesBefore(p: SourcePlan | null, site: string, ago: string): Cell {
 	if (!p) return cell('wait', [], 'Not checked yet: Check again reads every source.');

@@ -11,10 +11,11 @@
  *     differs (a print deleted, made private, or shown again), or the last full listing is older than
  *     FULL_EVERY_MS, or there is no cursor yet, every page is listed (≈ 5 at 100 a page), and prints the
  *     listing no longer has are deletions to confirm. Held back (`blocked`, like the mirror) when the list
- *     is empty while this machine knows prints, or when more than `maxChange` of the known prints are
- *     missing from it, unless that plan's `to.id` was accepted.
- *   - apply: read each new or changed record (oldest change first) and each deletion to confirm, at most
- *     `perUpdate` reads; the rest stay `pending` for the next update. A record is written to the inbox
+ *     is empty while this machine knows prints, or by the one hold-back rule (#lib/sync.js `holdBack`): new
+ *     and missing prints more than `maxChange` of the known ones and at least 25, or a first import; unless
+ *     that plan's `to.id` was accepted. Changed prints never count.
+ *   - apply: read every new or changed record (oldest change first) and each deletion to confirm; there is no
+ *     read cap. Reads a stop or a failure leaves stay `pending` for the next update. A record is written to the inbox
  *     (`<RECORDS_DIR>/.polled/<site>/<siteId>.json`, a SourceRecord, store.ts's format) only when its text
  *     changed; one answering "gone" (404, no longer public) leaves the inbox and is listed in `gone`.
  *   - Every request goes through one PoliteHttp: a User-Agent naming the project, at most one request per
@@ -33,7 +34,7 @@
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { detail, type DetailGroup, type SourcePlan } from '#lib/sync.js';
+import { detail, holdBack, holdLimit, type DetailGroup, type SourcePlan } from '#lib/sync.js';
 import type { SourceRecord } from '#lib/server/pipeline/source-record.js';
 import { dropRecord, putRecord, type StoreSite } from '../records/store';
 import type { PlanOptions, SourceAdapter } from './mirror';
@@ -221,7 +222,7 @@ export interface PollState {
 	version?: number;
 	/** Every record in the inbox: its revision, when this machine first had it, when it was read. */
 	records: Record<string, { rev: string; firstSeen: number; fetchedAt: number }>;
-	/** Listed but not read yet (the per-update cap, a failed read): id → the revision listed. */
+	/** Listed but not read yet (a stop, a failed read): id → the revision listed. */
 	pending: Record<string, string>;
 	/** Gone from the site (404, no longer public): id → when found. A print that comes back leaves it. */
 	gone: Record<string, number>;
@@ -298,8 +299,12 @@ export const admissionWork = (state: PollState, ledger: AdmittedLedger, force = 
 
 // --- plan
 
-/** The most prints one fetch believes gone (the plan holds back past it, the reads stop at it): maxChange of the known, at least 1. */
-export const goneLimit = (maxChange: number, known: number) => Math.max(1, Math.floor(maxChange * known));
+/**
+ * The most prints one fetch believes gone at read time: the hold-back rule's limit (#lib/sync.js `holdLimit`). The
+ * plan counts new and missing prints against it; the reads count only those they find gone, as a new record
+ * read can't take anything off the site, while a listing glitch could make many look missing.
+ */
+export const goneLimit = (maxChange: number, known: number) => Math.floor(holdLimit(maxChange, known));
 
 /** What a fetch would do: the records to read and the deletions to confirm, with the listing they came from. */
 export interface PollWork {
@@ -395,10 +400,15 @@ export async function planPoll(
 	let blocked: string | null = null;
 	if (first.total === 0 && knownCount > 0)
 		blocked = `the site lists no prints (this machine has ${knownCount.toLocaleString('en-US')}): check the site before fetching`;
-	else if (o.accept !== to.id && missing.length > goneLimit(o.maxChange, knownCount))
-		blocked =
-			`${missing.length.toLocaleString('en-US')} of ${knownCount.toLocaleString('en-US')} prints are missing from the site's list ` +
-			`(more than ${Math.round(o.maxChange * 100)}%): check the site, then accept it if they really went`;
+	else
+		blocked = holdBack({
+			added,
+			removed: missing.length,
+			known: knownCount,
+			maxChange: o.maxChange,
+			accepted: work.accepted,
+			what: 'the site'
+		});
 	const pending = Object.keys(state.pending).length;
 	const plan: SourcePlan = {
 		site: site.site,
@@ -443,15 +453,15 @@ export interface ApplyCounts {
 	gone: number;
 	/** Listed as missing but still there (a listing glitch). */
 	stillThere: number;
-	/** Missing and answering gone, past the most one fetch believes (maxChange): kept, checked again. */
+	/** Missing and answering gone, past the most one fetch believes (goneLimit): kept, checked again. */
 	goneHeld: number;
 	/** Reads that failed: pending, tried again next update. */
 	failed: number;
-	/** Not read: over the per-update cap or stopped; pending. */
+	/** Not read: the fetch stopped; pending. */
 	left: number;
 }
 
-/** Reads the work a plan found, at most `perUpdate` records, into the inbox; returns the new state's counts. */
+/** Reads all the work a plan found into the inbox (until a stop); returns the new state's counts. */
 export async function applyPoll(
 	site: PolledSite,
 	inbox: string,
@@ -459,8 +469,7 @@ export async function applyPoll(
 	work: PollWork,
 	http: PoliteHttp,
 	o: {
-		perUpdate: number;
-		/** At most this share of the known prints is marked gone in one fetch (the plan's guard, again on the reads). */
+		/** At most this share of the known prints (and 25) is marked gone in one fetch (the plan's guard, again on the reads). */
 		maxChange: number;
 		stopping?: () => boolean;
 		signal?: AbortSignal;
@@ -485,7 +494,6 @@ export async function applyPoll(
 	};
 	const maxGone = work.accepted ? Infinity : goneLimit(o.maxChange, Object.keys(state.records).length);
 	const readsBefore = http.reads;
-	let budget = o.perUpdate;
 	let sinceSave = 0;
 	const save = () => writeState(inbox, site.site, state);
 	const markGone = async (siteId: string, why: string) => {
@@ -551,9 +559,8 @@ export async function applyPoll(
 	// drops those the site no longer lists (never read: nothing else to undo).
 	for (const id of work.dropPending) delete state.pending[id];
 	const queue = [...work.read];
-	while (queue.length && budget > 0 && !stopping()) {
+	while (queue.length && !stopping()) {
 		const next = queue.shift()!;
-		budget--;
 		await readOne(next.siteId, next.rev);
 		if (++sinceSave >= 25) {
 			sinceSave = 0;
@@ -564,9 +571,8 @@ export async function applyPoll(
 	c.left = queue.length;
 	// Deletions: each confirmed by a read of its own (a list that merely missed it keeps it).
 	const missing = [...work.missing];
-	while (missing.length && budget > 0 && !stopping()) {
+	while (missing.length && !stopping()) {
 		const id = missing.shift()!;
-		budget--;
 		if ((await readOne(id, null)) === 'ok') c.stillThere++;
 	}
 	c.left += missing.length;
@@ -585,7 +591,7 @@ export async function applyPoll(
 export interface PolledSourceOptions {
 	/** The record store (RECORDS_DIR); the inbox is its `.polled` folder. */
 	recordsDir: string;
-	settings: () => { on: boolean; perUpdate: number };
+	settings: () => { on: boolean };
 	log?: (line: string) => void;
 	stopping?: () => boolean;
 	http?: PoliteHttp;
@@ -630,7 +636,6 @@ export function polledSource(site: PolledSite, o: PolledSourceOptions): SourceAd
 			const { state, work, maxChange } = planned;
 			planned = null;
 			const c = await applyPoll(site, inbox, state, work, http, {
-				perUpdate: o.settings().perUpdate,
 				maxChange,
 				stopping: o.stopping,
 				signal,

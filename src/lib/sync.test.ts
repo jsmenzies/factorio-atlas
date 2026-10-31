@@ -1,14 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { isLiveSync } from './server/sync';
-import {
-	DEFAULT_SETTINGS,
-	estimateRender,
-	parseSettings,
-	planTotals,
-	POLLED_READS_PER_UPDATE,
-	sourceDigest,
-	type SourcePlan
-} from './sync';
+import { DEFAULT_SETTINGS, estimateRender, parseSettings, HOLD_FLOOR, holdBack, planTotals, sourceDigest, type SourcePlan } from './sync';
 
 describe('parseSettings', () => {
 	test('nothing stored: the defaults', () => {
@@ -35,10 +27,42 @@ describe('parseSettings', () => {
 	});
 });
 
+describe('holdBack: one rule for every source', () => {
+	const at5 = { maxChange: 0.05 };
+	test('the floor: a small source is never held back for a normal day', () => {
+		expect(HOLD_FLOOR).toBe(25);
+		// 5% of 200 is 10, but up to 25 changes pass.
+		expect(holdBack({ ...at5, added: 20, removed: 5, known: 200 })).toBeNull();
+		expect(holdBack({ ...at5, added: 26, removed: 0, known: 200 })).toBe(
+			"26 new, 0 removed: more than 5% (25 at least) of 200; check the site, then accept it if it's right"
+		);
+	});
+
+	test('new only, removed only, and the mirror’s moves all count; past the share of a big source', () => {
+		expect(holdBack({ ...at5, added: 62, removed: 3, known: 466, what: 'codex' })).toBe(
+			"62 new, 3 removed: more than 5% (25 at least) of 466; check codex, then accept it if it's right"
+		);
+		expect(holdBack({ ...at5, added: 0, removed: 30, known: 466 })).not.toBeNull();
+		expect(holdBack({ ...at5, added: 900, removed: 0, known: 18_000 })).toBeNull();
+		expect(holdBack({ ...at5, added: 500, removed: 300, moved: 200, known: 18_000, what: 'the mirror' })).toBe(
+			"500 new, 300 removed, 200 moved: more than 5% (25 at least) of 18,000; check the mirror, then accept it if it's right"
+		);
+	});
+
+	test('edits never count (they aren’t an input); a first import is held back once; accepted goes through', () => {
+		expect(holdBack({ ...at5, added: 0, removed: 0, known: 30 })).toBeNull();
+		expect(holdBack({ ...at5, added: 3, removed: 0, known: 0 })).toBe(
+			'3 new, 0 removed: a first import; check the site, then accept it to import them'
+		);
+		expect(holdBack({ ...at5, added: 0, removed: 0, known: 0 })).toBeNull();
+		expect(holdBack({ ...at5, added: 3, removed: 0, known: 0, accepted: true })).toBeNull();
+		expect(holdBack({ ...at5, added: 999, removed: 0, known: 10, accepted: true })).toBeNull();
+	});
+});
+
 describe('polled sites', () => {
-	test('codex and fprints are on by default; reads per update are a built-in backstop, not a setting', () => {
+	test('codex and fprints are on by default; there is no read cap', () => {
 		expect(DEFAULT_SETTINGS.polled).toEqual({ codex: { on: true }, fprints: { on: true } });
-		expect(POLLED_READS_PER_UPDATE).toBe(1000);
 		expect(parseSettings({ polled: { fprints: { on: false } } }).settings.polled).toEqual({ codex: { on: true }, fprints: { on: false } });
 		// Settings saved before polled sites existed get the defaults.
 		expect(parseSettings({ top: 5 }).settings.polled.codex).toEqual({ on: true });

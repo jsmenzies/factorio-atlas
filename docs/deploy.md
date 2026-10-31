@@ -382,7 +382,9 @@ cache when it writes anything.
 without asking (the flag is the consent). It also bumps the page cache when the run replaced a page
 at a new stamp, removed a page, or scheduled files for deletion, since cached pages name those files
 and they go after the grace period. It never fails the run: when it can't finish, it prints the
-command to run by hand (`bun run render:flags --stage prod --bump`) and the run exits with code 4.
+command to run by hand (`bun run render:flags --stage prod --bump`) and the run exits with code 4. It
+runs before the run's row is final (even after a stop or a failure), so the run's pages show it as the
+last phase.
 
 ## Screenshots
 
@@ -582,10 +584,13 @@ In order, each step being the command you'd otherwise run by hand:
    "Removal requests"). It runs whatever else happens; if it fails, the update says so and skips
    screenshots and render, which could otherwise put a removed print's files back.
 2. Fetch: for the mirror, `git fetch`, a comparison by print id, then a fast-forward. A source is
-   held back, and only it, when the prints added, deleted or moved since the last fetch are more than
-   5% of them (as a layout change would; edits in place don't count), when it would be left with no
-   prints, or when the clone has commits the mirror doesn't. Once you've looked at the mirror,
-   `bun run sync --accept <commit>` (or Accept on the Overview) lets that commit through.
+   held back, and only it, by one rule for every source: when its new and removed prints in one
+   update (the mirror's moved files too, as a layout change would bring) are more than 5% of the
+   prints this machine knows from it and more than 25; edits never count. A first import (nothing
+   known yet) is held back once too, and so is a source that would be left with no prints, or a clone
+   with commits the mirror doesn't have. The message names the counts ("62 new, 3 removed: more than
+   5% (25 at least) of 466"). Once you've looked at the source, `bun run sync --accept <id>` (or Accept
+   on the Update tab) lets that change through.
 3. Ingest: `backfill --from-clone`, skipped when neither the sources nor the analyzer, index or
    viewer version changed since the last update that ran it to the end. A backfill whose failures
    aren't the records' own (storage, the network, a worker) doesn't count as the end.
@@ -603,15 +608,15 @@ past the newest change it has seen (usually one request; fprints' sitemap lists 
 reads each new or changed print (codex's with `?skip_view=true`, so no view is counted), and keeps it
 in the record store's inbox
 (`<RECORDS_DIR>/.polled/<site>/`). Every request sends a User-Agent naming this project, at most one
-a second; an update reads at most 1,000 prints per site (built in, not a setting), the rest wait for the next one. When the
+a second; an update reads every new or changed print (no cap; a stop leaves the rest for the next one). When the
 site's total doesn't match what this machine knows, and once a week, it lists every page (fprints:
 every update): a print missing from the list is read once more, and a 404 (fprints: its API's "no
 rows" answer) or a print no longer public is a deletion (a print
 the list still shows is never one: its failed read is tried again). fprints' sitemap is a file the
 site rebuilds now and then, not a live list, so its new prints and edits are seen only once it is
 rebuilt, and a print deleted or made private while still listed is a failed read (tried again, never
-a deletion) until then. More than the 5% guard missing, or an empty list, holds the site back until
-accepted. In the ingest step,
+a deletion) until then. New and missing prints past the hold-back rule above, or an empty list, hold the
+site back until accepted (the reads also find no more prints gone than that rule allows). In the ingest step,
 after the backfill, `bun run polled --stage … --site codex|fprints` puts every new or changed record through
 the same gate as any print (blocks, joins with the same blueprint already here, suggestions), and
 each deletion as a source gone: kept while another site has the print, else deleted with its renders,
@@ -635,11 +640,14 @@ process was killed is closed as failed by the next, once its processes are gone.
 Its settings (each polled site on or off, the 5% guard, author lookups, screenshots and
 Imgur rechecks, render on or off, the top N favourites to render, how many prints to render per update and
 render workers) are saved in the local D1 as they are changed on the Update tab (`/admin/update`) under
-`bun run dev`; without them the defaults apply. There, the Update tab draws the update as a flow: one lane per source
-(factorioprints, codex, fprints, uploads) through Waiting (the last check), Read (its fetch) and the gate (the backfill,
-or the polled admission), into the shared screenshot and render stages, with the update's own figures, live from its
-log while a step runs; the seven steps above it open to every figure each recorded; Start, Stop and the log are at the
-top. `/admin` is the Overview: what the site has by source, what needs a look (open removal requests, upload
+`bun run dev`; without them the defaults apply. There, the Update tab draws the update as a board: one row per source
+(factorioprints, codex, fprints, uploads) across the steps in order, Changes (at the source), Added (the one gate,
+one source at a time), Authors, Screenshots, then the render run's stages Plan, Draw, Upload and Thumbnails, with a
+Shared row for what is done once (screenshots' sizing and upload, the run's summary, Clean up and Search flags). Each
+cell is a status and the update's own figures, live while a step runs (the render run writes its stages per source to
+its row as it goes; the other steps' counts come from the log). Before an update the board shows what the last check
+found; the seven steps above it open to one line on each and every figure it recorded; Start, Stop and the log are at
+the top. `/admin` is the Overview: what the site has by source, what needs a look (open removal requests, upload
 screenshots to approve, accounts being deleted), render coverage and past updates. `/admin/settings`
 redirects to the Update tab.
 

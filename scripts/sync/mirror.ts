@@ -7,7 +7,7 @@
  */
 import { spawn } from 'node:child_process';
 import { basename } from 'node:path';
-import type { SourceCursor, SourcePlan } from '#lib/sync.js';
+import { holdBack, type SourceCursor, type SourcePlan } from '#lib/sync.js';
 import { isModern } from '../render/scope';
 import { blueprintPages, decode } from '../render/source';
 
@@ -136,9 +136,9 @@ const countPrints = async (clone: string, ref: string, signal?: AbortSignal) =>
  * Fetch the mirror's latest commit and compare it with the clone's: every mirror commit since the
  * clone was last pulled, together. Leaves the working tree alone. It holds the source back, reading
  * no records (favourites and 2.0+ counts stay 0), when the clone has commits the mirror lacks (a
- * rewritten history), when the latest commit has no prints, or when adds, deletions and moves are
- * more than `maxChange` of the prints (against the larger of the two trees) unless that commit was
- * accepted.
+ * rewritten history), when the latest commit has no prints, or by the one hold-back rule (#lib/sync.js
+ * `holdBack`): adds, deletions and moves more than `maxChange` of the clone's prints and at least 25, or a first
+ * import, unless that commit was accepted. Edits never count.
  */
 export async function planMirror(clone: string, o: PlanOptions): Promise<SourcePlan> {
 	await git(clone, ['fetch', '--quiet', 'origin'], o.signal);
@@ -170,17 +170,16 @@ export async function planMirror(clone: string, o: PlanOptions): Promise<SourceP
 	const changes = moved
 		? changesByID(await git(clone, ['diff', '--no-renames', '--name-status', 'HEAD', remoteRef], o.signal))
 		: { added: [], modified: [], deleted: [] };
-	const most = Math.max(prints, before);
-	const changedShape = structural(changes);
-	if (o.accept !== to.id && changedShape / most > o.maxChange)
-		return {
-			...base,
-			added: changes.added.length,
-			deleted: changes.deleted,
-			blocked:
-				`${changedShape.toLocaleString('en-US')} of ${most.toLocaleString('en-US')} prints were added, deleted or moved since the last fetch ` +
-				`(more than ${Math.round(o.maxChange * 100)}%): check the mirror (a layout change?), then accept it if it's right`
-		};
+	const held = holdBack({
+		added: changes.added.length,
+		removed: changes.deleted.length,
+		moved: structural(changes) - changes.added.length - changes.deleted.length,
+		known: before,
+		maxChange: o.maxChange,
+		accepted: o.accept === to.id,
+		what: 'the mirror (a layout change?)'
+	});
+	if (held) return { ...base, added: changes.added.length, deleted: changes.deleted, blocked: held };
 	const show = (ref: string, path: string) => git(clone, ['show', `${ref}:${path}`], o.signal);
 	const edited: string[] = [];
 	let favourites = 0;

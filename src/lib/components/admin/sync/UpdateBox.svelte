@@ -149,7 +149,7 @@
 					{:else if phase === 'crashed' && run}
 						Its heartbeat stopped {ago(now - run.updated_at)}: its process probably ended (a restart, or killed). Start another: every step carries on from where things are.
 					{:else if phase === 'blocked'}
-						Every other source and step still runs. Look at the source, then Accept on its lane.
+						Every other source and step still runs. Look at the source, then Accept in its Changes cell below.
 					{:else if plan}
 						{#if phase === 'current'}
 							{@const line = upToDateLine(plan)}

@@ -28,8 +28,9 @@ export interface SyncSettings {
 	authors: boolean;
 	authorLimit: number;
 	/**
-	 * Hold a source back when the prints added, deleted or moved since the last fetch are more than this
-	 * share of them (a layout change); edits in place don't count. A held-back update can be accepted.
+	 * Hold a source back when its new and removed prints (the mirror's moved files too) in one update are more
+	 * than this share of the prints known from it, and at least HOLD_FLOOR; edits don't count (`holdBack`). A
+	 * held-back update can be accepted.
 	 */
 	maxChange: number;
 	/** Each polled site (POLLED_SITES): fetched in the fetch step, admitted in the ingest step, when on. */
@@ -54,11 +55,46 @@ export interface PolledSettings {
 export const DEFAULT_POLLED: PolledSettings = { on: true };
 
 /**
- * Record reads an update makes at most on one polled site (new and changed prints, and deletions to confirm);
- * the rest wait for the next update. A backstop, not a setting: after the first import a site gives only its
- * changes. (Settings saved before 2026-10-30 may carry `polled.<site>.perUpdate`: ignored.)
+ * The hold-back rule, the same for every source the update fetches (the mirror and the polled sites): a source
+ * is held back (its fetch skipped, the others carry on; Accept lets that one change through) when its new and
+ * removed prints in one update (the mirror's moved files too) are more than `maxChange` of the prints this
+ * machine knows from it, and never for fewer than HOLD_FLOOR. Edits never count. A first import (nothing known
+ * yet, something new) is held back once for Accept. Hard stops outside the share (an empty list while prints are
+ * known, a rewritten mirror history) are the sources' own. Every update reads every new or changed record: there
+ * is no read cap. (Settings saved before 2026-10-30 may carry `polled.<site>.perUpdate`: ignored.)
  */
-export const POLLED_READS_PER_UPDATE = 1000;
+export const HOLD_FLOOR = 25;
+
+/** The most new + removed prints one update may bring from a source before it is held back. */
+export const holdLimit = (maxChange: number, known: number) => Math.max(maxChange * known, HOLD_FLOOR);
+
+/**
+ * Why a source is held back, or null: its counts, the share and the floor ("62 new, 3 removed: more than 5% (25
+ * at least) of 466; check the site, then accept it if it's right"). `what` names the source for the advice.
+ */
+export function holdBack(o: {
+	added: number;
+	removed: number;
+	/** The mirror's files that moved (a layout change), counted with the rest. */
+	moved?: number;
+	known: number;
+	maxChange: number;
+	accepted?: boolean;
+	what?: string;
+}): string | null {
+	if (o.accepted) return null;
+	const n = (x: number) => x.toLocaleString('en-US');
+	const counts = [`${n(o.added)} new`, `${n(o.removed)} removed`, ...(o.moved ? [`${n(o.moved)} moved`] : [])].join(', ');
+	if (o.known === 0)
+		return o.added + o.removed + (o.moved ?? 0) > 0
+			? `${counts}: a first import; check ${o.what ?? 'the site'}, then accept it to import them`
+			: null;
+	if (o.added + o.removed + (o.moved ?? 0) <= holdLimit(o.maxChange, o.known)) return null;
+	return (
+		`${counts}: more than ${Math.round(o.maxChange * 100)}% (${HOLD_FLOOR} at least) of ${n(o.known)}; ` +
+		`check ${o.what ?? 'the site'}, then accept it if it's right`
+	);
+}
 
 export const DEFAULT_SETTINGS: SyncSettings = {
 	top: 1000,

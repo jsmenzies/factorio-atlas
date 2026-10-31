@@ -1494,8 +1494,9 @@ process.exit(exitCode || (run.failed ? 2 : 0) || (uploadsLeft ? 3 : 0) || (flags
 
 /**
  * `--flags`: the upload target's render flags and cover thumbnails (`render:flags`, the same code),
- * and a page-cache bump when the run replaced or removed files cached pages may name. Last, after
- * the run's state is saved, and never fatal: a failure prints the command to run by hand.
+ * and a page-cache bump when the run replaced or removed files cached pages may name. Last, before
+ * the run's final state is saved (phase 'flags', the row still live), and never fatal: a failure prints the
+ * command to run by hand.
  */
 async function flagsStep(): Promise<boolean> {
 	const u = uploader!.stats;
