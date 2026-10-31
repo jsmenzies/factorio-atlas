@@ -135,6 +135,10 @@ const stageKey = (site: string) => (site === 'uploads' ? 'upload' : site) as key
 
 // --- cells
 
+/** The noun for `n` things: singular for exactly one ("1 print"), else plural ("2 prints"; `many` when not +s). */
+const noun = (n: number, one: string, many = `${one}s`) => (n === 1 ? one : many);
+/** "1 print", "2,117 pages". */
+const count = (n: number, one: string, many?: string) => `${int(n)} ${noun(n, one, many)}`;
 const fact = (n: number | string | null | undefined, text: string, tone?: Fact['tone']): Fact[] =>
 	n === null || n === undefined || n === 0 || n === '0' ? [] : [{ n, text, ...(tone ? { tone } : {}) }];
 const cell = (kind: CellKind, facts: Fact[] = [], tip = '', extra: Partial<Cell> = {}): Cell => ({ kind, facts, tip, ...extra });
@@ -167,9 +171,23 @@ export function fitCell(c: Cell, lines = CELL_LINES): Cell {
 
 const stepOf = (run: SyncRun | null, id: SyncStepId) => run?.steps.find((s) => s.id === id);
 const stepNo = (id: SyncStepId) => SYNC_STEPS.findIndex((s) => s.id === id) + 1;
+/** Row labels shown as facts that name a plural, as they read for exactly one. */
+const SINGULAR: Record<string, string> = {
+	'new prints': 'new print',
+	'commits fetched': 'commit fetched',
+	'refused as duplicates': 'refused as a duplicate',
+	'new names put on uploads': 'new name put on uploads',
+	'names still to put on uploads': 'name still to put on uploads',
+	'accounts being deleted': 'account being deleted'
+};
 /** A group's rows as facts (zeros and muted rows left out). */
 const factsOf = (g: DetailGroup | undefined, skip: string[] = [], rename: Record<string, string> = {}): Fact[] =>
-	(g?.rows ?? []).filter((r) => !r.muted && !skip.includes(r.label)).flatMap((r) => fact(r.value, rename[r.label] ?? r.label, r.tone));
+	(g?.rows ?? [])
+		.filter((r) => !r.muted && !skip.includes(r.label))
+		.flatMap((r) => {
+			const text = rename[r.label] ?? r.label;
+			return fact(r.value, (r.value === 1 && SINGULAR[text]) || text, r.tone);
+		});
 /** A group's rows as "label 12 · label 3", for a tooltip. */
 const rowsText = (g: DetailGroup | undefined, only?: string[]) =>
 	(g?.rows ?? [])
@@ -199,7 +217,7 @@ function changesBefore(p: SourcePlan | null, site: string, ago: string): Cell {
 			'done',
 			[],
 			p.polled
-				? `${int(p.prints)} prints on the site; nothing new since the last update (checked ${ago}).`
+				? `${count(p.prints, 'print')} on the site; nothing new since the last update (checked ${ago}).`
 				: site === 'uploads'
 					? 'No uploads waiting: they are admitted on the site as they’re posted.'
 					: `GitHub mirror at ${shortCommit(p.to.id)}: nothing new since the last update (checked ${ago}).`
@@ -209,14 +227,14 @@ function changesBefore(p: SourcePlan | null, site: string, ago: string): Cell {
 		return cell(
 			'found',
 			[...fact(p.added, 'new'), ...fact(p.edited, 'changed'), ...fact(p.deleted.length, 'gone?')],
-			`Found by the last check, ${ago}: ${int(p.prints)} prints on the site; ${int(toRead(p))} to read, one a second` +
+			`Found by the last check, ${ago}: ${count(p.prints, 'print')} on the site; ${int(toRead(p))} to read, one a second` +
 				(p.left ? ` (${int(p.left)} left from the last update)` : '') +
 				'.'
 		);
 	return cell(
 		'found',
 		[...fact(p.added, 'new'), ...fact(p.edited, 'edited'), ...fact(p.deleted.length, 'deleted', 'warn')],
-		`Found by the last check, ${ago}: ${p.behind ? `${int(p.behind)} commits behind` : 'behind'}` +
+		`Found by the last check, ${ago}: ${p.behind ? `${count(p.behind, 'commit')} behind` : 'behind'}` +
 			(p.favourites ? `, ${int(p.favourites)} only favourite counts changed` : '') +
 			'.'
 	);
@@ -264,7 +282,7 @@ function changesCell(
 				...fact(c.failed, 'failed', 'bad'),
 				...fact(c.left, 'left over', 'warn')
 			],
-			`${onSite !== undefined ? `${int(onSite)} prints on the site; ` : ''}read in this update: ${int(c.new ?? 0)} new, ${int(c.changed ?? 0)} changed.`
+			`${onSite !== undefined ? `${count(onSite, 'print')} on the site; ` : ''}read in this update: ${int(c.new ?? 0)} new, ${int(c.changed ?? 0)} changed.`
 		);
 	}
 	const g = groupOf(fetch, (t) => t === site);
@@ -327,14 +345,14 @@ function addedCell(mode: BoardMode, run: SyncRun | null, site: string, progress:
 		const suggest = valueOf(g, ROW.suggestions);
 		return settled(
 			[
-				...fact(valueOf(g, ROW.newPrints), 'new'),
+				...fact(valueOf(g, ROW.newPrints), 'added'),
 				...fact(valueOf(g, ROW.joined), 'matched'),
 				...fact(updated, 'updated'),
 				...fact(valueOf(g, ROW.blocked), 'blocked', 'warn'),
 				...fact(valueOf(g, ROW.unreadable), 'unreadable', 'warn'),
 				...fact(valueOf(g, ROW.failedRetried), 'failed', 'bad')
 			],
-			`${int(of)} records through the gate${suggest ? `, ${int(suggest)} new with suggestions` : ''}. ${MATCH_TIP}`
+			`${count(of, 'record')} through the gate${suggest ? `, ${int(suggest)} new with suggestions` : ''}. ${MATCH_TIP}`
 		);
 	}
 	if (ingest.status === 'running') {
@@ -357,13 +375,13 @@ function addedCell(mode: BoardMode, run: SyncRun | null, site: string, progress:
 			);
 		return settled(
 			[
-				...fact(s.new, 'new'),
+				...fact(s.new, 'added'),
 				...fact(s.joined, 'matched'),
 				...fact((s.updated ?? 0) + (s.unchanged ?? 0), 'updated'),
 				...fact(s.undecodable, 'unreadable', 'warn'),
 				...fact(s.failed, 'failed', 'bad')
 			],
-			`${int(seen)} of ${int(of)} records through the gate; the full figures come at the step’s end. ${MATCH_TIP}`
+			`${int(seen)} of ${count(of, 'record')} through the gate; the full figures come at the step’s end. ${MATCH_TIP}`
 		);
 	}
 	return ingest.status === 'done' || ingest.status === 'warning' ? cell('done', [], 'Nothing to add.') : notRun(ingest);
@@ -463,7 +481,7 @@ function shotsCell(mode: BoardMode, run: SyncRun | null, site: string, progress:
 const putFacts = (put: { files: number; bytes: number }): Fact[] =>
 	put.files
 		? [
-				{ n: formatCount(put.files), text: 'files' },
+				{ n: formatCount(put.files), text: noun(put.files, 'file') },
 				{ n: megabytes(put.bytes), text: '' }
 			]
 		: [];
@@ -516,10 +534,10 @@ function stagesFor(
  * moves it to the tooltip.
  */
 function thumbFacts(t: ThumbsStage, live: boolean): Fact[] {
-	const pages: Fact[] = t.pagesOf ? [{ n: `${int(t.pagesMade ?? 0)} of ${int(t.pagesOf)}`, text: 'pages' }] : [];
-	const rest: Fact[] = [{ n: `${int(t.done)} of ${int(t.of)}`, text: 'prints' }, ...fact(t.waitingUpload, 'waiting on upload')];
+	const pages: Fact[] = t.pagesOf ? [{ n: `${int(t.pagesMade ?? 0)} of ${int(t.pagesOf)}`, text: noun(t.pagesOf, 'page') }] : [];
+	const rest: Fact[] = [{ n: `${int(t.done)} of ${int(t.of)}`, text: noun(t.of, 'print') }, ...fact(t.waitingUpload, 'waiting on upload')];
 	if (!live || !t.filesOf) return [...pages, ...rest];
-	return [{ n: `${int(t.filesUp ?? 0)} of ${int(t.filesOf)}`, text: 'files uploading' }, ...rest, ...pages];
+	return [{ n: `${int(t.filesUp ?? 0)} of ${int(t.filesOf)}`, text: `${noun(t.filesOf, 'file')} uploading` }, ...rest, ...pages];
 }
 
 function renderCells(
@@ -549,18 +567,18 @@ function renderCells(
 	const planCell = cell(
 		queueing ? 'part' : plan.failed ? 'warn' : 'done',
 		[
-			...fact(plan.prints, 'prints'),
-			...fact(plan.queued, 'pages to draw'),
+			...fact(plan.prints, noun(plan.prints, 'print')),
+			...fact(plan.queued, `${noun(plan.queued, 'page')} ${live ? 'to draw' : 'planned'}`),
 			...fact(plan.skipped, 'skipped'),
 			...fact(plan.failed, 'failed before', 'warn')
 		],
-		`${PRINT_WORDS} ${int(plan.pages)} pages looked at, ${int(plan.unchanged)} unchanged (drawn before from the same input); skipped = ` +
+		`${PRINT_WORDS} ${count(plan.pages, 'page')} looked at, ${int(plan.unchanged)} unchanged (drawn before from the same input); skipped = ` +
 			`pre-2.0, empty, modded or undecodable${plan.failed ? '; failed before = failed every attempt in an earlier run, or no record' : ''}.` +
 			`${retrying ? ' Retrying failed pages: pages that failed every attempt before are drawn again.' : ''} ${RENDER_TIP}`
 	);
 	/** "x of y prints", when the run has prints from this source. */
 	const ofPrints = (x: number | undefined): Fact[] =>
-		x === undefined || !plan.prints ? [] : [{ n: `${int(x)} of ${int(plan.prints)}`, text: 'prints' }];
+		x === undefined || !plan.prints ? [] : [{ n: `${int(x)} of ${int(plan.prints)}`, text: noun(plan.prints, 'print') }];
 	const drawTip = 'Biggest pages first; a page that fails three times is left for the next update.';
 	const drawCell = !plan.queued
 		? queueing
@@ -569,7 +587,7 @@ function renderCells(
 		: cell(
 				live && draw.left ? 'part' : draw.failed || draw.left ? 'warn' : 'done',
 				[
-					...fact(draw.drawn, 'pages drawn'),
+					...fact(draw.drawn, `${noun(draw.drawn, 'page')} drawn`),
 					...ofPrints(draw.printsDone),
 					...fact(draw.failed, 'failed', 'bad'),
 					...fact(draw.left, live ? 'to draw' : 'left', live ? undefined : 'warn')
@@ -582,13 +600,13 @@ function renderCells(
 		: cell(
 				live && (upload.waiting || (plan.queued && draw.left)) ? 'part' : upload.waiting || upload.failing ? 'warn' : 'done',
 				[
-					...fact(upload.pages, 'pages uploaded'),
+					...fact(upload.pages, `${noun(upload.pages, 'page')} uploaded`),
 					...ofPrints(upload.printsUp),
 					...fact(upload.waiting, 'waiting', live ? undefined : 'warn'),
-					...fact(upload.failing, 'failing', 'bad')
+					...fact(upload.failing, live ? 'failing' : 'failed', 'bad')
 				],
 				`Each page’s files go to the renders bucket as soon as it’s drawn (pages drawn earlier and not up yet go too): ` +
-					`${int(upload.files)} files so far.${live && draw.left ? ` Up to ${int(draw.left)} more pages to come.` : ''}` +
+					`${count(upload.files, 'file')} so far.${live && draw.left ? ` Up to ${int(draw.left)} more ${noun(draw.left, 'page')} to come.` : ''}` +
 					`${upload.printsUp !== undefined ? ' x of y prints: prints with every page drawn and up.' : ''}` +
 					`${upload.waiting && !live ? ' Waiting pages go up in the next update.' : ''}`
 			);
@@ -623,8 +641,8 @@ function sharedRender(
 		? settings.render
 			? [
 					[
-						settings.workers ? `${int(settings.workers)} threads` : 'default threads',
-						settings.perUpdate === null ? 'every print with work' : `≤ ${int(settings.perUpdate)} prints`,
+						settings.workers ? count(settings.workers, 'thread') : 'default threads',
+						settings.perUpdate === null ? 'every print with work' : `≤ ${count(settings.perUpdate, 'print')}`,
 						settings.top ? `top ${int(settings.top)}` : ''
 					]
 						.filter(Boolean)
@@ -635,7 +653,7 @@ function sharedRender(
 	const started = mode !== 'before' && step && step.status !== 'pending' ? step.startedAt : undefined;
 	const took = started !== undefined ? (step!.finishedAt ?? now) - started : 0;
 	const t = stages ? stageTotals(stages) : null;
-	if (t) lines.push(`${int(t.prints)} prints · ${int(t.drawn)} pages drawn${t.failed ? ` · ${int(t.failed)} failed` : ''}`);
+	if (t) lines.push(`${count(t.prints, 'print')} · ${count(t.drawn, 'page')} drawn${t.failed ? ` · ${int(t.failed)} failed` : ''}`);
 	const summary = {
 		title:
 			started !== undefined && (stages || row)
@@ -714,8 +732,8 @@ export function renderNow(r: RenderRun | null): RenderNow {
 			const label = r.upload_target ? 'Making and uploading thumbnails' : 'Making thumbnails';
 			const t = r.options.stages ? stageTotals(r.options.stages) : null;
 			if (!t?.thumbsOf) return now('thumbnails', `${label}.`);
-			const files = t.thumbFilesOf ? ` Uploading ${int(t.thumbFilesUp)} of ${int(t.thumbFilesOf)} files.` : '';
-			return now('thumbnails', `${label}: ${int(t.thumbsDone)} of ${int(t.thumbsOf)} prints.${files}`, t.thumbsDone, t.thumbsOf);
+			const files = t.thumbFilesOf ? ` Uploading ${int(t.thumbFilesUp)} of ${count(t.thumbFilesOf, 'file')}.` : '';
+			return now('thumbnails', `${label}: ${int(t.thumbsDone)} of ${count(t.thumbsOf, 'print')}.${files}`, t.thumbsDone, t.thumbsOf);
 		}
 		case 'uploads': {
 			const left = r.uploads_pending;

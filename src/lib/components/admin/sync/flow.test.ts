@@ -112,8 +112,8 @@ describe('the board after the update of 2026-10-30', () => {
 	});
 
 	test('Added: each site’s own outcome, "matched" for joined; the backfill skipped; authors not run', () => {
-		expect(said(cellOf(f, 'codex', 'added'))).toBe('warn · 355 new · 73 matched · 3 failed');
-		expect(said(cellOf(f, 'fprints', 'added'))).toBe('warn · 378 new · 27 matched · 2 unreadable');
+		expect(said(cellOf(f, 'codex', 'added'))).toBe('warn · 355 added · 73 matched · 3 failed');
+		expect(said(cellOf(f, 'fprints', 'added'))).toBe('warn · 378 added · 27 matched · 2 unreadable');
 		expect(said(cellOf(f, 'factorioprints', 'added'))).toBe('done');
 		expect(cellOf(f, 'factorioprints', 'added').tip.startsWith('Backfill skipped: nothing changed')).toBe(true);
 		expect(cellOf(f, 'factorioprints', 'authors')).toMatchObject({
@@ -266,7 +266,7 @@ describe('the board while an update runs', () => {
 			{ t: 'record', site: 'fprints', outcome: 'new' }
 		);
 		const g = flowOf({ run: r, phase: 'running', progress: later });
-		expect(said(cellOf(g, 'codex', 'added'))).toBe('warn · 1 new · 1 failed');
+		expect(said(cellOf(g, 'codex', 'added'))).toBe('warn · 1 added · 1 failed');
 		expect(running(g)).toEqual(['fprints added']);
 	});
 });
@@ -499,7 +499,7 @@ describe('render per source', () => {
 		// A step from before `render` was recorded, naming its run: that run's stages.
 		r.steps = r.steps.map((s) => (s.id === 'render' ? { ...failed, status: 'done', runId: 'r1' } : s));
 		const old = flowOf({ run: r, phase: 'current', latestRender: renderRow({ state: 'finished' }), liveRender: null });
-		expect(said(cellOf(old, 'codex', 'plan'))).toBe('done · 58 prints · 2,117 pages to draw · 140 skipped');
+		expect(said(cellOf(old, 'codex', 'plan'))).toBe('done · 58 prints · 2,117 pages planned · 140 skipped');
 		// While the step runs, a run that isn't live (stopped responding, or a finished one) isn't read.
 		const g = flowOf({ run: inRender(), phase: 'running', latestRender: renderRow(), liveRender: null });
 		expect(cellOf(g, 'codex', 'plan').kind).toBe('wait');
@@ -511,7 +511,29 @@ describe('render per source', () => {
 		const f = flowOf({ run: inRender(), phase: 'running', liveRender: renderRow({}, s) });
 		expect(f.rows.map((r) => r.site)).toEqual(['factorioprints', 'codex', 'fprints', 'uploads', 'factoriobin']);
 		expect(cellOf(f, 'factoriobin', 'changes').kind).toBe('na');
-		expect(said(cellOf(f, 'factoriobin', 'plan'))).toBe('done · 1 prints · 1,310 pages to draw · 60 skipped');
+		expect(said(cellOf(f, 'factoriobin', 'plan'))).toBe('done · 1 print · 1,310 pages to draw · 60 skipped');
+	});
+
+	test('the last run in the past tense, one of a thing in the singular', () => {
+		const one = stages({
+			sites: {
+				codex: {
+					plan: { prints: 1, pages: 1, queued: 1, unchanged: 0, skipped: 0, failed: 0 },
+					draw: { drawn: 1, failed: 0, left: 0, printsDone: 1, printsDrawn: 1 },
+					upload: { pages: 1, files: 1, bytes: 1, waiting: 0, failing: 1, printsUp: 1 },
+					thumbs: { done: 1, of: 1, pagesMade: 1, pagesOf: 1 }
+				}
+			}
+		});
+		const r = inRender();
+		r.state = 'finished';
+		r.steps = r.steps.map((s) => (s.id === 'render' ? { ...s, status: 'done', finishedAt: 1_005_000, render: one } : s));
+		const f = flowOf({ run: r, phase: 'current', liveRender: null });
+		expect(said(cellOf(f, 'codex', 'plan'))).toBe('done · 1 print · 1 page planned');
+		expect(said(cellOf(f, 'codex', 'draw'))).toBe('done · 1 page drawn · 1 of 1 print');
+		expect(said(cellOf(f, 'codex', 'upload'))).toBe('warn · 1 page uploaded · 1 of 1 print · 1 failed');
+		expect(said(cellOf(f, 'codex', 'thumbs'))).toBe('done · 1 of 1 page · 1 of 1 print');
+		expect(f.shared.summary.lines).toContain('1 print · 1 page drawn');
 	});
 });
 

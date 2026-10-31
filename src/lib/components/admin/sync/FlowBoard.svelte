@@ -128,13 +128,13 @@
 	<div class="flex flex-wrap items-baseline gap-x-6 gap-y-1 rounded-lg border border-stone-800 bg-gradient-to-r from-amber-500/[0.06] to-transparent px-4 py-2.5 text-sm">
 		<span class="text-xs font-semibold tracking-wide text-stone-500 uppercase">→ The site{figures ? ` · ${figures.stage}` : ''}</span>
 		{#if figures}
-			<span><b class="text-lg font-semibold text-stone-100 tabular-nums">{int(figures.prints)}</b> <span class="text-stone-400">prints</span></span>
+			<span><b class="text-lg font-semibold text-stone-100 tabular-nums">{int(figures.prints)}</b> <span class="text-stone-400">{figures.prints === 1 ? 'print' : 'prints'}</span></span>
 			<span><b class="text-lg font-semibold text-stone-100 tabular-nums">{int(figures.rendered)}</b> <span class="text-stone-400">with a render</span></span>
 			<span class="text-xs text-stone-500">as counted {when(figures.at, now, timeZone)}</span>
 		{:else}
 			<span class="text-stone-500">not counted yet</span>
 		{/if}
-		{#if flow.newPrints}<span class="text-emerald-300 tabular-nums">+{int(flow.newPrints)} new prints {flow.live ? 'so far in this update' : 'in the last update'}</span>{/if}
+		{#if flow.newPrints}<span class="text-emerald-300 tabular-nums">+{int(flow.newPrints)} new {flow.newPrints === 1 ? 'print' : 'prints'} {flow.live ? 'so far in this update' : 'in the last update'}</span>{/if}
 	</div>
 {/snippet}
 
