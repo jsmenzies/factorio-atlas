@@ -4,8 +4,8 @@
 	import type { RenderTotals } from '#lib/server/admin/sync.js';
 	import { R2_STORAGE_PER_GB_MONTH, type SyncFigures } from '#lib/sync.js';
 	import { PIPELINE_DEP } from '../live.svelte.js';
-	import { ago, int, percent } from '../metrics.js';
-	import { BUCKET_TEXT, NO_NAMES, NOT_APPLICABLE, r2Panel, rendersBySite, siteTable, size, type SiteRow } from './site-figures.js';
+	import { ago, int } from '../metrics.js';
+	import { BUCKET_TEXT, NO_NAMES, NOT_APPLICABLE, r2Panel, siteTable, size, type SiteRow } from './site-figures.js';
 
 	/**
 	 * The Overview's "What the site has": headline cards, then one row per source (the site each print is credited
@@ -42,7 +42,6 @@
 	const version = $derived(figures?.analyzerVersion ?? (figures ? Math.max(0, ...Object.keys(figures.analysed).map(Number)) : 0));
 	const r2 = $derived(figures?.r2 && 'buckets' in figures.r2 ? r2Panel(figures.r2.buckets) : null);
 	const r2Error = $derived(figures?.r2 && 'error' in figures.r2 ? figures.r2.error : null);
-	const estimate = $derived(r2 && table ? rendersBySite(table.rows, r2.buckets.find((b) => b.kind === 'renders')?.bytes ?? 0) : []);
 	const left = $derived(scopes.union.left);
 
 	const cards = $derived([
@@ -51,7 +50,9 @@
 		{
 			t: 'With a render',
 			n: int(figures?.rendered ?? scopes.union.rendered),
-			sub: `${int(totals.pages)} book pages${left ? ` · ${int(left)} left` : ''}`
+			sub: [`${int(totals.pages)} book pages`, left ? `${int(left)} left` : '', table?.total.render.older ? `${int(table.total.render.older)} before 2.0` : '']
+				.filter(Boolean)
+				.join(' · ')
 		},
 		{ t: 'R2 storage', n: r2 ? `≈ ${size(r2.bytes)}` : '—', sub: r2 ? `≈ $${r2.dollars.toFixed(2)} a month` : r2Error ? 'couldn’t be read' : null }
 	]);
@@ -69,11 +70,11 @@
 		{
 			t: 'Rendered',
 			sub: 'out of its prints we render',
-			tip: 'We render prints with a page saved in Factorio 2.0 or later, plus factorioprints’ top favourites. The bar: rendered, can’t be drawn (mods, empty, planners only), failed, waiting. From this machine’s render queue.'
+			tip: 'We render prints with a page saved in Factorio 2.0 or later, plus factorioprints’ top favourites. “Before 2.0”: prints a render run looked at whose every page was saved before 2.0, not rendered. The bar: rendered, can’t be drawn (mods, empty, planners only), failed, waiting. From this machine’s render queue.'
 		},
 		{ t: 'Book pages drawn', sub: 'and their size on this machine', tip: 'Pages with a render: each page of a book is its own render. The size is their files on this machine.' },
 		{
-			t: 'Pulled (all time)',
+			t: 'Pulled',
 			sub: 'posts fetched from the site',
 			tip: 'Every post pulled from the site and still there. Duplicates of another site’s print show on it as “Also on”; duplicates on the same site join the first post; posts that couldn’t be read or were refused (blocked, too big) never became prints. “—”: not known on this machine.'
 		}
@@ -114,7 +115,7 @@
 
 {#snippet row(r: SiteRow, total: boolean)}
 	{@const na = NOT_APPLICABLE[r.site as keyof typeof NOT_APPLICABLE]}
-	<tr class="border-t align-top {total ? 'border-stone-700 bg-white/[0.02]' : 'border-stone-800/70'}">
+	<tr class="border-t align-top {total ? 'border-stone-700 bg-stone-950/40' : 'border-stone-800/70'}">
 		<th scope="row" class="sticky left-0 bg-stone-950 py-2.5 pr-3 pl-3 text-left font-semibold whitespace-nowrap text-stone-100 sm:static sm:bg-transparent">{r.name}</th>
 		<td class="px-2 py-2.5 text-base font-semibold text-stone-100">{int(r.prints)}</td>
 		<td class="px-2 py-2.5 text-stone-200">{int(r.listed)}</td>
@@ -132,6 +133,7 @@
 				{#if r.render.none}<div>{int(r.render.none)} can’t be drawn</div>{/if}
 				{#if r.render.failed}<div class="text-rose-300">{int(r.render.failed)} failed</div>{/if}
 				{#if r.render.left}<div>{int(r.render.left)} waiting</div>{/if}
+				{#if r.render.older}<div>{int(r.render.older)} before 2.0, not rendered</div>{/if}
 			</div>
 		</td>
 		<td class="px-2 py-2.5"><div class="text-stone-100">{int(r.render.pages)}</div><div class="text-xs text-stone-500">{size(r.render.bytes)}</div></td>
@@ -212,74 +214,59 @@
 		<p class="{card} text-sm text-stone-400">Not counted by source yet: the next update (or Count again) counts them.</p>
 	{/if}
 
-	<section class={card} aria-labelledby="r2-title">
-		<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-			<h3 id="r2-title" class={label}>
-				R2 storage{@render q('What Cloudflare stores for the site, from R2’s own analytics, read by the figures step. The site’s buckets only; sizes are object data plus metadata, as storage is billed, at each bucket’s latest reading in the last week.')}
-			</h3>
-			<p class="text-xs text-stone-500">from Cloudflare’s R2 analytics · whole site, not per source</p>
-		</div>
-		{#if r2}
-			<div class="mt-2 grid gap-x-8 gap-y-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+	<section aria-labelledby="r2-title" class="space-y-2">
+		<h3 id="r2-title" class={label}>R2 storage</h3>
+		<div class="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+			<div class="overflow-x-auto rounded-lg border border-stone-800 bg-stone-900/50">
 				<table class="w-full text-sm tabular-nums">
-					<thead>
-						<tr class="text-xs tracking-wide text-stone-500 uppercase">
-							<th></th>
-							<th scope="col" class="px-2 pb-1 text-right font-semibold">Files</th>
-							<th scope="col" class="px-2 pb-1 text-right font-semibold">Size</th>
+					<thead class="bg-stone-950/40">
+						<tr class="align-bottom">
+							<th scope="col" class="px-3 py-2.5 text-left {label}">Bucket</th>
+							<th scope="col" class="px-3 py-2.5 text-right font-medium text-stone-200">Files</th>
+							<th scope="col" class="px-3 py-2.5 text-right font-medium text-stone-200">Size</th>
+							<th scope="col" class="px-3 py-2.5 text-right font-medium text-stone-200"
+								>Est. cost a month{@render q(`Size × $${R2_STORAGE_PER_GB_MONTH} per GB-month, R2’s list price. R2’s free 10 GB is shared with the account’s other buckets, so it isn’t taken off.`)}</th
+							>
 						</tr>
 					</thead>
-					<tbody>
-						{#each r2.buckets as b (b.name)}
-							<tr class="border-t border-stone-800/70 align-top">
-								<th scope="row" class="py-1.5 pr-2 text-left font-normal">
-									<span class="text-stone-200">{BUCKET_TEXT[b.kind].title}</span>
-									<span class="block text-xs text-stone-500">{BUCKET_TEXT[b.kind].holds}</span>
-								</th>
-								<td class="px-2 py-1.5 text-right text-stone-300">{b.objects === null ? '—' : int(b.objects)}</td>
-								<td class="px-2 py-1.5 text-right whitespace-nowrap text-stone-300">{b.bytes === null ? 'no reading' : size(b.bytes)}</td>
+					{#if r2}
+						<tbody>
+							{#each r2.buckets as b (b.name)}
+								<tr class="border-t border-stone-800/70 align-top">
+									<th scope="row" class="px-3 py-2 text-left font-normal">
+										<span class="text-stone-100">{BUCKET_TEXT[b.kind].title}</span>
+										<span class="hidden text-xs text-stone-500 sm:block">{BUCKET_TEXT[b.kind].holds}</span>
+									</th>
+									<td class="px-3 py-2 text-right whitespace-nowrap text-stone-200">{b.objects === null ? '—' : int(b.objects)}</td>
+									<td class="px-3 py-2 text-right whitespace-nowrap text-stone-200">{b.bytes === null ? 'no reading' : size(b.bytes)}</td>
+									<td class="px-3 py-2 text-right text-stone-200">{b.dollars === null ? '—' : `$${b.dollars.toFixed(2)}`}</td>
+								</tr>
+							{/each}
+							<tr class="border-t border-stone-700 bg-stone-950/40 font-semibold text-stone-100">
+								<th scope="row" class="px-3 py-2 text-left">All</th>
+								<td class="px-3 py-2 text-right">{int(r2.objects)}</td>
+								<td class="px-3 py-2 text-right whitespace-nowrap">{size(r2.bytes)}</td>
+								<td class="px-3 py-2 text-right">${r2.dollars.toFixed(2)}</td>
 							</tr>
-						{/each}
-						<tr class="border-t border-stone-700 font-semibold text-stone-100">
-							<th scope="row" class="py-1.5 pr-2 text-left">All</th>
-							<td class="px-2 py-1.5 text-right">{int(r2.objects)}</td>
-							<td class="px-2 py-1.5 text-right whitespace-nowrap">≈ {size(r2.bytes)}</td>
-						</tr>
-					</tbody>
-				</table>
-				<div class="space-y-3 text-sm">
-					<p>
-						<span class="text-lg font-semibold text-amber-300">≈ ${r2.dollars.toFixed(2)} a month</span>
-						<span class="block text-xs text-stone-500"
-							>at ${R2_STORAGE_PER_GB_MONTH} per GB-month. R2’s free 10 GB is shared with the account’s other buckets, so it isn’t taken off here.</span
-						>
-					</p>
-					{#if estimate.length}
-						<div>
-							<p class="text-stone-300">
-								Renders bucket by source <span class="rounded border border-amber-800 px-1 text-[10px] font-bold tracking-wide text-amber-300/80 uppercase"
-									>estimate</span
-								>{@render q(
-									'Each source’s share of the drawn pages’ bytes on this machine, applied to the bucket’s size. R2 also holds thumbnails and replaced files waiting to be deleted.'
-								)}
-							</p>
-							<ul class="mt-1 grid gap-x-6 gap-y-0.5 sm:grid-cols-2">
-								{#each estimate as e (e.site)}
-									<li class="flex justify-between gap-3">
-										<span class="text-stone-400">{e.name}</span><span class="text-stone-200 tabular-nums"
-											>≈ {size(e.bytes)} <span class="text-xs text-stone-500">{percent(e.share, 1)}</span></span
-										>
-									</li>
-								{/each}
-							</ul>
-						</div>
+						</tbody>
 					{/if}
-				</div>
+				</table>
+				{#if !r2}
+					<p class="px-3 py-3 text-sm text-stone-400">
+						{r2Error ? `Unavailable: ${r2Error}` : 'Not read yet: the next update (or Count again) reads it.'}
+					</p>
+				{/if}
 			</div>
-		{:else}
-			<p class="mt-2 text-sm text-stone-400">
-				{r2Error ? `Unavailable: ${r2Error}` : 'Not read yet: the next update (or Count again) reads it.'}
-			</p>
-		{/if}
+			<div class="{card} space-y-2 text-xs text-stone-400">
+				<p>From Cloudflare’s R2 analytics, for the whole site: the site’s own buckets only, not split by source.</p>
+				<p>
+					Sizes are object data plus metadata, as storage is billed, at each bucket’s latest reading in the last week{r2 && r2.missing
+						? `; ${r2.missing} bucket${r2.missing === 1 ? '' : 's'} had none`
+						: ''}.
+				</p>
+				<p>Cost at R2’s list price, ${R2_STORAGE_PER_GB_MONTH} per GB-month. The free 10 GB is shared with the account’s other buckets, so it isn’t taken off.</p>
+				{#if figures?.r2}<p class="text-stone-500">Read {ago(now - figures.r2.at)}, with the figures.</p>{/if}
+			</div>
+		</div>
 	</section>
 </section>

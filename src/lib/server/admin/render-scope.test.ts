@@ -7,6 +7,7 @@ import {
 	parseScopes,
 	parseSiteScopes,
 	scopeStatements,
+	SITE_OLDER_SQL,
 	SITE_SCOPES_SQL,
 	SITE_STORE_WAITING_SQL,
 	STORE_WAITING_SQL,
@@ -141,11 +142,21 @@ describe('render coverage by credited site (the Overview)', () => {
 		sqlite
 			.query(`INSERT INTO sync_meta (key, value, updated_at) VALUES ('store-prints', ?, 1)`)
 			.run(JSON.stringify({ at: 1, modern: [['codex-9', 'a']], older: 0, unreadable: 0 }));
-		const [scopes, store] = await db.batch([db.prepare(SITE_SCOPES_SQL), db.prepare(SITE_STORE_WAITING_SQL)]);
-		expect(parseSiteScopes(scopes, store)).toEqual({
-			factorioprints: { total: 3, rendered: 1, none: 1, failed: 0, left: 1, pages: 3, bytes: 30 },
-			codex: { total: 2, rendered: 1, none: 0, failed: 0, left: 1, pages: 1, bytes: 10 },
-			fprints: { total: 1, rendered: 0, none: 0, failed: 1, left: 0, pages: 0, bytes: 0 }
+		// Before 2.0: two looked at, one of them credited to codex; not the former favourite (drawn) or the favourite.
+		seen.run('-PREAAAAAAAAAAAAAAAA', 's', 0, 10);
+		seen.run('-PREBBBBBBBBBBBBBBBB', 's', 0, 10);
+		sqlite
+			.query(`INSERT OR REPLACE INTO sync_meta (key, value, updated_at) VALUES ('credit', ?, 1)`)
+			.run(JSON.stringify({ [CODEX_FIRST]: 'codex', '-PREBBBBBBBBBBBBBBBB': 'codex' }));
+		const [scopes, store, older] = await db.batch([
+			db.prepare(SITE_SCOPES_SQL),
+			db.prepare(SITE_STORE_WAITING_SQL),
+			db.prepare(SITE_OLDER_SQL)
+		]);
+		expect(parseSiteScopes(scopes, store, older)).toEqual({
+			factorioprints: { total: 3, rendered: 1, none: 1, failed: 0, left: 1, pages: 3, bytes: 30, older: 1 },
+			codex: { total: 2, rendered: 1, none: 0, failed: 0, left: 1, pages: 1, bytes: 10, older: 1 },
+			fprints: { total: 1, rendered: 0, none: 0, failed: 1, left: 0, pages: 0, bytes: 0, older: 0 }
 		});
 	});
 });

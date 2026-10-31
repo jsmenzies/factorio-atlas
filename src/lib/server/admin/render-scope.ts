@@ -224,6 +224,21 @@ LEFT JOIN render_prints p ON p.print_id = s.id
 LEFT JOIN credit cr ON cr.print_id = s.id
 GROUP BY 1`;
 
+/**
+ * Prints not rendered because every page was saved before Factorio 2.0, by credited site: a render run looked at them
+ * (render_prints.modern = 0), they aren't in the top favourites, and none of their pages is drawn (a former
+ * favourite's renders stay). Records no run has looked at and undecodable ones (modern = 1, one 'undecodable' row)
+ * never land here.
+ */
+export const SITE_OLDER_SQL = `WITH ${CREDIT_CTE}
+SELECT ${creditedSite('p.print_id')} AS site, count(*) AS n
+FROM render_prints p
+LEFT JOIN render_favorites f ON f.print_id = p.print_id
+LEFT JOIN credit cr ON cr.print_id = p.print_id
+WHERE p.modern = 0 AND coalesce(f.in_top, 0) = 0
+	AND NOT EXISTS (SELECT 1 FROM render_jobs j WHERE j.print_id = p.print_id AND j.status = 'done')
+GROUP BY 1`;
+
 /** One site's render coverage (prints in scope by state, as `union`) and its drawn pages. */
 export interface SiteRender {
 	total: number;
@@ -234,12 +249,21 @@ export interface SiteRender {
 	/** Pages drawn, and their bytes on this machine (every print the queue drew, in scope or not). */
 	pages: number;
 	bytes: number;
+	/** Out of scope: every page saved before 2.0 (SITE_OLDER_SQL). */
+	older: number;
 }
 
-const emptySite = (): SiteRender => ({ total: 0, rendered: 0, none: 0, failed: 0, left: 0, pages: 0, bytes: 0 });
+const emptySite = (): SiteRender => ({ total: 0, rendered: 0, none: 0, failed: 0, left: 0, pages: 0, bytes: 0, older: 0 });
 
-/** SITE_SCOPES_SQL and SITE_STORE_WAITING_SQL's rows as figures by site; record-store prints never looked at are in scope and left. */
-export function parseSiteScopes(scopes: { results?: unknown[] }, store: { results?: unknown[] }): Record<string, SiteRender> {
+/**
+ * SITE_SCOPES_SQL, SITE_STORE_WAITING_SQL and SITE_OLDER_SQL's rows as figures by site; record-store prints never
+ * looked at are in scope and left.
+ */
+export function parseSiteScopes(
+	scopes: { results?: unknown[] },
+	store: { results?: unknown[] },
+	older: { results?: unknown[] } = {}
+): Record<string, SiteRender> {
 	const out: Record<string, SiteRender> = {};
 	const at = (site: string) => (out[site] ??= emptySite());
 	for (const r of (scopes.results ?? []) as {
@@ -257,6 +281,7 @@ export function parseSiteScopes(scopes: { results?: unknown[] }, store: { result
 		f.total += r.n;
 		f[r.state] += r.n;
 	}
+	for (const r of (older.results ?? []) as { site: string; n: number }[]) at(r.site).older += r.n;
 	for (const r of (store.results ?? []) as { site: string; unseen: number }[]) {
 		if (!r.unseen) continue;
 		const f = at(r.site);

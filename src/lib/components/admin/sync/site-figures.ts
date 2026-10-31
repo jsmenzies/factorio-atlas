@@ -44,7 +44,7 @@ export interface SiteRow {
 	unreadable: number | null;
 }
 
-const noRender = (): SiteRender => ({ total: 0, rendered: 0, none: 0, failed: 0, left: 0, pages: 0, bytes: 0 });
+const noRender = (): SiteRender => ({ total: 0, rendered: 0, none: 0, failed: 0, left: 0, pages: 0, bytes: 0, older: 0 });
 
 const rowOf = (site: string, s: SourceFigures, render: SiteRender | undefined): SiteRow => {
 	const na = NOT_APPLICABLE[site as Site];
@@ -107,7 +107,8 @@ export function siteTable(figures: SyncFigures | null, render: Record<string, Si
 			failed: sum((r) => r.render.failed),
 			left: sum((r) => r.render.left),
 			pages: sum((r) => r.render.pages),
-			bytes: sum((r) => r.render.bytes)
+			bytes: sum((r) => r.render.bytes),
+			older: sum((r) => r.render.older)
 		},
 		pulled: sum((r) => r.pulled),
 		dupOther: sum((r) => r.dupOther),
@@ -117,9 +118,14 @@ export function siteTable(figures: SyncFigures | null, render: Record<string, Si
 	return { rows, total };
 }
 
-/** Prints with no author name, by site, where names apply (factoriobin's anonymous posts left out). */
+/**
+ * Prints with no author name we could do something about, by site: sites whose records carry no names at all
+ * (NO_NAMES) and anonymous ones (NOT_APPLICABLE) are left out.
+ */
 export const unnamedBySite = (rows: SiteRow[]) =>
-	rows.filter((r) => r.named !== null && r.named < r.namedOf).map((r) => ({ site: r.site, name: r.name, n: r.namedOf - r.named! }));
+	rows
+		.filter((r) => r.named !== null && r.named < r.namedOf && !NO_NAMES[r.site as Site])
+		.map((r) => ({ site: r.site, name: r.name, n: r.namedOf - r.named! }));
 
 /** A size in decimal units, as Cloudflare's dashboard and bill count them: MB under a gigabyte, else GB to a tenth. */
 export const size = (bytes: number) =>
@@ -136,40 +142,36 @@ export const BUCKET_TEXT: Record<R2Bucket['kind'], { title: string; holds: strin
 	sprites: { title: 'Icons', holds: 'the game’s item icons, one set for every stage' }
 };
 
+/** A month of R2 storage for `bytes` at the list price (decimal GB, as billed). */
+export const monthlyCost = (bytes: number) => (bytes / 1e9) * R2_STORAGE_PER_GB_MONTH;
+
 /**
- * The R2 panel: each bucket, the total and its monthly cost at R2's list price (the free 10 GB isn't taken off).
- * Buckets with no reading add nothing; `missing` says how many.
+ * The R2 table: each bucket with its estimated monthly cost at R2's list price, and the total ("All"); the free
+ * 10 GB isn't taken off (it is shared with the account's other buckets). Buckets with no reading add nothing and
+ * have no cost; `missing` says how many.
  */
 export function r2Panel(buckets: R2Bucket[]) {
 	const bytes = buckets.reduce((n, b) => n + (b.bytes ?? 0), 0);
 	return {
-		buckets,
+		buckets: buckets.map((b) => ({ ...b, dollars: b.bytes === null ? null : monthlyCost(b.bytes) })),
 		missing: buckets.filter((b) => b.bytes === null).length,
 		objects: buckets.reduce((n, b) => n + (b.objects ?? 0), 0),
 		bytes,
-		dollars: (bytes / 1e9) * R2_STORAGE_PER_GB_MONTH
+		dollars: monthlyCost(bytes)
 	};
 }
 
 /**
- * An estimate of the renders bucket by source: each site's share of the drawn pages' bytes on this machine, applied
- * to the bucket's size. Sites with nothing drawn are left out.
+ * When a figure from the table becomes worth a look on the Overview (Attention): at or above these. Unreadable posts
+ * are shown but never flagged: most are known factorioprints failures every update skips.
  */
-export function rendersBySite(rows: SiteRow[], bucketBytes: number) {
-	const local = rows.reduce((n, r) => n + r.render.bytes, 0);
-	if (!local) return [];
-	return rows
-		.filter((r) => r.render.bytes > 0)
-		.map((r) => ({ site: r.site, name: r.name, share: r.render.bytes / local, bytes: (r.render.bytes / local) * bucketBytes }));
-}
-
-/** When a figure from the table becomes worth a look on the Overview (Attention): at or above these. */
-export const ATTENTION_AT = { unnamed: 1, waiting: 1, unreadable: 1, unusedShots: 100 } as const;
+export const ATTENTION_AT = { unnamed: 1, waiting: 1, unreadable: Infinity, unusedShots: 100 } as const;
 
 /**
- * The Overview's "Needs a look" items computed from the figures: prints with no author (by site), prints waiting to
- * render, posts that couldn't be read and screenshot copies no print shows, each with whether it reaches its
- * threshold. Undefined counts (figures from before sources were counted) stay undefined.
+ * The Overview's "Needs a look" items computed from the figures: prints with no author where names could be had
+ * (by site), prints waiting to render, posts that couldn't be read (shown, never flagged) and screenshot copies no
+ * print shows, each with whether it reaches its threshold. Undefined counts (figures from before sources were
+ * counted, or not known here) stay undefined.
  */
 export function figureAttention(figures: SyncFigures | null, waiting: number) {
 	const table = siteTable(figures, {});

@@ -21,6 +21,7 @@ import {
 	parseScopes,
 	parseSiteScopes,
 	scopeStatements,
+	SITE_OLDER_SQL,
 	SITE_SCOPES_SQL,
 	SITE_STORE_WAITING_SQL,
 	STORE_WAITING_SQL,
@@ -84,9 +85,10 @@ export const syncOverview = async (db: D1Database, now = Date.now()) => {
 		db.prepare(STORE_WAITING_SQL),
 		db.prepare(SITE_SCOPES_SQL),
 		db.prepare(SITE_STORE_WAITING_SQL),
+		db.prepare(SITE_OLDER_SQL),
 		...scopes
 	]);
-	const [runRows, metaRows, totals, liveRender, latestRender, storeWaiting, siteScopes, siteStore, ...scopeResults] = results;
+	const [runRows, metaRows, totals, liveRender, latestRender, storeWaiting, siteScopes, siteStore, siteOlder, ...scopeResults] = results;
 	const store = storeWaiting.results[0] as { unseen?: number; changed?: number } | undefined;
 	const waiting = { unseen: Number(store?.unseen ?? 0), changed: Number(store?.changed ?? 0) };
 	const runs: SyncRun[] = (runRows.results as SyncRunRow[]).map(parseSyncRun);
@@ -111,7 +113,7 @@ export const syncOverview = async (db: D1Database, now = Date.now()) => {
 		storeWaiting: waiting,
 		scopes: withStoreWaiting(parseScopes(scopeResults), waiting),
 		/** Render coverage and drawn pages by the site prints are credited to (the Overview's table). */
-		siteRender: parseSiteScopes(siteScopes, siteStore)
+		siteRender: parseSiteScopes(siteScopes, siteStore, siteOlder)
 	};
 };
 

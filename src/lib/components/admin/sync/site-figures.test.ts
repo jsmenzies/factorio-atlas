@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SiteRender } from '#lib/server/admin/render-scope.js';
 import type { SourceFigures, SyncFigures } from '#lib/sync.js';
-import { figureAttention, r2Panel, rendersBySite, siteTable, size } from './site-figures';
+import { figureAttention, r2Panel, siteTable, size } from './site-figures';
 
 const src = (o: Partial<SourceFigures>): SourceFigures => ({
 	prints: 0,
@@ -15,7 +15,17 @@ const src = (o: Partial<SourceFigures>): SourceFigures => ({
 	unreadable: null,
 	...o
 });
-const render = (o: Partial<SiteRender>): SiteRender => ({ total: 0, rendered: 0, none: 0, failed: 0, left: 0, pages: 0, bytes: 0, ...o });
+const render = (o: Partial<SiteRender>): SiteRender => ({
+	total: 0,
+	rendered: 0,
+	none: 0,
+	failed: 0,
+	left: 0,
+	pages: 0,
+	bytes: 0,
+	older: 0,
+	...o
+});
 const figures = (sources: Record<string, SourceFigures>, more: Partial<SyncFigures> = {}): SyncFigures => ({
 	at: 1,
 	stage: 'prod',
@@ -47,7 +57,7 @@ describe('the Overview’s table by source', () => {
 		factoriobin: src({ prints: 2, analysed: 2, posts: 3, dupOther: 1 })
 	});
 	const table = siteTable(f, {
-		factorioprints: render({ total: 5767, rendered: 5433, none: 334, pages: 60624, bytes: 9e9 }),
+		factorioprints: render({ total: 5767, rendered: 5433, none: 334, pages: 60624, bytes: 9e9, older: 12259 }),
 		codex: render({ total: 1, left: 1 })
 	})!;
 
@@ -69,7 +79,7 @@ describe('the Overview’s table by source', () => {
 			shotOf: 18432,
 			unreadable: 182
 		});
-		expect(table.total.render).toMatchObject({ total: 5768, rendered: 5433, left: 1, pages: 60624 });
+		expect(table.total.render).toMatchObject({ total: 5768, rendered: 5433, left: 1, pages: 60624, older: 12259 });
 	});
 
 	test('a site whose unreadable posts aren’t known here: the total and the tile say so', () => {
@@ -85,21 +95,24 @@ describe('the Overview’s table by source', () => {
 		expect(siteTable(figures({}, { sources: undefined }), {})).toBeNull();
 	});
 
-	test('needs a look: computed figures past their thresholds', () => {
+	test('needs a look: actionable figures past their thresholds', () => {
+		// fprints gives no names (left out); unreadable posts are shown, never flagged.
 		const items = figureAttention({ ...f, unusedShots: 99 }, 49);
 		expect(items.map((i) => [i.key, i.n, i.flag])).toEqual([
-			['unnamed', 405, true],
+			['unnamed', 0, false],
 			['waiting', 49, true],
-			['unreadable', 182, true],
+			['unreadable', 182, false],
 			['unusedShots', 99, false]
 		]);
-		expect(items[0].detail).toBe('fprints.xyz 405');
+		const g = figures({ ...f.sources, codex: src({ prints: 396, named: 227, unreadable: 0 }) });
+		const unnamed = figureAttention(g, 0)[0];
+		expect([unnamed.n, unnamed.flag, unnamed.detail]).toEqual([169, true, 'factoriocodex.com 169']);
 		expect(figureAttention(null, 0).map((i) => i.n)).toEqual([undefined, 0, undefined, undefined]);
 	});
 });
 
 describe('R2 storage', () => {
-	test('total, cost and the renders bucket by source', () => {
+	test('each bucket’s cost and the total; a bucket with no reading has none', () => {
 		const p = r2Panel([
 			{ kind: 'renders', name: 'r', objects: 4, bytes: 200e9 },
 			{ kind: 'raw', name: 'w', objects: 1, bytes: 4e9 }
@@ -107,14 +120,8 @@ describe('R2 storage', () => {
 		expect(p).toMatchObject({ objects: 5, bytes: 204e9, missing: 0 });
 		expect(r2Panel([{ kind: 'sprites', name: 's', objects: null, bytes: null }])).toMatchObject({ objects: 0, bytes: 0, missing: 1 });
 		expect(p.dollars).toBeCloseTo(3.06);
-		const rows = siteTable(figures({ factorioprints: src({}), codex: src({}) }), {
-			factorioprints: render({ bytes: 3 }),
-			codex: render({ bytes: 1 })
-		})!.rows;
-		expect(rendersBySite(rows, 200e9).map((e) => [e.site, e.share, e.bytes])).toEqual([
-			['factorioprints', 0.75, 150e9],
-			['codex', 0.25, 50e9]
-		]);
+		expect(p.buckets.map((b) => b.dollars)).toEqual([3, 0.06]);
+		expect(r2Panel([{ kind: 'sprites', name: 's', objects: null, bytes: null }]).buckets[0].dollars).toBeNull();
 		expect([size(0), size(4e5), size(12.15e6), size(204.09e9)]).toEqual(['0 MB', '1 MB', '12 MB', '204.1 GB']);
 	});
 });
