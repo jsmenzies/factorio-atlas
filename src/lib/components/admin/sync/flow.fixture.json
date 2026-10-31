@@ -311,6 +311,12 @@
 			"id": "screenshots",
 			"status": "warning",
 			"startedAt": 1793364814917,
+			"figures": {
+				"bucketPut": {
+					"files": 4653,
+					"bytes": 1348000000
+				}
+			},
 			"summary": "18111 already copied, 2 dead; to fetch 0 (0 failed before, 0 files missing, 0 dead rechecked) · uploads: 1 approved, copied 0 · other sites: 716 to copy, copied 686, failed 30 · prod bucket: 18840 images in 365s: made 686, put 4653 files (1348.0 MB), deleted 0, already up 18154, failed 0 · 686 D1 rows written; cached pages purged",
 			"details": [
 				{

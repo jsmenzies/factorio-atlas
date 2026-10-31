@@ -130,14 +130,13 @@ describe('the board after the update of 2026-10-30', () => {
 		expect(said(f.shared.sizing)).toBe('done · 4,653 files · 1348.0 MB');
 	});
 
-	test('typed figures read as the words they replace did: the backfill skipped, the files put', () => {
+	test('typed figures read as the words they replace did: the backfill skipped; the files put never read from words', () => {
 		// The run as the typed update writes it, with the words those figures were once read from changed.
 		const typed = structuredClone(RUN);
 		const ingest = typed.steps.find((s) => s.id === 'ingest')!;
 		ingest.figures = { backfillSkipped: /^backfill skipped: ([^·]+)/.exec(ingest.summary!)![1].trim() };
 		ingest.summary = ingest.summary!.replace(/^backfill skipped: /, 'reworded: ');
 		const shots = typed.steps.find((s) => s.id === 'screenshots')!;
-		shots.figures = { bucketPut: { files: 4_653, bytes: 1_348_000_000 } };
 		for (const r of shots.details!.find((g) => g.title === GROUP.bucket('prod'))!.rows) if (r.label === ROW.filesPut) r.value = 'reworded';
 		expect(flowOf({ run: typed, phase: 'current' })).toEqual(f);
 	});
@@ -573,11 +572,9 @@ describe('the Authors cell', () => {
 	});
 });
 
-describe('an update from before the stages and the per-site groups', () => {
+describe('an update from before the per-site groups', () => {
 	const old = (): SyncRun => {
 		const r = structuredClone(RUN);
-		const render = r.steps.findIndex((s) => s.id === 'render');
-		r.steps[render] = { id: 'render', status: 'done', summary: '12 prints: 80 pages drawn' };
 		const shots = r.steps.find((s) => s.id === 'screenshots')!;
 		shots.details = [
 			...shots.details!.filter((g) => !g.title?.startsWith('From other sites')),
@@ -585,15 +582,9 @@ describe('an update from before the stages and the per-site groups', () => {
 		];
 		return r;
 	};
-	test('a render step that ran says so, not "not run"; screenshots counted together read as copied', () => {
+	test('screenshots counted together read as copied', () => {
 		const f = flowOf({ run: old(), phase: 'current' });
-		expect(said(cellOf(f, 'codex', 'plan'))).toBe('done · not counted per source');
-		expect(cellOf(f, 'codex', 'plan').tip).toBe('12 prints: 80 pages drawn: see the step’s figures.');
-		expect(f.shared.cleanup.kind).toBe('done');
 		expect(cellOf(f, 'codex', 'shots')).toMatchObject({ kind: 'done' });
 		expect(cellOf(f, 'codex', 'shots').tip).toContain('counted them together');
-		const warned = old();
-		warned.steps.find((s) => s.id === 'render')!.status = 'warning';
-		expect(cellOf(flowOf({ run: warned, phase: 'current' }), 'codex', 'draw').kind).toBe('warn');
 	});
 });

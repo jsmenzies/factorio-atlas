@@ -467,18 +467,6 @@ const putFacts = (put: { files: number; bytes: number }): Fact[] =>
 				{ n: megabytes(put.bytes), text: '' }
 			]
 		: [];
-/** The same from an update before typed figures: its "files put" row's words ("599 (156.1 MB)"). */
-function legacyPutFacts(bucket: DetailGroup): Fact[] {
-	const put = bucket.rows.find((r) => r.label === ROW.filesPut)?.value;
-	const m = typeof put === 'string' ? /^([\d,]+) \((.+)\)$/.exec(put) : null;
-	return m
-		? [
-				{ n: m[1], text: 'files' },
-				{ n: m[2], text: '' }
-			]
-		: fact(typeof put === 'number' ? put : null, 'files');
-}
-
 function sizingCell(mode: BoardMode, run: SyncRun | null, progress: LogProgress | null): Cell {
 	const label = 'Sizing and upload';
 	const step = stepOf(run, 'screenshots');
@@ -493,10 +481,7 @@ function sizingCell(mode: BoardMode, run: SyncRun | null, progress: LogProgress 
 	const cards = groupOf(step, (t) => t === GROUP.searchCards);
 	return {
 		...settled(
-			[
-				...(step.figures?.bucketPut ? putFacts(step.figures.bucketPut) : legacyPutFacts(bucket)),
-				...fact(valueOf(bucket, ROW.failed), 'failed', 'bad')
-			],
+			[...(step.figures?.bucketPut ? putFacts(step.figures.bucketPut) : []), ...fact(valueOf(bucket, ROW.failed), 'failed', 'bad')],
 			`${tip} ${rowsText(bucket, [ROW.alreadyUp, ROW.sizesMade, ROW.deleted])}${cards ? ` · cards: ${rowsText(cards)}` : ''}.`
 		),
 		label
@@ -524,16 +509,6 @@ function stagesFor(
 	const row = live && step.startedAt !== undefined && live.started_at >= step.startedAt - 1000 ? live : null;
 	return { stages: row?.options.stages ?? null, row };
 }
-
-/** A render step that ran (done or warning) but kept no stages: an update from before they were recorded. */
-const unstaged = (step: SyncStep): Cell | null =>
-	step.status === 'done' || step.status === 'warning'
-		? cell(
-				step.status === 'done' ? 'done' : 'warn',
-				[{ text: 'not counted per source' }],
-				`${step.summary ?? 'Ran'}: see the step’s figures.`
-			)
-		: null;
 
 /**
  * The Thumbnails cell's lines: pages made, prints done, prints waiting on their render upload; while a print's
@@ -564,9 +539,7 @@ function renderCells(
 	const live = step.status === 'running';
 	if (!stages)
 		return four(
-			live
-				? cell('wait', [], 'Picking the prints with work: the top list, then records changed since they were drawn.')
-				: (unstaged(step) ?? notRun(step))
+			live ? cell('wait', [], 'Picking the prints with work: the top list, then records changed since they were drawn.') : notRun(step)
 		);
 	const s: SiteStages | undefined = stages.sites[stageKey(site)];
 	const queueing = live && row?.state === 'starting';
@@ -681,7 +654,7 @@ function sharedRender(
 			flags: cell('wait', [], `Not run yet: step ${stepNo('render')}, last. ${flagsTip}`, { label: flagsLabel })
 		};
 	if (!stages) {
-		const c = step.status === 'running' ? cell('wait', [], 'Not run yet.') : (unstaged(step) ?? notRun(step));
+		const c = step.status === 'running' ? cell('wait', [], 'Not run yet.') : notRun(step);
 		return { summary, cleanup: { ...c, label: cleanupLabel }, flags: { ...c, label: flagsLabel } };
 	}
 	const c = stages.cleanup;
