@@ -18,6 +18,8 @@
  * What each stage was given: `<inbox>/<site>/.admitted.<stage>.json`; a record that fails (storage) is not
  * marked and is tried again next run. Refused records (blocked, unreadable) are marked: tried again only
  * when they change. A record whose inbox file is gone is forgotten, so the next fetch reads it again.
+ * A record whose print a hand-over had to purge (another source went, and this one couldn't be ingested in
+ * its place: identity-db.ts lostSources) goes through the gate again, whatever the ledger says.
  *
  *   --dir DIR        the record store (default RECORDS_DIR, else ~/data/factorio-records); the inbox is DIR/.polled
  *   --dry-run        D1 reads only: say what each record would be, write nothing
@@ -34,6 +36,7 @@ import { Effect, Layer } from 'effect';
 import { printIdFor } from '#lib/print-id.js';
 import { addRecord } from '#lib/server/pipeline/add-record.js';
 import type { Suggestion } from '#lib/server/pipeline/admit.js';
+import { lostSources } from '#lib/server/pipeline/identity-db.js';
 import { OFFLINE_MAX_INFLATED_BYTES } from '#lib/server/pipeline/decode.js';
 import { RawStoreR2 } from '#lib/server/pipeline/raw-store.js';
 import { PrintRepository, PrintRepositoryD1 } from '#lib/server/pipeline/repository.js';
@@ -201,11 +204,15 @@ try {
 	await requireSchema(db, stage, 'SELECT site FROM print_sources LIMIT 0', 'print_sources table', '0022');
 	const state = await readState(inbox, site);
 	const ledger = await readLedger(inbox, site, stage);
-	const work = admissionWork(state, ledger, Boolean(flags.force));
+	// Records whose print a failed hand-over purged (gate.ts sourceGone): through the gate again, whatever the ledger says.
+	const lost = (await lostSources(db, site)).filter((id) => state.records[id]);
+	const work = admissionWork(state, ledger, Boolean(flags.force), lost);
 	result.waiting = work.records.length;
 	result.goneWaiting = work.gone.length;
 	say(
-		`${stage} ← ${site} inbox ${join(inbox, site)}: ${n(work.records.length)} records to admit, ${n(work.gone.length)} gone from the site`
+		`${stage} ← ${site} inbox ${join(inbox, site)}: ${n(work.records.length)} records to admit` +
+			(lost.length ? ` (${n(lost.length)} whose print a hand-over lost)` : '') +
+			`, ${n(work.gone.length)} gone from the site`
 	);
 	if (!result.dryRun && (work.records.length || work.gone.length))
 		await confirmProd(

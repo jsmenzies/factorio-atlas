@@ -245,6 +245,8 @@ describe('polled sites: admission work', () => {
 		const ledger = { v: 1 as const, records: { '1': 'a', '3': 'x', '4': 'gone' } };
 		expect(admissionWork(state, ledger)).toEqual({ records: ['2'], gone: ['3'] });
 		expect(admissionWork(state, ledger, true).records).toEqual(['1', '2']);
+		// A record whose print a failed hand-over purged goes through the gate again at the revision it was given.
+		expect(admissionWork(state, ledger, false, ['1']).records).toEqual(['1', '2']);
 	});
 });
 

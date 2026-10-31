@@ -6,10 +6,12 @@ import { fixtureRecord } from '#lib/server/fixtures.js';
 import { nameTaken, NAME_HOLD_DAYS, renameAccount, signInAccount } from '../auth/users';
 import { analysisKey } from '../pipeline/print-doc';
 import { d1FromSqlite } from '../pipeline/d1-sqlite';
+import { addRecord } from '../pipeline/add-record';
 import { admitRecord } from '../pipeline/admit';
+import { lostSources } from '../pipeline/identity-db';
 import { pipelineLayer } from '../pipeline/layers';
 import { ingestRecord } from '../pipeline/pipeline';
-import { fromFactorioprints, fromPipelineText, toPipelineText } from '../pipeline/source-record';
+import { fromFactorioprints, fromPipelineText, toPipelineText, type SourceRecord } from '../pipeline/source-record';
 import { takedownPrint } from '../takedown';
 import { Effect } from 'effect';
 import { showsFavourites } from '#lib/print-id.js';
@@ -281,6 +283,41 @@ describe('uploads through the real gate', () => {
 		expect(await deleteUpload(s.deps(), ada.id, printId)).toBe(true);
 		expect(s.one('SELECT 1 AS hit FROM prints WHERE id = ?', printId)).toBeNull();
 		expect(await ingestDue(s.db)).not.toBeNull();
+	});
+
+	test('a polled site’s source a failed hand-over lost is listed, and comes back through the gate as a print of its own', async () => {
+		const s = await setup();
+		const ada = await s.account('Ada');
+		const r = await createUpload(s.deps(1_000), ada, input());
+		const printId = r.ok ? r.printId : '';
+		const codex: SourceRecord = {
+			site: 'codex',
+			siteId: '7',
+			url: 'https://factoriocodex.com/blueprints/7',
+			title: 'Belts on codex',
+			description: null,
+			author: null,
+			blueprintString: STRING,
+			image: null,
+			uploadedAt: 2_000,
+			updatedAt: 2_000,
+			favorites: null,
+			sourceHints: []
+		};
+		const admitted = await admitRecord(s.db, codex);
+		expect(admitted).toMatchObject({ status: 'existing', printId, via: 'exact' });
+		if (admitted.status !== 'existing') throw new Error(admitted.status);
+		// Joined, but its record never archived: the hand-over can't read it.
+		await Effect.runPromise(Effect.provide(ingestRecord(codex, admitted), pipelineLayer(s.env)));
+		expect(await lostSources(s.db, 'codex')).toEqual([]);
+		expect(await deleteUpload(s.deps(), ada.id, printId)).toBe(true);
+		expect(s.one('SELECT 1 AS hit FROM prints WHERE id = ?', printId)).toBeNull();
+		expect(await lostSources(s.db, 'codex')).toEqual(['7']);
+		expect(await lostSources(s.db, 'upload')).toEqual([siteIdOf(printId)]);
+		// The site's next admission (scripts/polled.ts) sends it through the gate again.
+		expect(await addRecord(s.env, codex, { update: true })).toMatchObject({ status: 'new', printId: 'codex-7' });
+		expect(s.one('SELECT title FROM prints WHERE id = ?', 'codex-7')).toEqual({ title: 'Belts on codex' });
+		expect(await lostSources(s.db, 'codex')).toEqual([]);
 	});
 
 	test('a rename reaches the account’s uploads; until it has, nobody else can take the old name', async () => {

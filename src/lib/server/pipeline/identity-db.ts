@@ -128,6 +128,23 @@ export const docSourcesOf = (printId: string, sources: readonly PrintSourceRow[]
 export const winnerOf = (sources: readonly PrintSourceRow[]): PrintSourceRow | null => liveSources(sources)[0] ?? null;
 
 /**
+ * A site's sources whose print was purged as 'gone' (a tombstone, no `prints` row): every source of a purged
+ * print is marked gone, including one its site still has when a hand-over couldn't ingest it (uploads/gate.ts
+ * `sourceGone`). The site's next admission sends those still on the site through the gate again
+ * (scripts/polled.ts), where each comes out a print of its own, or joins what it copies.
+ */
+export const lostSources = async (db: D1Database, site: Site): Promise<string[]> =>
+	(
+		await db
+			.prepare(
+				`SELECT s.site_id AS site_id FROM print_sources s JOIN print_tombstones t ON t.print_id = s.print_id AND t.kind = 'gone'
+				WHERE s.site = ? AND NOT EXISTS (SELECT 1 FROM prints p WHERE p.id = s.print_id) ORDER BY s.site_id`
+			)
+			.bind(site)
+			.all<{ site_id: string }>()
+	).results.map((r) => r.site_id);
+
+/**
  * `sources` as they will be once `source` is written for `printId` (`identityStatements`: attached and
  * live again), for a document written before that batch.
  */

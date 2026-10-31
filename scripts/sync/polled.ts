@@ -279,16 +279,22 @@ export async function writeLedger(inbox: string, site: string, stage: string, l:
 	await writeJsonAtomic(ledgerFile(inbox, site, stage), l);
 }
 
-/** What a stage still needs: inbox records at a revision it wasn't given, and gone ids it still has. */
-export const admissionWork = (state: PollState, ledger: AdmittedLedger, force = false) => ({
-	records: Object.entries(state.records)
-		.filter(([id, r]) => force || ledger.records[id] !== r.rev)
-		.map(([id]) => id)
-		.sort((a, b) => state.records[a].firstSeen - state.records[b].firstSeen || a.localeCompare(b, 'en', { numeric: true })),
-	gone: Object.keys(state.gone)
-		.filter((id) => ledger.records[id] !== undefined && ledger.records[id] !== 'gone')
-		.sort()
-});
+/**
+ * What a stage still needs: inbox records at a revision it wasn't given, or whose print it lost (`lost`:
+ * identity-db.ts `lostSources`, a hand-over that had to purge), and gone ids it still has.
+ */
+export const admissionWork = (state: PollState, ledger: AdmittedLedger, force = false, lost: Iterable<string> = []) => {
+	const again = new Set(lost);
+	return {
+		records: Object.entries(state.records)
+			.filter(([id, r]) => force || ledger.records[id] !== r.rev || again.has(id))
+			.map(([id]) => id)
+			.sort((a, b) => state.records[a].firstSeen - state.records[b].firstSeen || a.localeCompare(b, 'en', { numeric: true })),
+		gone: Object.keys(state.gone)
+			.filter((id) => ledger.records[id] !== undefined && ledger.records[id] !== 'gone')
+			.sort()
+	};
+};
 
 // --- plan
 

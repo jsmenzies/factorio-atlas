@@ -222,7 +222,9 @@ export const workerGate = (env: GateEnv, o: { offline?: boolean } = {}): UploadG
 			const r = await sourceGone(env.DB, site, siteId, {
 				purge,
 				// If the next source can't be ingested here (over the Worker's caps, the mirror unreachable), the
-				// print goes; that source's next sync admits it again as a print of its own.
+				// print goes and every source is marked gone, that one too; its next sync admits it again as a print
+				// of its own: a factorioprints record through the backfill (`ingest_due`), a polled site's through
+				// `polled` (identity-db.ts lostSources). A factoriobin post comes back when it is added again.
 				reingest: (printId, winner) =>
 					reingest(printId, winner).catch(async (e) => {
 						console.warn(`${site}: ${printId} hand-over to ${winner.site}:${winner.site_id} failed, purged instead: ${reasonOf(e)}`);
