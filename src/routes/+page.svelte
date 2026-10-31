@@ -1,6 +1,5 @@
 <script lang="ts">
 	import type { ComponentProps, Snippet } from 'svelte';
-	import { dev } from '$app/env';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import Icon from '#lib/components/Icon.svelte';
@@ -136,22 +135,6 @@
 		document.documentElement.classList.toggle('max-md:overflow-hidden', filtersOpen);
 	});
 	const itemLabel = (signal: string) => data.picker.find((p) => p.signal === signal)?.label ?? signalName(signal);
-
-	/**
-	 * Dev-only trial of opening a quality chip's levels on hover: `?qhover=1` turns it on for the tab
-	 * (sessionStorage, since links and the search form drop the parameter), `?qhover=0` off.
-	 */
-	let qhover = $state(false);
-	$effect(() => {
-		if (!dev) return;
-		const asked = page.url.searchParams.get('qhover');
-		try {
-			if (asked !== null) sessionStorage.setItem('atlas.qhover', asked);
-			qhover = sessionStorage.getItem('atlas.qhover') === '1';
-		} catch {
-			qhover = asked === '1';
-		}
-	});
 
 	/**
 	 * Every active filter value as a removable tag; clicking one clears just that value. Item filters
@@ -329,7 +312,6 @@
 							hrefFor={(level) => atQuality(c.key, c.value, level)}
 							removeHref={href}
 							icons={data.icons}
-							hover={qhover}
 						/>
 					{:else}
 						<a

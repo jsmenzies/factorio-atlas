@@ -10,8 +10,7 @@
 	 * A Makes, Built with or Modules filter chip, which can take a quality. The chip's body opens a
 	 * dropdown of the levels, each with its count in the current search, the same on phones (taller
 	 * rows for touch); picking one runs the search with `@<level>` on the value. The × removes the filter. A faint
-	 * any-quality badge and a caret say the body does something. `hover` (a dev-only trial, `?qhover=1`)
-	 * also slides the levels out beside the chip when the pointer rests on it.
+	 * any-quality badge and a caret say the body does something.
 	 */
 	let {
 		label,
@@ -20,8 +19,7 @@
 		countsUrl,
 		hrefFor,
 		removeHref,
-		icons,
-		hover = false
+		icons
 	}: {
 		/** The filter in words, e.g. "Built with Beacon". */
 		label: string;
@@ -33,7 +31,6 @@
 		hrefFor: (quality: QualityLevel | null) => string;
 		removeHref: string;
 		icons: IconSet;
-		hover?: boolean;
 	} = $props();
 
 	const uid = $props.id();
@@ -60,7 +57,6 @@
 	const name = $derived(`${label}, ${QUALITY_WORDS[current].long.toLowerCase()}`);
 
 	let open = $state(false);
-	let strip = $state(false);
 	let root: HTMLSpanElement;
 	let trigger: HTMLButtonElement;
 	let list = $state<HTMLDivElement>();
@@ -88,7 +84,6 @@
 	const show = async () => {
 		loadCounts();
 		open = true;
-		strip = false;
 		place = null;
 		await tick();
 		position();
@@ -130,32 +125,9 @@
 		} else if (e.key === 'Tab') close();
 	};
 	const onWindowPointerdown = (e: PointerEvent) => {
-		if ((open || strip) && !root.contains(e.target as Node)) {
-			open = false;
-			strip = false;
-		}
+		if (open && !root.contains(e.target as Node)) open = false;
 	};
 
-	// Hover trial: the strip opens only once the pointer has rested on the chip, so crossing it on the
-	// way to the results never opens it; it closes a moment after the pointer leaves.
-	const REST_MS = 450;
-	const LEAVE_MS = 250;
-	let restTimer: ReturnType<typeof setTimeout> | undefined;
-	let leaveTimer: ReturnType<typeof setTimeout> | undefined;
-	const canHover = () => hover && matchMedia('(hover: hover) and (pointer: fine)').matches;
-	const onPointermove = () => {
-		if (!canHover() || open || strip) return;
-		clearTimeout(restTimer);
-		restTimer = setTimeout(() => {
-			loadCounts();
-			strip = true;
-		}, REST_MS);
-	};
-	const onPointerenter = () => clearTimeout(leaveTimer);
-	const onPointerleave = () => {
-		clearTimeout(restTimer);
-		if (strip) leaveTimer = setTimeout(() => (strip = false), LEAVE_MS);
-	};
 </script>
 
 <!-- Scrolling the results or resizing moves the chip away from the dropdown, so either closes it. -->
@@ -170,9 +142,6 @@
 	class="relative inline-flex items-stretch rounded-full border border-amber-500/40 bg-amber-500/10 text-amber-200"
 	role="group"
 	aria-label={name}
-	onpointermove={onPointermove}
-	onpointerenter={onPointerenter}
-	onpointerleave={onPointerleave}
 >
 	<button
 		bind:this={trigger}
@@ -195,26 +164,6 @@
 		</span>
 		<svg aria-hidden="true" viewBox="0 0 12 12" class="size-2.5 fill-current text-amber-400"><path d="M2.5 4.5 6 8l3.5-3.5z" /></svg>
 	</button>
-	{#if strip}
-		<!-- Hover trial: the levels beside the chip; their counts are in the tooltip. -->
-		<span class="flex items-center gap-0.5 border-l border-amber-500/25 px-1">
-			{#each LEVELS as l (l)}
-				{#if disabled(l)}
-					<span class="grid size-6 place-items-center opacity-30" title="{QUALITY_WORDS[l].long}: none">{@render badge(l, 16)}</span>
-				{:else}
-					{@const href = hrefFor(levelOf(l))}
-					<a
-						{href}
-						rel={searchRel(href)}
-						class="grid size-6 place-items-center rounded hover:bg-amber-500/25 {l === current ? 'bg-amber-500/30' : ''}"
-						title="{QUALITY_WORDS[l].long}{counts ? `: ${counts[l].toLocaleString('en')}` : ''}"
-						aria-label="{QUALITY_WORDS[l].long}{counts ? `, ${counts[l].toLocaleString('en')} prints` : ''}"
-						onclick={() => (strip = false)}>{@render badge(l, 16)}</a
-					>
-				{/if}
-			{/each}
-		</span>
-	{/if}
 	<a
 		href={removeHref}
 		rel={searchRel(removeHref)}
