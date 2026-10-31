@@ -60,6 +60,13 @@ export const uncheckedText = (failed: readonly SourcePlan[]) => {
 	return `${list} couldn’t be checked`;
 };
 
+/**
+ * "Retry failed pages" is turned on only by its tick box and off only by an update (once its render step has
+ * drawn). The page keeps its own copy of the settings and saves all of them on any change, so when the saved
+ * value goes from on to off, the copy must follow, or the next unrelated save would turn it on again.
+ */
+export const retryCleared = (lastSaved: boolean | null, saved: boolean) => lastSaved === true && !saved;
+
 /** A mirror check older than this is redone when the Overview opens. */
 export const PLAN_FRESH_MS = 10 * 60_000;
 

@@ -25,6 +25,7 @@ import {
 	groupOf,
 	POLLED_SITES,
 	ROW,
+	SITE_SHOTS_GROUP,
 	sourceMoved,
 	stepLabel,
 	SYNC_STEPS,
@@ -450,6 +451,9 @@ function shotsCell(mode: BoardMode, run: SyncRun | null, site: string, progress:
 			);
 	}
 	if (step.status === 'skipped' || step.status === 'stopped' || step.status === 'failed') return notRun(step);
+	// Updates before per-site groups counted the sites' images together ("From other sites").
+	if (part === 'sites' && groupOf(step, (t) => t === SITE_SHOTS_GROUP.replace(/: $/, '')))
+		return cell('done', [], 'Copied with the other sites’ images: this update counted them together (see the step’s figures).');
 	return cell('done', [], 'Nothing to copy.');
 }
 
@@ -506,6 +510,16 @@ function stagesFor(
 	return { stages: row?.options.stages ?? null, row };
 }
 
+/** A render step that ran (done or warning) but kept no stages: an update from before they were recorded. */
+const unstaged = (step: SyncStep): Cell | null =>
+	step.status === 'done' || step.status === 'warning'
+		? cell(
+				step.status === 'done' ? 'done' : 'warn',
+				[{ text: 'not counted per source' }],
+				`${step.summary ?? 'Ran'}: see the step’s figures.`
+			)
+		: null;
+
 function renderCells(
 	mode: BoardMode,
 	run: SyncRun | null,
@@ -523,7 +537,9 @@ function renderCells(
 	const live = step.status === 'running';
 	if (!stages)
 		return four(
-			live ? cell('wait', [], 'Picking the prints with work: the top list, then records changed since they were drawn.') : notRun(step)
+			live
+				? cell('wait', [], 'Picking the prints with work: the top list, then records changed since they were drawn.')
+				: (unstaged(step) ?? notRun(step))
 		);
 	const s: SiteStages | undefined = stages.sites[stageKey(site)];
 	const queueing = live && row?.state === 'starting';
@@ -641,7 +657,7 @@ function sharedRender(
 			flags: cell('wait', [], `Not run yet: step ${stepNo('render')}, last. ${flagsTip}`, { label: flagsLabel })
 		};
 	if (!stages) {
-		const c = step.status === 'running' ? cell('wait', [], 'Not run yet.') : notRun(step);
+		const c = step.status === 'running' ? cell('wait', [], 'Not run yet.') : (unstaged(step) ?? notRun(step));
 		return { summary, cleanup: { ...c, label: cleanupLabel }, flags: { ...c, label: flagsLabel } };
 	}
 	const c = stages.cleanup;

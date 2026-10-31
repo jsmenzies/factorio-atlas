@@ -527,3 +527,28 @@ describe('the Authors cell', () => {
 		expect(cellOf(f, 'codex', 'authors').kind).toBe('na');
 	});
 });
+
+describe('an update from before the stages and the per-site groups', () => {
+	const old = (): SyncRun => {
+		const r = structuredClone(RUN);
+		const render = r.steps.findIndex((s) => s.id === 'render');
+		r.steps[render] = { id: 'render', status: 'done', summary: '12 prints: 80 pages drawn' };
+		const shots = r.steps.find((s) => s.id === 'screenshots')!;
+		shots.details = [
+			...shots.details!.filter((g) => !g.title?.startsWith('From other sites')),
+			{ title: 'From other sites', rows: [{ label: ROW.copiedNow, value: 686 }] }
+		];
+		return r;
+	};
+	test('a render step that ran says so, not "not run"; screenshots counted together read as copied', () => {
+		const f = flowOf({ run: old(), phase: 'current' });
+		expect(said(cellOf(f, 'codex', 'plan'))).toBe('done · not counted per source');
+		expect(cellOf(f, 'codex', 'plan').tip).toBe('12 prints: 80 pages drawn: see the step’s figures.');
+		expect(f.shared.cleanup.kind).toBe('done');
+		expect(cellOf(f, 'codex', 'shots')).toMatchObject({ kind: 'done' });
+		expect(cellOf(f, 'codex', 'shots').tip).toContain('counted them together');
+		const warned = old();
+		warned.steps.find((s) => s.id === 'render')!.status = 'warning';
+		expect(cellOf(flowOf({ run: warned, phase: 'current' }), 'codex', 'draw').kind).toBe('warn');
+	});
+});

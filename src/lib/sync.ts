@@ -26,7 +26,8 @@ export interface SyncSettings {
 	memCapMb: number;
 	/**
 	 * The next update's render step also retries pages that failed every attempt (`render --retry-failed`), and
-	 * takes their prints first; the update turns it off again once its render step has run.
+	 * takes their prints first; the update clears it once its render step has drawn (a step that stopped
+	 * before drawing leaves it on).
 	 */
 	retryFailed: boolean;
 	/** Run the render step (top list, changed records, render and upload); off: the step is skipped. */
@@ -99,8 +100,8 @@ export function holdBack(o: {
 
 /** The render runner's own `--mem-cap-mb` default (scripts/render/args.ts). */
 export const RENDER_MEM_CAP_MB = 6144;
-/** The smallest memory cap a worker may be given. */
-export const MEM_CAP_MIN_MB = 2048;
+/** The smallest memory cap a worker may be given: the runner's recycle size (`--recycle-mb` 3072), so a warm worker is recycled, not killed mid-page. */
+export const MEM_CAP_MIN_MB = 3072;
 /** RAM the render runner keeps free beside its pages (`--mem-reserve-mb`'s default): the larger of 2 GB and 10%. */
 export const renderReserveMb = (ramMb: number) => Math.round(Math.max(2048, ramMb * 0.1));
 /** The largest memory cap a worker may be given on a machine with this much RAM: all of it less the reserve. */
@@ -157,7 +158,8 @@ export function parseSettings(input: unknown, machine: { ramMb?: number | null }
 		top: pick('top', (v) => whole(v, 0, 100_000)),
 		perUpdate: pick('perUpdate', (v) => (v === null ? null : whole(v, 1, 100_000))),
 		workers: pick('workers', (v) => (v === null ? null : whole(v, 1, 64))),
-		memCapMb: pick('memCapMb', (v) => whole(v, MEM_CAP_MIN_MB, capMax)),
+		// The default is always allowed, so a small machine (RAM less the reserve under 6 GB) can still save the rest.
+		memCapMb: pick('memCapMb', (v) => (v === RENDER_MEM_CAP_MB ? v : whole(v, MEM_CAP_MIN_MB, capMax))),
 		retryFailed: pick('retryFailed', (v) => (typeof v === 'boolean' ? v : undefined)),
 		render: pick('render', (v) => (typeof v === 'boolean' ? v : undefined)),
 		screenshots: pick('screenshots', (v) => (typeof v === 'boolean' ? v : undefined)),

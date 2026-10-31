@@ -40,7 +40,7 @@ import { confirmProd, fail, n, openStage, parseStageArgs, requireSchema, runOn }
 const USAGE = 'usage: bun run authors --stage local|prod [--db N] [--rate R] [--dry-run] [--yes] [--json]';
 const CACHE = join(import.meta.dirname, '..', '.cache', 'authors', 'firebase.json');
 
-/** `--json`'s last line: authors named this run (by their records or Firebase), Firebase lookups, prints named, writes. */
+/** `--json`'s last line: authors named this run (by their records, the shared cache or Firebase), Firebase lookups, prints named, writes. */
 export interface AuthorsResult {
 	named: number;
 	asked: number;
@@ -163,7 +163,7 @@ await runOn(target, async () => {
 		if (flags.json)
 			console.log(
 				JSON.stringify({
-					named: seeded.length + named,
+					named: seeded.length + cached.filter((id) => cache.get(id)).length + named,
 					asked,
 					prints: fixes.length,
 					documents: done.docsWritten,

@@ -640,7 +640,7 @@ process was killed is closed as failed by the next, once its processes are gone.
 
 Its settings (each polled site on or off, the 5% guard, author lookups, screenshots, render on or off,
 the top N favourites to render, how many prints to render per update, render workers, the memory cap per worker
-and a one-off "retry failed pages", which the next update's render step uses and then turns off) are saved in the local D1 as they are changed on the Update tab (`/admin/update`) under
+and a one-off "retry failed pages", which the next update's render step uses, cleared once the render step has drawn) are saved in the local D1 as they are changed on the Update tab (`/admin/update`) under
 `bun run dev`; without them the defaults apply. There, the Update tab draws the update as a board: one row per source
 (factorioprints, codex, fprints, uploads) across the steps in order, Changes (at the source), Added (the one gate,
 one source at a time), Authors, Screenshots, then the render run's stages Plan, Draw, Upload and Thumbnails, with a

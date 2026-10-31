@@ -824,7 +824,8 @@ const steps: StepDef[] = [
 			args.push(...renderSettingArgs(settings));
 			const since = Date.now();
 			const rendered = await script(args, { FPSR_ASSETS_DIR: assetsDir });
-			// "Retry failed pages" is for one update: off again once its render has run, whatever came of it.
+			// "Retry failed pages" is for one update: cleared once the render step has drawn. A step that stopped before
+			// drawing (its top list or check failed) leaves it on, for the next update.
 			if (settings.retryFailed) await clearRetryFailed();
 			const row = await db
 				.prepare(

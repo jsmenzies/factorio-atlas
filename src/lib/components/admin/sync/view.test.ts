@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { withStoreWaiting, type ScopeFigures } from '#lib/server/admin/render-scope.js';
 import { DEFAULT_SETTINGS, freshSteps, type SourcePlan, type SyncPlan, type SyncRun } from '#lib/sync.js';
 import { polledFetchDetails, polledIngestDetails } from '../../../../../scripts/sync/polled';
-import { previewCost, previewSteps, renderWork, sourceRunRows, unchecked, updateState, upToDateLine } from './view';
+import { previewCost, previewSteps, renderWork, retryCleared, sourceRunRows, unchecked, updateState, upToDateLine } from './view';
 
 const source = (over: Partial<SourcePlan> = {}): SourcePlan => ({
 	site: 'factorioprints',
@@ -236,4 +236,16 @@ describe('sourceRunRows', () => {
 	test('nothing before the fetch step recorded it', () => {
 		expect(sourceRunRows(run('running', 0), 'codex')).toEqual([]);
 	});
+});
+
+test('retry failed pages: the page follows the saved value only when an update turns it off', () => {
+	// First load, and every poll while it stays as saved: the page keeps its own.
+	expect(retryCleared(null, true)).toBe(false);
+	expect(retryCleared(null, false)).toBe(false);
+	expect(retryCleared(true, true)).toBe(false);
+	// Ticked on the page, not yet saved back: the poll still says off, nothing to follow.
+	expect(retryCleared(false, false)).toBe(false);
+	expect(retryCleared(false, true)).toBe(false);
+	// The update cleared it: the page's copy goes off too, so no later save turns it on again.
+	expect(retryCleared(true, false)).toBe(true);
 });

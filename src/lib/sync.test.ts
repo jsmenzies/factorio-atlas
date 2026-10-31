@@ -41,7 +41,7 @@ describe('parseSettings', () => {
 		expect(parseSettings({ render: 'no' }).errors).toEqual(['render']);
 	});
 
-	test('memory cap: the render default, at least 2 GB, at most the RAM less the reserve', () => {
+	test('memory cap: the render default, at least the recycle size (3 GB), at most the RAM less the reserve', () => {
 		expect(DEFAULT_SETTINGS.memCapMb).toBe(6144);
 		// 32 GB: a 3,277 MB reserve (10%); 8 GB: the 2 GB floor.
 		expect(renderReserveMb(32_768)).toBe(3277);
@@ -51,7 +51,12 @@ describe('parseSettings', () => {
 		expect(parseSettings({ memCapMb: 9728 }, ram).settings.memCapMb).toBe(9728);
 		expect(parseSettings({ memCapMb: 29_491 }, ram).errors).toEqual([]);
 		expect(parseSettings({ memCapMb: 29_492 }, ram).errors).toEqual(['memCapMb']);
-		expect(parseSettings({ memCapMb: 2047 }, ram).errors).toEqual(['memCapMb']);
+		expect(parseSettings({ memCapMb: 3071 }, ram).errors).toEqual(['memCapMb']);
+		expect(parseSettings({ memCapMb: 3072 }, ram).errors).toEqual([]);
+		// A small machine (6 GB less the 2 GB reserve: 4,096 MB): the default still saves.
+		expect(memCapMaxMb(6144)).toBe(4096);
+		expect(parseSettings({ memCapMb: 6144, top: 5 }, { ramMb: 6144 }).errors).toEqual([]);
+		expect(parseSettings({ memCapMb: 5000 }, { ramMb: 6144 }).errors).toEqual(['memCapMb']);
 		expect(parseSettings({ memCapMb: 6144.5 }, ram).errors).toEqual(['memCapMb']);
 		// Stored before the setting: the default.
 		expect(parseSettings({ top: 5 }, ram).settings.memCapMb).toBe(6144);
@@ -68,7 +73,7 @@ describe('parseSettings', () => {
 		]);
 		expect(parseSettings({ retryFailed: true }).settings.retryFailed).toBe(true);
 		expect(parseSettings({ retryFailed: 'yes' }).errors).toEqual(['retryFailed']);
-		// Cleared after the render step: every other field as saved, unknown ones too.
+		// Cleared once the render step has drawn: every other field as saved, unknown ones too.
 		expect(withoutRetry({ top: 5, retryFailed: true, polled: { codex: { on: false } } })).toEqual({
 			top: 5,
 			retryFailed: false,

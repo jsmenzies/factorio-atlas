@@ -129,13 +129,13 @@
 					Threads
 					<input id="workers" type="number" min="1" max="64" step="1" placeholder="auto" value={settings.workers ?? ''} class="{field('workers')} w-16" oninput={(e) => (settings.workers = numberInput(e))} onchange={() => onchange()} />
 				</label>
-				<label class={lbl} title="A worker is stopped past this much memory and its page retried. From {gb(MEM_CAP_MIN_MB)} GB to {gb(capMax)} GB (this machine’s RAM less what the render keeps free). 6 GB by default.">
+				<label class={lbl} title="A worker is stopped past this much memory and its page retried. From {gb(MEM_CAP_MIN_MB)} GB to {Math.floor((capMax / 1024) * 10) / 10} GB (this machine’s RAM less what the render keeps free). 6 GB by default.">
 					Memory per worker (GB)
 					<input
 						id="memCapMb"
 						type="number"
 						min={gb(MEM_CAP_MIN_MB)}
-						max={gb(capMax)}
+						max={Math.floor((capMax / 1024) * 10) / 10}
 						step="0.1"
 						value={capGb ?? ''}
 						class="{field('memCapMb')} w-16"
@@ -146,7 +146,7 @@
 						}}
 					/>
 				</label>
-				<label class="{lbl} cursor-pointer" title="The next update also redraws pages that failed every attempt, taking their prints first; then this turns itself off.">
+				<label class="{lbl} cursor-pointer" title="The next update also redraws pages that failed every attempt, taking their prints first; cleared once the render step has drawn.">
 					<input id="retryFailed" type="checkbox" bind:checked={settings.retryFailed} onchange={() => onchange()} class="accent-amber-500" />
 					Retry failed pages: next update only
 				</label>

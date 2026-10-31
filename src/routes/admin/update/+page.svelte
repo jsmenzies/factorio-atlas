@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { deserialize } from '$app/forms';
 	import { invalidate } from '$app/navigation';
+	import { untrack } from 'svelte';
 	import { PIPELINE_DEP, poll, serverClock, syncTimeZone } from '#lib/components/admin/live.svelte.js';
 	import { clock as clockText } from '#lib/components/admin/metrics.js';
 	import FlowBoard from '#lib/components/admin/sync/FlowBoard.svelte';
@@ -8,7 +9,7 @@
 	import FlowStrip from '#lib/components/admin/sync/FlowStrip.svelte';
 	import UpdateBox from '#lib/components/admin/sync/UpdateBox.svelte';
 	import { buildFlow, heroBar, nowSentence } from '#lib/components/admin/sync/flow.js';
-	import { previewSteps, updateState } from '#lib/components/admin/sync/view.js';
+	import { previewSteps, retryCleared, updateState } from '#lib/components/admin/sync/view.js';
 	import type { LogProgress } from '#lib/sync-progress.js';
 	import type { SyncSettings } from '#lib/sync.js';
 	import type { PageProps } from './$types';
@@ -64,6 +65,16 @@
 	let draft = $state<SyncSettings | null>(null);
 	$effect.pre(() => {
 		if (!draft && view) draft = structuredClone(view.settings);
+	});
+	// The one field an update changes: follow the saved value when it goes from on to off (no save).
+	let lastRetry: boolean | null = null;
+	$effect.pre(() => {
+		const saved = view?.settings.retryFailed;
+		if (saved === undefined) return;
+		untrack(() => {
+			if (draft && retryCleared(lastRetry, saved)) draft.retryFailed = false;
+		});
+		lastRetry = saved;
 	});
 	let save = $state<{ state: 'idle' | 'saving' | 'saved' | 'error'; at?: number; message?: string; errors: string[] }>({ state: 'idle', errors: [] });
 	let inFlight = false;
