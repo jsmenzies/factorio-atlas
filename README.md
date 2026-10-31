@@ -124,8 +124,8 @@ GitHub mirror of factorioprints (motlin/factorio-blueprint-firebase-cdn, one JSO
   failed pages, uploads, pause, resume, stop); under `bun run dev` it can also start a batch or
   resume the last run on this machine. They're open under `bun run dev`; deployed, they require
   Cloudflare Access (see docs/deploy.md). Under `bun run dev`, `/admin` is the Overview: what the
-  next update from the mirror would do, one button that runs it (`bun run sync`), the site's and the
-  renders' figures and past updates; `/admin/settings` holds the update's settings.
+  site has by source, what needs a look, render coverage and past updates; `/admin/update` runs the
+  update (`bun run sync`), shows each step live and holds its settings.
 
 Stack: SvelteKit 3 on Cloudflare Workers (`@sveltejs/adapter-cloudflare`), D1, R2, Effect 4, bun,
 Tailwind 4. Deploys use [Alchemy](https://alchemy.run).
