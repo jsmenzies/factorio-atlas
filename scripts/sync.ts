@@ -234,11 +234,17 @@ const describeSource = (p: SourcePlan) =>
 
 const acceptedIds = async () => (await readMeta<Record<string, string>>(db, 'accept'))?.value ?? {};
 
-/** Each source's plan, without fetching anything. One that can't be checked (the stage unreachable) is shown as such; the rest still are. */
+/**
+ * Each source's plan, without fetching anything. One that can't be checked (the stage unreachable) is shown as
+ * such; the rest still are. While an update is live, one that started meanwhile too, it stops before the next
+ * source and saves nothing: the update asks the sites itself, and each process paces only its own requests.
+ */
 const planAll = async (signal?: AbortSignal) => {
 	const accepted = await acceptedIds();
 	const sources: SourcePlan[] = [];
 	for (const s of SOURCES) {
+		const live = await liveUpdate();
+		if (live) fail(`an update is running (${live.id}): its fetch step checks the sources itself`);
 		try {
 			sources.push(await s.plan({ maxChange: settings.maxChange, accept: accepted[s.site], signal }));
 		} catch (e) {
@@ -260,9 +266,8 @@ const liveUpdate = () =>
 // --- one-off modes
 
 if (flags.plan) {
-	// The update fetches the clone itself: two fetches at once can fail on git's ref locks.
-	const live = await liveUpdate();
-	if (live) fail(`an update is running (${live.id}): its fetch step checks the sources itself`);
+	// The update fetches the clone itself (two fetches at once can fail on git's ref locks) and asks the sites
+	// itself: planAll refuses while one is live.
 	const plan = await planAll();
 	await writeMeta(db, 'plan', plan);
 	await saveStorePrints();
