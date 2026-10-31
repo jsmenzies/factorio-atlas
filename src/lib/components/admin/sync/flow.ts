@@ -5,9 +5,9 @@
  * is done once (screenshots' sizing and upload; the run's summary, Clean up and Search flags).
  *
  * Every cell has one pattern: a status (`CellKind`) and, only when something happened, one fact per line (zeros
- * left out; a bare ✓ means nothing happened). At most one cell is running outside the Render group, whose stages
- * overlap (a print moves on as soon as it's drawn), so its cells are part-way instead and the group carries the
- * spinner.
+ * left out; a bare ✓ means nothing happened), at most CELL_LINES lines with its label, so every cell keeps one size
+ * (fitCell: the rest go in its tooltip). At most one cell is running outside the Render group, whose stages
+ * overlap (a print moves on as soon as it's drawn), so its cells are part-way instead.
  *
  * Built only from what the page has: the sources' plan (sync_meta 'plan'), the update running now or the last one
  * (its `sources`, its steps' DetailGroups and the render step's `render` stages), the latest render run's row
@@ -103,8 +103,6 @@ export interface Flow {
 	caption: { lead: string; rest: string };
 	rows: Row[];
 	shared: Shared;
-	/** The render step runs: the Render group's header spins. */
-	rendering: boolean;
 	/** Render workers the update asks for (null: the runner's default). */
 	threads: number | null;
 	/** While the render step runs: its run's phase and progress, for the step's line and the sentence. */
@@ -137,6 +135,29 @@ const cell = (kind: CellKind, facts: Fact[] = [], tip = '', extra: Partial<Cell>
 /** Done, or done with something to look at when a fact carries a tone. */
 const settled = (facts: Fact[], tip: string): Cell => cell(facts.some((f) => f.tone) ? 'warn' : 'done', facts, tip);
 const pct = (value: number, of: number) => (of > 0 ? Math.min(100, Math.round((value / of) * 100)) : 0);
+
+/** Text lines a cell shows under its status icon, its label included: the board keeps room for exactly this many. */
+export const CELL_LINES = 3;
+const factText = (f: Fact) => (f.n === undefined ? f.text : `${typeof f.n === 'number' ? int(f.n) : f.n}${f.text ? ` ${f.text}` : ''}`);
+
+/**
+ * A cell cut to `lines` text lines (its label takes one). Failures and warnings are kept first, then the rest in
+ * order, shown in their own order; the facts left out go at the end of the tooltip.
+ */
+export function fitCell(c: Cell, lines = CELL_LINES): Cell {
+	const room = Math.max(0, lines - (c.label ? 1 : 0));
+	if (c.facts.length <= room) return c;
+	const rank = (f: Fact) => (f.tone === 'bad' ? 0 : f.tone === 'warn' ? 1 : 2);
+	const keep = new Set(
+		c.facts
+			.map((f, i) => ({ i, r: rank(f) }))
+			.sort((a, b) => a.r - b.r || a.i - b.i)
+			.slice(0, room)
+			.map((x) => x.i)
+	);
+	const rest = c.facts.filter((_, i) => !keep.has(i)).map(factText);
+	return { ...c, facts: c.facts.filter((_, i) => keep.has(i)), tip: `${c.tip}${c.tip ? ' ' : ''}Also: ${rest.join(', ')}.` };
+}
 
 const stepOf = (run: SyncRun | null, id: SyncStepId) => run?.steps.find((s) => s.id === id);
 const stepNo = (id: SyncStepId) => SYNC_STEPS.findIndex((s) => s.id === id) + 1;
@@ -724,6 +745,13 @@ const reachOf = (cells: Cell[]) => {
 	});
 	return reach;
 };
+/** The Shared row's cells cut to the board's lines; the summary has its title and at most two lines. */
+const fitShared = (s: Shared): Shared => ({
+	sizing: fitCell(s.sizing),
+	summary: { title: s.summary.title, lines: s.summary.lines.slice(0, CELL_LINES - 1) },
+	cleanup: fitCell(s.cleanup),
+	flags: fitCell(s.flags)
+});
 const byColumn = (cells: Cell[]) => Object.fromEntries(COLUMNS.map((c, i) => [c, cells[i]])) as Record<ColumnId, Cell>;
 
 /**
@@ -757,12 +785,13 @@ export function buildFlow(o: {
 		const name = plan?.site ?? site;
 		const info = SOURCE_SITES[(name === 'uploads' ? 'upload' : name) as Site];
 		const polled = POLLED_SITES.find((p) => p.site === name);
+		const held =
+			mode === 'before' && plan?.blocked ? { reason: plan.blocked, site: plan.site, id: plan.to.id, polled: !!plan.polled } : null;
+		// A held-back source's Accept button takes the room of two lines in its Changes cell.
 		const cells = [
-			changesCell(mode, run, name, plan, progress, ago),
-			addedCell(mode, run, name, progress),
-			authorsCell(mode, run, name),
-			shotsCell(mode, run, name, progress),
-			...renderCells(mode, run, name, stages, row)
+			fitCell(changesCell(mode, run, name, plan, progress, ago), held ? 1 : CELL_LINES),
+			...[addedCell(mode, run, name, progress), authorsCell(mode, run, name), shotsCell(mode, run, name, progress)].map((c) => fitCell(c)),
+			...renderCells(mode, run, name, stages, row).map((c) => fitCell(c))
 		];
 		const gate = groupOf(stepOf(run, 'ingest'), (t) => t === `${name}: through the gate`);
 		return {
@@ -775,7 +804,7 @@ export function buildFlow(o: {
 						: `${info?.name ?? name}, polled for new and changed prints (about one request a second).`,
 			toggle: polled && mode === 'before' ? polled.site : null,
 			plan,
-			held: mode === 'before' && plan?.blocked ? { reason: plan.blocked, site: plan.site, id: plan.to.id, polled: !!plan.polled } : null,
+			held,
 			cells: byColumn(cells),
 			reach: reachOf(cells),
 			newPrints: valueOf(gate, 'new prints') ?? (live && progress?.step === 'ingest' ? (progress.sites[name]?.new ?? 0) : 0)
@@ -785,7 +814,13 @@ export function buildFlow(o: {
 	for (const key of Object.keys(stages?.sites ?? {})) {
 		if (ROWS.some((r) => stageKey(r.site) === key)) continue;
 		const na = cell('na', [], 'Added by hand on the Add page: not part of the update’s fetch.');
-		const cells = [na, na, na, cell('na', [], 'No screenshot to copy.'), ...renderCells(mode, run, key, stages, row)];
+		const cells = [
+			na,
+			na,
+			na,
+			cell('na', [], 'No screenshot to copy.'),
+			...renderCells(mode, run, key, stages, row).map((c) => fitCell(c))
+		];
 		rows.push({
 			site: key,
 			tip: `${SOURCE_SITES[key as Site]?.name ?? key}: prints added by hand, rendered with the rest.`,
@@ -810,11 +845,7 @@ export function buildFlow(o: {
 		current,
 		caption,
 		rows,
-		shared: {
-			sizing: sizingCell(mode, run, progress),
-			...sharedRender(mode, run, settings, stages, row, o.now)
-		},
-		rendering: current === 'render',
+		shared: fitShared({ sizing: sizingCell(mode, run, progress), ...sharedRender(mode, run, settings, stages, row, o.now) }),
 		threads: settings?.workers ?? null,
 		renderNow: current === 'render' ? renderNow(row) : null,
 		newPrints: rows.reduce((n, r) => n + r.newPrints, 0)

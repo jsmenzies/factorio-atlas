@@ -2,16 +2,17 @@
 	import { enhance } from '$app/forms';
 	import type { SyncFigures, SyncSettings } from '#lib/sync.js';
 	import { int, when } from '../metrics.js';
-	import { COLUMNS, type Cell, type ColumnId, type Flow, type Row } from './flow.js';
+	import { CELL_LINES, COLUMNS, type Cell, type ColumnId, type Flow, type Row } from './flow.js';
 	import Toggle from './Toggle.svelte';
 	import { shortCommit } from './view.js';
 
 	/**
 	 * The Update tab's board (flow.ts): source rows × the update's steps in order, Changes | Added | Authors |
-	 * Screenshots, then the render run's stages Plan | Draw | Upload | Thumbnails under one "Render · one run" group,
-	 * and a Shared row for what is done once. Every cell is a status icon over one fact per line; each row has one
-	 * straight line through its cells, coloured as far as its prints have got. Every step column is the same width
-	 * and every row the same height; on narrow screens the board scrolls sideways inside itself. The polled sites'
+	 * Screenshots, then the render run's stages Plan | Draw | Upload | Thumbnails under one "Render" group, and a
+	 * Shared row for what is done once. Every cell is a status icon over room for exactly CELL_LINES lines (one fact
+	 * per line, flow.ts fitCell), so no cell changes size as its lines come and go; each row has one straight line
+	 * through its cells, coloured as far as its prints have got. Every step column is the same width and every row
+	 * the same height; on narrow screens the board scrolls sideways inside itself. The polled sites'
 	 * switches sit on their rows before an update (bound settings, saved by the page on `onchange`); a held-back
 	 * source gets Accept in its Changes cell.
 	 */
@@ -54,6 +55,8 @@
 	const GATE_TIP =
 		'Step 3: every record from every source goes through one gate (blocked or unreadable refused; a blueprint already on the site is matched), one source at a time: factorioprints through the backfill, then codex, then fprints; uploads are admitted in the fetch.';
 	const RENDER_TIP = 'Step 6: one render run for every source, under one limit. Stages overlap: each print moves on as soon as it’s drawn.';
+	/** Each row's height: the cell's padding, borders, its icon and CELL_LINES lines of 1rem (see `.c7`). */
+	const ROW_H = `calc(${CELL_LINES}rem + 2.95rem)`;
 	const KIND_WORD: Record<Cell['kind'], string> = {
 		done: 'done',
 		run: 'running',
@@ -107,13 +110,17 @@
 {#snippet box(c: Cell, held: Row | null = null)}
 	<div class="c7 {c.kind}" title={c.tip}>
 		<span class="sr-only">{c.label ? `${c.label}: ` : ''}{KIND_WORD[c.kind]}.</span>
-		{#if c.kind === 'run'}<span class="spin" aria-hidden="true"></span>{:else}<span class="ic {c.kind}" aria-hidden="true">{MARK[c.kind] ?? ''}</span>{/if}
-		{#if c.label}<span class="lab">{c.label}</span>{/if}
-		{#each c.facts as f, i (i)}
-			<span class="fact {f.tone ?? ''}">{#if f.n !== undefined}<b>{typeof f.n === 'number' ? int(f.n) : f.n}</b>{f.text ? ' ' : ''}{/if}{f.text}</span>
-		{/each}
+		<span class="mark" aria-hidden="true">
+			{#if c.kind === 'run'}<span class="spin"></span>{:else}<span class="ic {c.kind}">{MARK[c.kind] ?? ''}</span>{/if}
+		</span>
+		<span class="lines">
+			{#if c.label}<span class="lab line">{c.label}</span>{/if}
+			{#each c.facts as f, i (i)}
+				<span class="fact line {f.tone ?? ''}">{#if f.n !== undefined}<b>{typeof f.n === 'number' ? int(f.n) : f.n}</b>{f.text ? ' ' : ''}{/if}{f.text}</span>
+			{/each}
+			{#if held}{@render accept(held)}{/if}
+		</span>
 		{#if c.bar !== undefined && c.bar !== null}<i class="wbar" aria-hidden="true"><span style="width: {c.bar}%"></span></i>{/if}
-		{#if held}{@render accept(held)}{/if}
 	</div>
 {/snippet}
 
@@ -138,10 +145,10 @@
 	</div>
 
 	<div class="scroller">
-		<div class="board" style="grid-template-rows: auto auto repeat({flow.rows.length + 1}, minmax(5.5rem, 1fr))">
+		<div class="board" style="grid-template-rows: auto auto repeat({flow.rows.length + 1}, {ROW_H})">
 			<!-- The Render group's header, over its four stages. -->
 			<div class="head grp" style="grid-row: 1; grid-column: {COL('plan')} / span 4" title={RENDER_TIP}>
-				Render · one run{#if flow.rendering}<span class="spin head-spin" role="status" aria-label="running"></span>{/if}
+				Render
 				<span class="sub">stages overlap: each print moves on as soon as it’s drawn</span>
 			</div>
 			<div class="head first" style="grid-row: 2; grid-column: 1">Source</div>
@@ -187,9 +194,11 @@
 			</div>
 			<div class="cell" style="grid-row: {shared}; grid-column: {COL('shots')}">{@render box(flow.shared.sizing)}</div>
 			<div class="cell" style="grid-row: {shared}; grid-column: {COL('plan')} / span 2">
-				<div class="c7 sum">
-					<span class="lab">{flow.shared.summary.title}</span>
-					{#each flow.shared.summary.lines as line, i (i)}<span class="fact text-stone-400">{line}</span>{/each}
+				<div class="c7 sum" title={[flow.shared.summary.title, ...flow.shared.summary.lines].join('\n')}>
+					<span class="lines">
+						<span class="lab line">{flow.shared.summary.title}</span>
+						{#each flow.shared.summary.lines as line, i (i)}<span class="fact line text-stone-400">{line}</span>{/each}
+					</span>
 				</div>
 			</div>
 			<div class="cell" style="grid-row: {shared}; grid-column: {COL('upload')}">{@render box(flow.shared.cleanup)}</div>
@@ -246,10 +255,6 @@
 		text-transform: none;
 		color: #a8a29e;
 	}
-	.head-spin {
-		margin: 0 0 0 0.45rem;
-		vertical-align: -2px;
-	}
 	.head.grp {
 		padding: 0.4rem 0.6rem 0.15rem;
 		color: #d6d3d1;
@@ -293,7 +298,7 @@
 		z-index: 2;
 		display: flex;
 		align-items: stretch;
-		padding: 0.4rem 0.3rem;
+		padding: 0.3rem;
 		min-width: 0;
 	}
 	.cell.first {
@@ -319,26 +324,50 @@
 	.name[title] {
 		cursor: help;
 	}
+	/*
+	 * One size for every cell: the status icon's row (1.4rem), then exactly CELL_LINES lines of 1rem, whether
+	 * they're filled or not; the progress bar sits in the bottom padding. Lines never wrap: a long one is cut
+	 * with an ellipsis, and the tooltip has the whole story. ROW_H: these plus ≈ 1.5rem of padding and borders.
+	 */
 	.c7 {
 		position: relative;
 		width: 100%;
+		height: 100%;
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
-		gap: 1px;
 		border: 1px solid #292524;
 		border-radius: 0.5rem;
 		background: #0c0a09;
-		padding: 0.35rem 0.5rem;
+		padding: 0.25rem 0.5rem 0.5rem;
 		font-size: 0.75rem;
-		line-height: 1.35;
+		line-height: 1rem;
 		color: #d6d3d1;
 		min-width: 0;
+		overflow: hidden;
 		cursor: help;
 	}
-	.c7 .fact {
+	.c7 .mark {
+		display: flex;
+		align-items: center;
+		height: 1.4rem;
+		flex: none;
+	}
+	.c7 .lines {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		width: 100%;
+		min-width: 0;
+		flex: none;
+	}
+	.c7 .line {
+		display: block;
 		max-width: 100%;
-		overflow-wrap: anywhere;
+		height: 1rem;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 	.c7 .fact b {
 		color: #f5f5f4;
@@ -378,14 +407,14 @@
 	}
 	.c7.sum {
 		cursor: default;
+		padding-top: 0.45rem;
 	}
 	.ic {
 		display: inline-grid;
 		place-items: center;
-		width: 0.95rem;
-		height: 0.95rem;
-		margin-bottom: 1px;
-		font-size: 0.75rem;
+		width: 1.35rem;
+		height: 1.35rem;
+		font-size: 1.15rem;
 		font-weight: 700;
 		line-height: 1;
 	}
@@ -404,40 +433,42 @@
 	}
 	.ic.found::before {
 		content: '';
-		width: 0.5rem;
-		height: 0.5rem;
+		width: 0.7rem;
+		height: 0.7rem;
 		border-radius: 50%;
 		background: #f59e0b;
 	}
 	.ic.wait::before {
 		content: '';
-		width: 0.55rem;
-		height: 0.55rem;
+		width: 0.75rem;
+		height: 0.75rem;
 		border-radius: 50%;
-		border: 1.5px solid #57534e;
+		border: 2px solid #57534e;
 	}
 	.ic.part::before {
 		content: '';
-		width: 0.7rem;
-		height: 0.7rem;
+		width: 0.95rem;
+		height: 0.95rem;
 		border-radius: 50%;
 		background: conic-gradient(#f59e0b 0 65%, #44403c 65% 100%);
 	}
 	.spin {
 		display: inline-block;
-		width: 0.75rem;
-		height: 0.75rem;
-		margin: 0.1rem 0 0.15rem;
+		width: 1rem;
+		height: 1rem;
+		margin: 0 0.175rem;
 		border-radius: 999px;
 		border: 2px solid color-mix(in srgb, #f59e0b 30%, transparent);
 		border-top-color: #fbbf24;
 		animation: spin 0.9s linear infinite;
 	}
 	.wbar {
+		position: absolute;
+		left: 0.5rem;
+		right: 0.5rem;
+		bottom: 0.2rem;
 		display: block;
-		width: 100%;
 		height: 3px;
-		margin-top: 3px;
 		border-radius: 99px;
 		background: #292524;
 		overflow: hidden;

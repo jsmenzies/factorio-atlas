@@ -3,7 +3,7 @@ import type { RenderStages } from '#lib/render-stages.js';
 import type { RenderRun } from '#lib/server/admin/render.js';
 import { logProgress } from '#lib/sync-progress.js';
 import { SITE_SHOTS_GROUP, type SourcePlan, type SyncPlan, type SyncRun, type SyncStep } from '#lib/sync.js';
-import { buildFlow, COLUMNS, heroBar, nowSentence, renderNow, type Cell, type Flow } from './flow';
+import { buildFlow, CELL_LINES, COLUMNS, fitCell, heroBar, nowSentence, renderNow, type Cell, type Flow } from './flow';
 import finished from './flow.fixture.json';
 
 // The update of 2026-10-30 (12:00Z): codex 431 and fprints 407 read and admitted, 3 codex records failed, the
@@ -327,7 +327,7 @@ describe('render per source', () => {
 
 	test('while drawing: each source part-way where its prints still move; uploads said honestly', () => {
 		const f = flowOf({ run: inRender(), phase: 'running', liveRender: renderRow() });
-		expect(f.rendering).toBe(true);
+		expect(f.current).toBe('render');
 		expect(said(cellOf(f, 'factorioprints', 'plan'))).toBe('done · 4 prints · 212 to draw · 12 skipped');
 		expect(said(cellOf(f, 'factorioprints', 'upload'))).toBe('done · 212 uploaded');
 		expect(said(cellOf(f, 'codex', 'draw'))).toBe('part · 2,000 drawn · 10 failed · 107 to draw');
@@ -429,7 +429,7 @@ describe('render per source', () => {
 		expect(said(f.shared.cleanup)).toBe('done · 186 deleted · 41 in grace');
 		expect(said(f.shared.flags)).toBe('done · 102 rows written · cache bumped');
 		expect(f.shared.summary.title).toBe('One run · 59 min');
-		expect(f.rendering).toBe(false);
+		expect(f.current).toBeNull();
 		// Finished: no bar in the top box.
 		expect(heroBar(f, null)).toBeNull();
 	});
@@ -459,5 +459,33 @@ describe('render per source', () => {
 		expect(f.rows.map((r) => r.site)).toEqual(['factorioprints', 'codex', 'fprints', 'uploads', 'factoriobin']);
 		expect(cellOf(f, 'factoriobin', 'changes').kind).toBe('na');
 		expect(said(cellOf(f, 'factoriobin', 'plan'))).toBe('done · 1 prints · 1,310 to draw · 60 skipped');
+	});
+});
+
+describe('one size for every cell', () => {
+	const facts = (n: number) => Array.from({ length: n }, (_, i) => ({ n: i + 1, text: `f${i}` }));
+
+	test('fitCell keeps three lines, failures and warnings first, the rest in the tooltip', () => {
+		const c: Cell = {
+			kind: 'warn',
+			facts: [...facts(3), { n: 9, text: 'failed', tone: 'bad' }, { n: 1_234, text: 'left over', tone: 'warn' }],
+			tip: 'Read.'
+		};
+		const fit = fitCell(c);
+		expect(said(fit)).toBe('warn · 1 f0 · 9 failed · 1,234 left over');
+		expect(fit.tip).toBe('Read. Also: 2 f1, 3 f2.');
+		expect(fitCell({ ...c, facts: facts(3) })).toEqual({ ...c, facts: facts(3) });
+		// A label takes a line; a held-back cell keeps one for its Accept button.
+		expect(fitCell({ ...c, facts: facts(3), label: 'Clean up' }).facts.length).toBe(2);
+		expect(fitCell({ ...c, facts: facts(2), tip: '' }, 1).tip).toBe('Also: 2 f1.');
+	});
+
+	test('no cell on any board has more than three lines', () => {
+		const boards = [flowOf({}), flowOf({ run: RUN, phase: 'current' })];
+		for (const f of boards) {
+			const cells = [...f.rows.flatMap((r) => COLUMNS.map((c) => r.cells[c])), f.shared.sizing, f.shared.cleanup, f.shared.flags];
+			for (const c of cells) expect(c.facts.length + (c.label ? 1 : 0) <= CELL_LINES).toBe(true);
+			expect(f.shared.summary.lines.length + 1 <= CELL_LINES).toBe(true);
+		}
 	});
 });
