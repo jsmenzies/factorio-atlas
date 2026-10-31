@@ -1,10 +1,13 @@
 import { afterAll, describe, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { readdirSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { d1FromSqlite } from '#lib/server/pipeline/d1-sqlite.js';
 import { THUMBS_INDEX, thumbFile, type ThumbsIndex } from '#lib/viewer/thumbs.js';
 import { StoreError, type RenderStore } from './store.js';
-import { createThumbUploader, FILE_CONCURRENCY, type ThumbUploadDb } from './thumbs-upload.js';
+import { createThumbUploader, FILE_CONCURRENCY, thumbUploadDb, type ThumbUploadDb } from './thumbs-upload.js';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const ID = '-Pbook';
@@ -143,5 +146,76 @@ describe('thumbnail upload of one print', () => {
 		expect(new RegExp(`^thumbnails: uploading ${ID} \\d+ of ${files.length} files$`).test(lines[0])).toBe(true);
 		// Never "N of N": the last file ends the upload, not a progress line.
 		expect(lines.every((l) => !l.endsWith(`${files.length} of ${files.length} files`))).toBe(true);
+	});
+});
+
+describe('thumbUploadDb on a busy local D1', () => {
+	const BUSY = 'D1_ERROR: database is locked: SQLITE_BUSY';
+	/** The real migrations over bun:sqlite, behind a D1 whose next `fails` calls (reads, writes, batches) throw `error`. */
+	const flaky = (error = BUSY) => {
+		const sqlite = new Database(':memory:');
+		const root = join(import.meta.dirname, '..', '..', 'migrations');
+		for (const f of readdirSync(root)
+			.filter((f) => f.endsWith('.sql'))
+			.sort())
+			sqlite.run(readFileSync(join(root, f), 'utf8'));
+		const real = d1FromSqlite(sqlite);
+		const state = { fails: 0, calls: 0 };
+		const call = <T>(f: () => Promise<T>) => {
+			state.calls++;
+			if (state.fails > 0) {
+				state.fails--;
+				return Promise.reject(new Error(error));
+			}
+			return f();
+		};
+		type Stmt = ReturnType<D1Database['prepare']>;
+		const wrap = (s: Stmt): Stmt =>
+			({
+				inner: s,
+				bind: (...args: unknown[]) => wrap(s.bind(...args)),
+				run: () => call(() => s.run()),
+				all: () => call(() => s.all()),
+				first: () => call(() => s.first())
+			}) as unknown as Stmt;
+		const db = {
+			prepare: (sql: string) => wrap(real.prepare(sql)),
+			batch: (stmts: Stmt[]) => call(() => real.batch(stmts.map((x) => (x as unknown as { inner: Stmt }).inner)))
+		} as unknown as D1Database;
+		return { sqlite, db, state };
+	};
+	const index: ThumbsIndex = { v: 1, pages: { '0': { stamp: STAMP, w: 1000, h: 500, sizes: TIERS } } };
+
+	test('a write, a batch and a read go through after SQLITE_BUSY twice', async () => {
+		const { sqlite, db, state } = flaky();
+		const t = thumbUploadDb(db);
+		state.fails = 2;
+		await t.saveUploaded('local', ID, index, 1000);
+		expect(state.calls).toBe(3);
+		expect(sqlite.query('SELECT print_id, thumbs FROM thumb_uploads').all()).toEqual([{ print_id: ID, thumbs: JSON.stringify(index) }]);
+
+		state.fails = 2;
+		const keys = [`${ID}/0.${STAMP}.t320.avif`, `${ID}/0.${STAMP}.t640.avif`];
+		await t.scheduleDeletes('local', ID, keys, 5000, 1000);
+		expect(sqlite.query('SELECT key FROM render_deletes ORDER BY key').all()).toEqual(keys.map((key) => ({ key })));
+
+		state.fails = 2;
+		expect((await t.dueThumbDeletes('local', 6000)).map((r) => r.key).sort()).toEqual(keys);
+
+		state.fails = 2;
+		await t.cancelDeletes('local', keys);
+		expect(sqlite.query('SELECT COUNT(*) AS n FROM render_deletes').get()).toEqual({ n: 0 });
+
+		state.fails = 2;
+		state.calls = 0;
+		expect((await t.uploaded('local')).get(ID)).toEqual(index);
+		expect(state.calls).toBe(3);
+	});
+
+	test('any other error is not retried', async () => {
+		const { db, state } = flaky('D1_ERROR: no such table: thumb_uploads');
+		state.fails = 1;
+		await expect(thumbUploadDb(db).saveUploaded('local', ID, index, 1000)).rejects.toThrow('no such table');
+		expect(state.calls).toBe(1);
 	});
 });

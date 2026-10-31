@@ -31,6 +31,28 @@ const stageDb = () => {
 };
 
 describe('removedGuard', () => {
+	test('both reads go through after SQLITE_BUSY twice', async () => {
+		const h = stageDb();
+		h.sqlite.run(`INSERT INTO print_tombstones (print_id, kind, at) VALUES ('-Taken', 'takedown', 1)`);
+		let fails = 2;
+		const busy = <T>(f: () => Promise<T>) => (fails-- > 0 ? Promise.reject(new Error('D1_ERROR: database is locked: SQLITE_BUSY')) : f());
+		type Stmt = ReturnType<D1Database['prepare']>;
+		const wrap = (s: Stmt): Stmt =>
+			({
+				bind: (...a: unknown[]) => wrap(s.bind(...a)),
+				all: () => busy(() => s.all()),
+				first: () => busy(() => s.first())
+			}) as unknown as Stmt;
+		const db = { prepare: (sql: string) => wrap(h.db.prepare(sql)) } as unknown as D1Database;
+		const guard = await removedGuard(db);
+		expect(await guard.removed('-Taken')).toBe(true);
+		// Blocked mid-run: found by the per-print lookup.
+		h.sqlite.run(`INSERT INTO removal_blocks (kind, value, print_id, report_id, created_at) VALUES ('print', '-New', '-New', NULL, 1)`);
+		fails = 2;
+		expect(await guard.removed('-New')).toBe(true);
+		expect(await guard.removed('-Live')).toBe(false);
+	});
+
 	test("tombstones of either kind and 'print' blocks; one read per run, then one lookup per print not known", async () => {
 		const h = stageDb();
 		h.sqlite.run(`INSERT INTO print_tombstones (print_id, kind, at) VALUES ('up-AaAaA11111', 'gone', 1), ('-Taken', 'takedown', 1)`);

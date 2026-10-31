@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { chunks } from '#lib/server/d1-batch.js';
 import { renderCacheControl } from '#lib/viewer/game-render.js';
 import { THUMB_FILE, THUMBS_INDEX, thumbFile, type ThumbsIndex } from '#lib/viewer/thumbs.js';
+import { retrying } from './queue.js';
 import { StoreError, withRetries, type RenderStore } from './store.js';
 import { mapPool } from './thumbs.js';
 
@@ -63,23 +64,29 @@ export interface ThumbUploadDb {
 	dueThumbDeletes(target: string, at: number): Promise<{ key: string; print_id: string }[]>;
 }
 
+/**
+ * thumb_uploads and render_deletes in the local D1, which `vite dev` and other scripts share: every call is
+ * retried while SQLite is busy (queue.ts `retrying`). The writes are idempotent, so a retry after one went
+ * through does no harm.
+ */
 export function thumbUploadDb(db: D1Database): ThumbUploadDb {
 	return {
 		async uploaded(target) {
-			const { results } = await db
-				.prepare('SELECT print_id, thumbs FROM thumb_uploads WHERE target = ?')
-				.bind(target)
-				.all<{ print_id: string; thumbs: string }>();
+			const { results } = await retrying('read thumb uploads', () =>
+				db.prepare('SELECT print_id, thumbs FROM thumb_uploads WHERE target = ?').bind(target).all<{ print_id: string; thumbs: string }>()
+			);
 			return new Map(results.map((r) => [r.print_id, JSON.parse(r.thumbs) as ThumbsIndex]));
 		},
 		async saveUploaded(target, id, index, at) {
-			await db
-				.prepare(
-					`INSERT INTO thumb_uploads (target, print_id, thumbs, uploaded_at) VALUES (?, ?, ?, ?)
-					ON CONFLICT (target, print_id) DO UPDATE SET thumbs = excluded.thumbs, uploaded_at = excluded.uploaded_at`
-				)
-				.bind(target, id, JSON.stringify(index), at)
-				.run();
+			await retrying('record thumb upload', () =>
+				db
+					.prepare(
+						`INSERT INTO thumb_uploads (target, print_id, thumbs, uploaded_at) VALUES (?, ?, ?, ?)
+						ON CONFLICT (target, print_id) DO UPDATE SET thumbs = excluded.thumbs, uploaded_at = excluded.uploaded_at`
+					)
+					.bind(target, id, JSON.stringify(index), at)
+					.run()
+			);
 		},
 		async scheduleDeletes(target, id, keys, notBefore, at) {
 			const stmts = chunks(keys, 16).map((c) =>
@@ -90,19 +97,21 @@ export function thumbUploadDb(db: D1Database): ThumbUploadDb {
 					)
 					.bind(...c.flatMap((k) => [target, k, id, notBefore, at]))
 			);
-			if (stmts.length) await db.batch(stmts);
+			if (stmts.length) await retrying('schedule thumbnail deletes', () => db.batch(stmts));
 		},
 		async cancelDeletes(target, keys) {
 			const stmts = chunks(keys, 90).map((c) =>
 				db.prepare(`DELETE FROM render_deletes WHERE target = ? AND key IN (${c.map(() => '?').join(', ')})`).bind(target, ...c)
 			);
-			if (stmts.length) await db.batch(stmts);
+			if (stmts.length) await retrying('cancel thumbnail deletes', () => db.batch(stmts));
 		},
 		async dueThumbDeletes(target, at) {
-			const { results } = await db
-				.prepare(`SELECT key, print_id FROM render_deletes WHERE target = ? AND not_before <= ? AND key LIKE '%.t%.avif'`)
-				.bind(target, at)
-				.all<{ key: string; print_id: string }>();
+			const { results } = await retrying('due thumbnail deletes', () =>
+				db
+					.prepare(`SELECT key, print_id FROM render_deletes WHERE target = ? AND not_before <= ? AND key LIKE '%.t%.avif'`)
+					.bind(target, at)
+					.all<{ key: string; print_id: string }>()
+			);
 			return results.filter((r) => THUMB_FILE.test(r.key.slice(r.print_id.length + 1)));
 		}
 	};

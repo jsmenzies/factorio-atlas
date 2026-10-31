@@ -10,6 +10,8 @@
  * deleted for the rest of the run. A failed check throws: the uploader counts it as a failed sync and
  * tries again later, never uploading unchecked.
  */
+import { retrying } from './queue.js';
+
 export const REMOVED_ALL_SQL = `SELECT print_id AS id FROM print_tombstones UNION SELECT value AS id FROM removal_blocks WHERE kind = 'print'`;
 export const REMOVED_ONE_SQL = `SELECT EXISTS (SELECT 1 FROM print_tombstones WHERE print_id = ?1)
 	OR EXISTS (SELECT 1 FROM removal_blocks WHERE kind = 'print' AND value = ?1) AS hit`;
@@ -21,8 +23,10 @@ export interface RemovedGuard {
 	readonly skipped: ReadonlySet<string>;
 }
 
+/** Both reads are retried while a local D1 is busy (it is shared with `vite dev` and other scripts). */
 export async function removedGuard(db: D1Database, log: (line: string) => void = () => undefined): Promise<RemovedGuard> {
-	const known = new Set((await db.prepare(REMOVED_ALL_SQL).all<{ id: string }>()).results.map((r) => r.id));
+	const all = await retrying('removed prints', () => db.prepare(REMOVED_ALL_SQL).all<{ id: string }>());
+	const known = new Set(all.results.map((r) => r.id));
 	const skipped = new Set<string>();
 	const skip = (id: string) => {
 		if (!skipped.has(id)) log(`  ${id}: deleted or removed on the upload target's site: not uploaded`);
@@ -33,7 +37,7 @@ export async function removedGuard(db: D1Database, log: (line: string) => void =
 		skipped,
 		async removed(id) {
 			if (known.has(id)) return skip(id);
-			const row = await db.prepare(REMOVED_ONE_SQL).bind(id).first<{ hit: number }>();
+			const row = await retrying('removed print', () => db.prepare(REMOVED_ONE_SQL).bind(id).first<{ hit: number }>());
 			if (!row?.hit) return false;
 			known.add(id);
 			return skip(id);
