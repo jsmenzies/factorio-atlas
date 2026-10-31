@@ -14,9 +14,12 @@ import type { Actions, PageServerLoad } from './$types';
  * the steps. Read in one call (`busy` while a run keeps the local database locked). Deployed there is
  * nothing to update from (the renders, the clone and the sprites are on the machine that renders): 404.
  */
+/** This machine's RAM in MB: the memory cap's upper bound (memCapMaxMb). Dev only, so Node's `os` is there; imported lazily. */
+const ramMb = async () => (await import('node:os')).totalmem() / 1048576;
+
 export const load: PageServerLoad = async ({ depends, cookies }) => {
 	if (!dev) error(404, 'Not found');
-	const base = liveBase({ depends, cookies }, SYNC_TIMING);
+	const base = { ...liveBase({ depends, cookies }, SYNC_TIMING), ramMb: await ramMb() };
 	const overview = await orBusy(() => syncOverview(env.DB, base.serverNow));
 	if (overview === BUSY_RESULT) return { ...base, busy: true as const };
 	return { ...base, busy: false as const, ...overview };
@@ -39,7 +42,7 @@ export const actions: Actions = {
 		} catch {
 			return fail(400, { message: 'No settings sent.' });
 		}
-		const { settings, errors } = parseSettings(input);
+		const { settings, errors } = parseSettings(input, { ramMb: await ramMb() });
 		if (errors.length) return fail(400, { errors, message: `Not saved: check ${errors.join(', ')}.` });
 		const saved = await orBusy(() => writeMeta(env.DB, 'settings', settings));
 		if (saved === BUSY_RESULT) return fail(503, { message: BUSY });

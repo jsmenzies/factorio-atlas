@@ -145,7 +145,7 @@ test('the render step: the run as a whole, then each source, its clean up and it
 			codex: {
 				plan: { prints: 2, pages: 15, queued: 11, unchanged: 3, skipped: 1, failed: 0 },
 				draw: { drawn: 10, failed: 1, left: 0, printsDone: 2, printsDrawn: 2 },
-				upload: { pages: 12, files: 300, bytes: 9, waiting: 0, failing: 0 },
+				upload: { pages: 12, files: 300, bytes: 9, waiting: 0, failing: 0, printsUp: 1 },
 				thumbs: { done: 2, of: 2 }
 			},
 			upload: {
@@ -165,11 +165,15 @@ test('the render step: the run as a whole, then each source, its clean up and it
 		['pages to draw', 11],
 		['unchanged', 3],
 		['skipped', 1],
-		['drawn', 10],
+		['pages drawn', 10],
+		['prints drawn', '2 of 2'],
 		['failed', 1],
-		['uploaded', 12],
+		['pages uploaded', 12],
+		['prints uploaded', '1 of 2'],
 		['thumbnails', '2 of 2 prints']
 	]);
+	// A snapshot from before printsUp: no "prints uploaded" row.
+	expect(g[2].rows.map((r) => r.label)).not.toContain('prints uploaded');
 	expect(g[3].rows.map((r) => [r.label, r.value])).toEqual([
 		['replaced files deleted', 6],
 		['still in their grace period', 7]

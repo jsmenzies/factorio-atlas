@@ -59,7 +59,27 @@ describe('batchCandidates', () => {
 			row('s', { status: 'skipped', reason: 'empty' })
 		]);
 		expect(batchCandidates(ids, state(ids, { rows })).candidates).toEqual(['p', 'r', 'f']);
-		expect(batchCandidates(ids, state(ids, { rows, retryFailed: true })).candidates).toEqual(['p', 'r', 'f', 'g']);
+		// --retry-failed: any failed print counts, and failed prints come first.
+		expect(batchCandidates(ids, state(ids, { rows, retryFailed: true })).candidates).toEqual(['f', 'g', 'p', 'r']);
+	});
+
+	test('--retry-failed takes failed prints before new work, so a batch of one redraws the failed print', () => {
+		const ids = ['-new1', '-new2', 'codex-230', 'codex-231'];
+		const s = state(ids, {
+			rows: byPrint([
+				row('codex-230', { status: 'failed', attempts: MAX_ATTEMPTS }),
+				row('codex-230', { path: '1' }),
+				row('codex-231', { status: 'pending' })
+			]),
+			top: ['-new2']
+		});
+		s.seen.delete('-new1');
+		s.seen.delete('-new2');
+		expect(batchCandidates(ids, s).candidates).toEqual(['-new1', '-new2', 'codex-231']);
+		const retry = batchCandidates(ids, { ...s, retryFailed: true });
+		expect(retry.candidates).toEqual(['codex-230', '-new1', '-new2', 'codex-231']);
+		expect(retry.candidates[0]).toBe('codex-230');
+		expect(retry.unseen).toBe(2);
 	});
 
 	test('with --upload, rendered pages not up at their stamp', () => {

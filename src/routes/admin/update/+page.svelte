@@ -161,7 +161,7 @@
 		<UpdateBox bind:this={box} {run} {plan} settings={draft} union={view.scopes.union} {sentence} {logTail} bar={flow ? heroBar(flow, progress) : null} now={clock.now} timeZone={data.timeZone} {message} />
 		<FlowStrip {run} live={live || phase === 'crashed'} {preview} now={clock.now} />
 		<FlowBoard {flow} bind:settings={draft} onchange={saveSettings} onaccepted={() => void box?.check()} figures={view.figures?.value ?? null} now={clock.now} timeZone={data.timeZone} />
-		<FlowSettings bind:settings={draft} {live} union={view.scopes.union} modern={view.scopes.modern.total} errors={save.errors} onchange={saveSettings} />
+		<FlowSettings bind:settings={draft} {live} union={view.scopes.union} modern={view.scopes.modern.total} ramMb={data.ramMb} errors={save.errors} onchange={saveSettings} />
 		<p class="text-xs text-stone-500">
 			Detail pages: <a href="/admin/render" class="underline decoration-stone-700 hover:text-amber-300">render runs</a> ·
 			<a href="/admin/pipeline" class="underline decoration-stone-700 hover:text-amber-300">backfill runs on this machine’s database</a> · past updates on the

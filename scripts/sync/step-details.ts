@@ -130,9 +130,13 @@ export function renderStageDetails(row: RenderRowCounts, stages: RenderStages | 
 				...detail('pages to draw', s.plan.queued),
 				...detail('unchanged', s.plan.unchanged),
 				...detail('skipped', s.plan.skipped),
-				...detail('drawn', s.draw.drawn),
+				...detail('pages drawn', s.draw.drawn),
+				...(s.plan.prints ? [{ label: 'prints drawn', value: `${n(s.draw.printsDone)} of ${n(s.plan.prints)}` }] : []),
 				...detail('failed', s.plan.failed + s.draw.failed, { tone: 'bad' }),
-				...detail('uploaded', s.upload?.pages),
+				...detail('pages uploaded', s.upload?.pages),
+				...(s.plan.prints && s.upload?.printsUp !== undefined
+					? [{ label: 'prints uploaded', value: `${n(s.upload.printsUp)} of ${n(s.plan.prints)}` }]
+					: []),
 				...detail('waiting to upload', s.upload?.waiting, { tone: 'warn' }),
 				...(s.thumbs?.of ? [{ label: 'thumbnails', value: `${n(s.thumbs.done)} of ${n(s.thumbs.of)} prints` }] : [])
 			]

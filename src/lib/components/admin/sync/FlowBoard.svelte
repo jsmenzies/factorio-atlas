@@ -221,7 +221,7 @@
 	}
 	.board {
 		display: grid;
-		grid-template-columns: 9.5rem repeat(8, minmax(0, 1fr));
+		grid-template-columns: 8.5rem repeat(8, minmax(0, 1fr));
 		row-gap: 0.5rem;
 		min-width: 72rem;
 		position: relative;
@@ -298,7 +298,7 @@
 		z-index: 2;
 		display: flex;
 		align-items: stretch;
-		padding: 0.3rem;
+		padding: 0.3rem 0.2rem;
 		min-width: 0;
 	}
 	.cell.first {
@@ -339,7 +339,7 @@
 		border: 1px solid #292524;
 		border-radius: 0.5rem;
 		background: #0c0a09;
-		padding: 0.25rem 0.5rem 0.5rem;
+		padding: 0.25rem 0.35rem 0.5rem;
 		font-size: 0.75rem;
 		line-height: 1rem;
 		color: #d6d3d1;

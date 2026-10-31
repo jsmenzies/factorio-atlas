@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { RenderStages } from '#lib/render-stages.js';
 import type { RenderRun } from '#lib/server/admin/render.js';
 import { logProgress } from '#lib/sync-progress.js';
-import { SITE_SHOTS_GROUP, type SourcePlan, type SyncPlan, type SyncRun, type SyncStep } from '#lib/sync.js';
+import { DEFAULT_SETTINGS, SITE_SHOTS_GROUP, type SourcePlan, type SyncPlan, type SyncRun, type SyncStep } from '#lib/sync.js';
 import { buildFlow, CELL_LINES, COLUMNS, fitCell, heroBar, nowSentence, renderNow, type Cell, type Flow } from './flow';
 import finished from './flow.fixture.json';
 
@@ -274,19 +274,19 @@ describe('render per source', () => {
 			factorioprints: {
 				plan: { prints: 4, pages: 320, queued: 212, unchanged: 96, skipped: 12, failed: 0 },
 				draw: { drawn: 212, failed: 0, left: 0, printsDone: 4, printsDrawn: 4 },
-				upload: { pages: 212, files: 9000, bytes: 1, waiting: 0, failing: 0 },
+				upload: { pages: 212, files: 9000, bytes: 1, waiting: 0, failing: 0, printsUp: 4 },
 				thumbs: { done: 4, of: 4 }
 			},
 			codex: {
 				plan: { prints: 58, pages: 2959, queued: 2117, unchanged: 702, skipped: 140, failed: 0 },
 				draw: { drawn: 2000, failed: 10, left: 107, printsDone: 41, printsDrawn: 50 },
-				upload: { pages: 1404, files: 60000, bytes: 1, waiting: 596, failing: 0 },
+				upload: { pages: 1404, files: 60000, bytes: 1, waiting: 596, failing: 0, printsUp: 30 },
 				thumbs: { done: 41, of: 41 }
 			},
 			fprints: {
 				plan: { prints: 41, pages: 1756, queued: 1310, unchanged: 386, skipped: 60, failed: 0 },
 				draw: { drawn: 1310, failed: 0, left: 0, printsDone: 41, printsDrawn: 41 },
-				upload: { pages: 876, files: 30000, bytes: 1, waiting: 434, failing: 0 },
+				upload: { pages: 876, files: 30000, bytes: 1, waiting: 434, failing: 0, printsUp: 20 },
 				thumbs: { done: 35, of: 41 }
 			}
 		},
@@ -328,13 +328,16 @@ describe('render per source', () => {
 	test('while drawing: each source part-way where its prints still move; uploads said honestly', () => {
 		const f = flowOf({ run: inRender(), phase: 'running', liveRender: renderRow() });
 		expect(f.current).toBe('render');
-		expect(said(cellOf(f, 'factorioprints', 'plan'))).toBe('done · 4 prints · 212 to draw · 12 skipped');
-		expect(said(cellOf(f, 'factorioprints', 'upload'))).toBe('done · 212 uploaded');
-		expect(said(cellOf(f, 'codex', 'draw'))).toBe('part · 2,000 drawn · 10 failed · 107 to draw');
-		expect(said(cellOf(f, 'codex', 'upload'))).toBe('part · 1,404 uploaded · 596 waiting · up to 107 more');
+		expect(said(cellOf(f, 'factorioprints', 'plan'))).toBe('done · 4 prints · 212 pages to draw · 12 skipped');
+		expect(said(cellOf(f, 'factorioprints', 'upload'))).toBe('done · 212 pages uploaded · 4 of 4 prints');
+		// Three lines: pages, prints, failures; the pages still to draw go in the tooltip.
+		expect(said(cellOf(f, 'codex', 'draw'))).toBe('part · 2,000 pages drawn · 41 of 58 prints · 10 failed');
+		expect(cellOf(f, 'codex', 'draw').tip.endsWith('Also: 107 to draw.')).toBe(true);
+		expect(said(cellOf(f, 'codex', 'upload'))).toBe('part · 1,404 pages uploaded · 30 of 58 prints · 596 waiting');
+		expect(cellOf(f, 'codex', 'upload').tip).toContain('Up to 107 more pages to come.');
 		expect(said(cellOf(f, 'codex', 'thumbs'))).toBe('part · 41 of 41 prints');
-		expect(said(cellOf(f, 'fprints', 'draw'))).toBe('done · 1,310 drawn');
-		expect(said(cellOf(f, 'fprints', 'upload'))).toBe('part · 876 uploaded · 434 waiting');
+		expect(said(cellOf(f, 'fprints', 'draw'))).toBe('done · 1,310 pages drawn · 41 of 41 prints');
+		expect(said(cellOf(f, 'fprints', 'upload'))).toBe('part · 876 pages uploaded · 20 of 41 prints · 434 waiting');
 		expect(said(cellOf(f, 'fprints', 'thumbs'))).toBe('part · 35 of 41 prints');
 		// A source with nothing in this batch: a bare ✓, saying why.
 		expect(cellOf(f, 'uploads', 'plan')).toMatchObject({ kind: 'done', facts: [] });
@@ -348,6 +351,15 @@ describe('render per source', () => {
 		expect(f.renderNow).toMatchObject({ phase: 'drawing', value: 86, of: 103 });
 		expect(nowSentence(f, { plan: BEFORE, phase: 'running' })).toBe('Drawing prints: 86 of 103.');
 		expect(heroBar(f, null)).toBe(83);
+	});
+
+	test('retrying failed pages: said in the Plan cell’s tooltip, before an update and while it runs', () => {
+		const settings = { ...DEFAULT_SETTINGS, retryFailed: true };
+		const r = inRender();
+		const f = flowOf({ run: { ...r, options: { ...r.options, settings } }, phase: 'running', liveRender: renderRow() });
+		expect(cellOf(f, 'codex', 'plan').tip).toContain('Retrying failed pages');
+		expect(cellOf(flowOf({ settings }), 'codex', 'plan').tip).toContain('retry failed pages (this update only)');
+		expect(cellOf(flowOf({ run: inRender(), phase: 'running', liveRender: renderRow() }), 'codex', 'plan').tip).not.toContain('Retrying');
 	});
 
 	test('a render run from before this step isn’t this update’s', () => {
@@ -403,7 +415,7 @@ describe('render per source', () => {
 				codex: {
 					...stages().sites.codex!,
 					draw: { drawn: 2107, failed: 10, left: 0, printsDone: 58, printsDrawn: 58 },
-					upload: { pages: 2107, files: 1, bytes: 1, waiting: 0, failing: 0 },
+					upload: { pages: 2107, files: 1, bytes: 1, waiting: 0, failing: 0, printsUp: 58 },
 					thumbs: { done: 58, of: 58 }
 				}
 			},
@@ -421,11 +433,11 @@ describe('render per source', () => {
 		};
 		r.steps = r.steps.map((s) => (s.id === 'render' ? step : s.id === 'figures' ? { ...s, status: 'done' } : s));
 		const f = flowOf({ run: r, phase: 'current', latestRender: null });
-		expect(said(cellOf(f, 'codex', 'draw'))).toBe('warn · 2,107 drawn · 10 failed');
-		expect(said(cellOf(f, 'codex', 'upload'))).toBe('done · 2,107 uploaded');
+		expect(said(cellOf(f, 'codex', 'draw'))).toBe('warn · 2,107 pages drawn · 58 of 58 prints · 10 failed');
+		expect(said(cellOf(f, 'codex', 'upload'))).toBe('done · 2,107 pages uploaded · 58 of 58 prints');
 		expect(said(cellOf(f, 'codex', 'thumbs'))).toBe('done · 58 of 58 prints');
 		// fprints ended with pages still to upload: a warning, for the next update.
-		expect(said(cellOf(f, 'fprints', 'upload'))).toBe('warn · 876 uploaded · 434 waiting');
+		expect(said(cellOf(f, 'fprints', 'upload'))).toBe('warn · 876 pages uploaded · 20 of 41 prints · 434 waiting');
 		expect(said(f.shared.cleanup)).toBe('done · 186 deleted · 41 in grace');
 		expect(said(f.shared.flags)).toBe('done · 102 rows written · cache bumped');
 		expect(f.shared.summary.title).toBe('One run · 59 min');
@@ -446,7 +458,7 @@ describe('render per source', () => {
 		// A step from before `render` was recorded, naming its run: that run's stages.
 		r.steps = r.steps.map((s) => (s.id === 'render' ? { ...failed, status: 'done', runId: 'r1' } : s));
 		const old = flowOf({ run: r, phase: 'current', latestRender: renderRow({ state: 'finished' }), liveRender: null });
-		expect(said(cellOf(old, 'codex', 'plan'))).toBe('done · 58 prints · 2,117 to draw · 140 skipped');
+		expect(said(cellOf(old, 'codex', 'plan'))).toBe('done · 58 prints · 2,117 pages to draw · 140 skipped');
 		// While the step runs, a run that isn't live (stopped responding, or a finished one) isn't read.
 		const g = flowOf({ run: inRender(), phase: 'running', latestRender: renderRow(), liveRender: null });
 		expect(cellOf(g, 'codex', 'plan').kind).toBe('wait');
@@ -458,7 +470,7 @@ describe('render per source', () => {
 		const f = flowOf({ run: inRender(), phase: 'running', liveRender: renderRow({}, s) });
 		expect(f.rows.map((r) => r.site)).toEqual(['factorioprints', 'codex', 'fprints', 'uploads', 'factoriobin']);
 		expect(cellOf(f, 'factoriobin', 'changes').kind).toBe('na');
-		expect(said(cellOf(f, 'factoriobin', 'plan'))).toBe('done · 1 prints · 1,310 to draw · 60 skipped');
+		expect(said(cellOf(f, 'factoriobin', 'plan'))).toBe('done · 1 prints · 1,310 pages to draw · 60 skipped');
 	});
 });
 

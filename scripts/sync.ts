@@ -57,7 +57,7 @@
  * bad usage or when it refuses to start.
  */
 import { existsSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, totalmem } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ANALYZER_VERSION } from '#lib/server/pipeline/analyze.js';
@@ -76,6 +76,8 @@ import {
 	freshSteps,
 	parseSettings,
 	parseSyncRun,
+	renderSettingArgs,
+	withoutRetry,
 	sourceDigest,
 	sourceMoved,
 	SITE_SHOTS_GROUP,
@@ -165,7 +167,7 @@ await db
 	.prepare('SELECT sources FROM sync_runs LIMIT 0')
 	.all()
 	.catch(() => fail('the local D1 database has no sync tables (or an old draft of them): run `bun run db:migrate` (migration 0020)'));
-const settings = parseSettings((await readMeta<unknown>(db, 'settings'))?.value).settings;
+const settings = parseSettings((await readMeta<unknown>(db, 'settings'))?.value, { ramMb: totalmem() / 1048576 }).settings;
 
 if (!existsSync(clone)) fail(`no mirror clone at ${clone} (set RENDER_CLONE_DIR)`);
 
@@ -234,6 +236,11 @@ const describeSource = (p: SourcePlan) =>
 					`${n(p.favourites)} only favourite counts, ${n(p.deleted.length)} deleted; ${n(p.modern)} of the new and edited have a 2.0+ page` +
 					(p.blocked ? `\n✗ held back: ${p.blocked}` : '');
 
+/** Turns the saved "retry failed pages" setting off (read again: only that field changes). */
+const clearRetryFailed = async () => {
+	const off = withoutRetry((await readMeta<unknown>(db, 'settings'))?.value);
+	if (off) await writeMeta(db, 'settings', off);
+};
 const acceptedIds = async () => (await readMeta<Record<string, string>>(db, 'accept'))?.value ?? {};
 
 /**
@@ -809,9 +816,11 @@ const steps: StepDef[] = [
 			const args = ['scripts/render-game.ts', ...recordSourceArgs({ store: true }), '--next', String(settings.perUpdate ?? 100_000)];
 			if (top > 0) args.push('--top', String(top));
 			args.push('--upload', stage, '--flags');
-			if (settings.workers) args.push('--workers', String(settings.workers));
+			args.push(...renderSettingArgs(settings));
 			const since = Date.now();
 			const rendered = await script(args, { FPSR_ASSETS_DIR: assetsDir });
+			// "Retry failed pages" is for one update: off again once its render has run, whatever came of it.
+			if (settings.retryFailed) await clearRetryFailed();
 			const row = await db
 				.prepare(
 					`SELECT id, json_extract(options, '$.stages') AS stages, prints_total, prints_rendered, rendered, failed, uploaded, uploads_pending

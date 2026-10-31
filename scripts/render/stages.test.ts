@@ -68,19 +68,40 @@ describe('render stages per source', () => {
 		expect(s.sites.factorioprints).toMatchObject({
 			plan: { prints: 1, pages: 4, queued: 1, unchanged: 2, skipped: 1, failed: 0 },
 			draw: { drawn: 1, failed: 0, left: 0, printsDone: 1, printsDrawn: 1 },
-			upload: { pages: 1, files: 20, bytes: 2000, waiting: 0, failing: 0 },
+			upload: { pages: 1, files: 20, bytes: 2000, waiting: 0, failing: 0, printsUp: 1 },
 			thumbs: { done: 1, of: 1 }
 		});
 		expect(s.sites.codex).toMatchObject({
 			plan: { prints: 1, pages: 5, queued: 4, failed: 1 },
 			draw: { drawn: 2, failed: 1, left: 1, printsDone: 0, printsDrawn: 1 },
-			upload: { pages: 2, files: 22, bytes: 2200, waiting: 1, failing: 1 },
+			upload: { pages: 2, files: 22, bytes: 2200, waiting: 1, failing: 1, printsUp: 0 },
 			// The thumb step had nothing of codex's yet.
 			thumbs: { done: 0, of: 0 }
 		});
 		expect(s.sites.fprints?.thumbs).toEqual({ done: 0, of: 1 });
 		expect(s.cleanup?.deleted).toBe(3);
 		expect(s.flags).toMatchObject({ state: 'done', rowsWritten: 4 });
+	});
+
+	test('printsUp: finished prints with no page waiting or failing', () => {
+		const FP3 = '-KnQ865j-qQ21WoUPbd3';
+		const s = snap({
+			tracked: [FP, FP2, FP3, CODEX],
+			finished: new Set([FP, FP2, FP3, CODEX]),
+			upload: {
+				waiting: [
+					[FP2, 2],
+					[FP3, 0]
+				],
+				failing: [CODEX]
+			}
+		});
+		// FP and FP3 are up (FP3's waiting count is 0); FP2 still has pages waiting; codex has one failing.
+		expect(s.sites.factorioprints?.upload?.printsUp).toBe(2);
+		expect(s.sites.factorioprints?.draw.printsDone).toBe(3);
+		expect(s.sites.codex?.upload?.printsUp).toBe(0);
+		// A print not finished drawing isn't up, whatever its uploads.
+		expect(snap({ finished: [] }).sites.fprints?.upload?.printsUp).toBe(0);
 	});
 
 	test('the sites add up to the run row; a missed tally shows', () => {

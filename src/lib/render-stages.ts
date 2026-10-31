@@ -48,6 +48,11 @@ export interface UploadStage {
 	waiting: number;
 	/** Pages whose last upload failed, not up since. */
 	failing: number;
+	/**
+	 * Prints all up: every queued page final (as `draw.printsDone`) and none of their pages waiting or failing.
+	 * Missing in snapshots from before it was counted.
+	 */
+	printsUp?: number;
 }
 
 export interface ThumbsStage {

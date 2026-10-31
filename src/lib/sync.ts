@@ -18,6 +18,17 @@ export interface SyncSettings {
 	perUpdate: number | null;
 	/** Render workers; null: the runner's default (half the CPU threads). */
 	workers: number | null;
+	/**
+	 * A render worker is killed past this much memory (`render --mem-cap-mb`; passed only when it isn't
+	 * RENDER_MEM_CAP_MB, the runner's own default). From MEM_CAP_MIN_MB to the machine's RAM less the render
+	 * reserve (memCapMaxMb).
+	 */
+	memCapMb: number;
+	/**
+	 * The next update's render step also retries pages that failed every attempt (`render --retry-failed`), and
+	 * takes their prints first; the update turns it off again once its render step has run.
+	 */
+	retryFailed: boolean;
 	/** Run the render step (top list, changed records, render and upload); off: the step is skipped. */
 	render: boolean;
 	/** Copy new screenshots from Imgur, upload them and update the stage's screenshot rows. */
@@ -93,10 +104,21 @@ export function holdBack(o: {
 	);
 }
 
+/** The render runner's own `--mem-cap-mb` default (scripts/render/args.ts). */
+export const RENDER_MEM_CAP_MB = 6144;
+/** The smallest memory cap a worker may be given. */
+export const MEM_CAP_MIN_MB = 2048;
+/** RAM the render runner keeps free beside its pages (`--mem-reserve-mb`'s default): the larger of 2 GB and 10%. */
+export const renderReserveMb = (ramMb: number) => Math.round(Math.max(2048, ramMb * 0.1));
+/** The largest memory cap a worker may be given on a machine with this much RAM: all of it less the reserve. */
+export const memCapMaxMb = (ramMb: number) => Math.max(MEM_CAP_MIN_MB, Math.floor(ramMb - renderReserveMb(ramMb)));
+
 export const DEFAULT_SETTINGS: SyncSettings = {
 	top: 1000,
 	perUpdate: 500,
 	workers: null,
+	memCapMb: RENDER_MEM_CAP_MB,
+	retryFailed: false,
 	render: true,
 	screenshots: true,
 	authors: true,
@@ -104,14 +126,29 @@ export const DEFAULT_SETTINGS: SyncSettings = {
 	polled: Object.fromEntries(POLLED_SITES.map((p) => [p.site, DEFAULT_POLLED])) as Record<PolledSiteId, PolledSettings>
 };
 
+/** The render step's own flags from the settings: workers, the memory cap (only when not the default) and retry. */
+export const renderSettingArgs = (s: Pick<SyncSettings, 'workers' | 'memCapMb' | 'retryFailed'>): string[] => [
+	...(s.workers ? ['--workers', String(s.workers)] : []),
+	...(s.memCapMb !== RENDER_MEM_CAP_MB ? ['--mem-cap-mb', String(s.memCapMb)] : []),
+	...(s.retryFailed ? ['--retry-failed'] : [])
+];
+
+/** Saved settings with "retry failed pages" turned off, every other field as saved; null when nothing changes. */
+export const withoutRetry = (saved: unknown): Record<string, unknown> | null =>
+	saved && typeof saved === 'object' && !Array.isArray(saved) && (saved as Record<string, unknown>).retryFailed
+		? { ...(saved as Record<string, unknown>), retryFailed: false }
+		: null;
+
 const whole = (v: unknown, min: number, max: number) =>
 	typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max ? v : undefined;
 
 /**
  * Settings from stored or posted JSON: each valid field kept, anything else the default. `errors`
- * names the fields that were given but invalid, so a form can say so.
+ * names the fields that were given but invalid, so a form can say so. With `ramMb` (the machine's RAM),
+ * `memCapMb` is held to memCapMaxMb; without, only to MEM_CAP_MIN_MB and up.
  */
-export function parseSettings(input: unknown): { settings: SyncSettings; errors: string[] } {
+export function parseSettings(input: unknown, machine: { ramMb?: number | null } = {}): { settings: SyncSettings; errors: string[] } {
+	const capMax = machine.ramMb ? memCapMaxMb(machine.ramMb) : 1 << 22;
 	const o = input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
 	const errors: string[] = [];
 	const pick = <K extends keyof SyncSettings>(key: K, valid: (v: unknown) => SyncSettings[K] | undefined): SyncSettings[K] => {
@@ -127,6 +164,8 @@ export function parseSettings(input: unknown): { settings: SyncSettings; errors:
 		top: pick('top', (v) => whole(v, 0, 100_000)),
 		perUpdate: pick('perUpdate', (v) => (v === null ? null : whole(v, 1, 100_000))),
 		workers: pick('workers', (v) => (v === null ? null : whole(v, 1, 64))),
+		memCapMb: pick('memCapMb', (v) => whole(v, MEM_CAP_MIN_MB, capMax)),
+		retryFailed: pick('retryFailed', (v) => (typeof v === 'boolean' ? v : undefined)),
 		render: pick('render', (v) => (typeof v === 'boolean' ? v : undefined)),
 		screenshots: pick('screenshots', (v) => (typeof v === 'boolean' ? v : undefined)),
 		authors: pick('authors', (v) => (typeof v === 'boolean' ? v : undefined)),

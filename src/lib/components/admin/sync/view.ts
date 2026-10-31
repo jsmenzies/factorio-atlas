@@ -156,7 +156,8 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 							: 'look for changed records; ') +
 						(prints
 							? `render about ${int(prints)} prints${capped ? ` (the per-update limit)` : ''}: new 2.0+ prints and what's left in scope, other sites' and uploads included; then thumbnails, the render filter and the page cache`
-							: 'nothing to render, unless the top list or changed records add some'),
+							: 'nothing to render, unless the top list or changed records add some') +
+						(settings.retryFailed ? '; retry pages that failed before, their prints first (this update only)' : ''),
 					idle: !prints
 				},
 		{ id: 'figures', text: "count the site's prints, renders and screenshots" }

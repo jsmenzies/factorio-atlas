@@ -112,6 +112,7 @@ export interface Flow {
 }
 
 const RENDER_TIP = 'One render run for every source, under one limit: a source can get none because the batch was full.';
+const PRINT_WORDS = 'A print is one post (a blueprint or a book); a page is one blueprint drawn.';
 const MATCH_TIP = 'matched = the same blueprint already on the site: added to it as “Also on …”.';
 const AUTHORS_NA: Record<string, string> = {
 	codex: 'Not this source: names come with the record (the post’s username, unless anonymous).',
@@ -510,10 +511,20 @@ function stagesFor(
 	return { stages: row?.options.stages ?? null, row };
 }
 
-function renderCells(mode: BoardMode, run: SyncRun | null, site: string, stages: RenderStages | null, row: RenderRun | null): Cell[] {
+function renderCells(
+	mode: BoardMode,
+	run: SyncRun | null,
+	site: string,
+	stages: RenderStages | null,
+	row: RenderRun | null,
+	retrying: boolean
+): Cell[] {
 	const step = stepOf(run, 'render');
 	const four = (c: Cell) => [c, c, c, c];
-	if (waiting(mode, step)) return four(notYet('render'));
+	if (waiting(mode, step)) {
+		const c = notYet('render');
+		return retrying ? [{ ...c, tip: `${c.tip} It will retry failed pages (this update only).` }, c, c, c] : four(c);
+	}
 	const live = step.status === 'running';
 	if (!stages) {
 		if (live) return four(cell('wait', [], 'Picking the prints with work: the top list, then records changed since they were drawn.'));
@@ -529,13 +540,17 @@ function renderCells(mode: BoardMode, run: SyncRun | null, site: string, stages:
 		queueing ? 'part' : plan.failed ? 'warn' : 'done',
 		[
 			...fact(plan.prints, 'prints'),
-			...fact(plan.queued, 'to draw'),
+			...fact(plan.queued, 'pages to draw'),
 			...fact(plan.skipped, 'skipped'),
 			...fact(plan.failed, 'failed before', 'warn')
 		],
-		`${int(plan.pages)} pages looked at, ${int(plan.unchanged)} unchanged (drawn before from the same input); skipped = pre-2.0, empty, ` +
-			`modded or undecodable${plan.failed ? '; failed before = failed every attempt in an earlier run, or no record' : ''}. ${RENDER_TIP}`
+		`${PRINT_WORDS} ${int(plan.pages)} pages looked at, ${int(plan.unchanged)} unchanged (drawn before from the same input); skipped = ` +
+			`pre-2.0, empty, modded or undecodable${plan.failed ? '; failed before = failed every attempt in an earlier run, or no record' : ''}.` +
+			`${retrying ? ' Retrying failed pages: pages that failed every attempt before are drawn again.' : ''} ${RENDER_TIP}`
 	);
+	/** "x of y prints", when the run has prints from this source. */
+	const ofPrints = (x: number | undefined): Fact[] =>
+		x === undefined || !plan.prints ? [] : [{ n: `${int(x)} of ${int(plan.prints)}`, text: 'prints' }];
 	const drawTip = 'Biggest pages first; a page that fails three times is left for the next update.';
 	const drawCell = !plan.queued
 		? queueing
@@ -544,24 +559,28 @@ function renderCells(mode: BoardMode, run: SyncRun | null, site: string, stages:
 		: cell(
 				live && draw.left ? 'part' : draw.failed || draw.left ? 'warn' : 'done',
 				[
-					...fact(draw.drawn, 'drawn'),
+					...fact(draw.drawn, 'pages drawn'),
+					...ofPrints(draw.printsDone),
 					...fact(draw.failed, 'failed', 'bad'),
 					...fact(draw.left, live ? 'to draw' : 'left', live ? undefined : 'warn')
 				],
-				draw.left && !live ? `${drawTip} The run stopped with pages left: the next update draws them.` : drawTip
+				`${draw.left && !live ? `${drawTip} The run stopped with pages left: the next update draws them.` : drawTip} ` +
+					'x of y prints: prints with every page drawn (or failed for good).'
 			);
 	const uploadCell = !upload
 		? cell('na', [], 'This run doesn’t upload.')
 		: cell(
 				live && (upload.waiting || (plan.queued && draw.left)) ? 'part' : upload.waiting || upload.failing ? 'warn' : 'done',
 				[
-					...fact(upload.pages, 'uploaded'),
+					...fact(upload.pages, 'pages uploaded'),
+					...ofPrints(upload.printsUp),
 					...fact(upload.waiting, 'waiting', live ? undefined : 'warn'),
-					...fact(upload.failing, 'failing', 'bad'),
-					...(live && draw.left ? [{ text: `up to ${int(draw.left)} more` }] : [])
+					...fact(upload.failing, 'failing', 'bad')
 				],
 				`Each page’s files go to the renders bucket as soon as it’s drawn (pages drawn earlier and not up yet go too): ` +
-					`${int(upload.files)} files so far.${upload.waiting && !live ? ' Waiting pages go up in the next update.' : ''}`
+					`${int(upload.files)} files so far.${live && draw.left ? ` Up to ${int(draw.left)} more pages to come.` : ''}` +
+					`${upload.printsUp !== undefined ? ' x of y prints: prints with every page drawn and up.' : ''}` +
+					`${upload.waiting && !live ? ' Waiting pages go up in the next update.' : ''}`
 			);
 	const more = live && (draw.left > 0 || draw.printsDone < plan.prints);
 	const thumbsCell = !thumbs
@@ -780,6 +799,7 @@ export function buildFlow(o: {
 	const ago = o.plan ? o.clock(o.plan.checkedAt) : '';
 	const { stages, row } = stagesFor(run, o.latestRender, o.liveRender ?? null);
 	const settings = mode === 'before' ? (o.settings ?? null) : (run?.options.settings ?? o.settings ?? null);
+	const retrying = !!settings?.retryFailed;
 	const rows: Row[] = ROWS.map(({ site, plan: match }) => {
 		const plan = o.plan?.sources.find(match) ?? null;
 		const name = plan?.site ?? site;
@@ -791,7 +811,7 @@ export function buildFlow(o: {
 		const cells = [
 			fitCell(changesCell(mode, run, name, plan, progress, ago), held ? 1 : CELL_LINES),
 			...[addedCell(mode, run, name, progress), authorsCell(mode, run, name), shotsCell(mode, run, name, progress)].map((c) => fitCell(c)),
-			...renderCells(mode, run, name, stages, row).map((c) => fitCell(c))
+			...renderCells(mode, run, name, stages, row, retrying).map((c) => fitCell(c))
 		];
 		const gate = groupOf(stepOf(run, 'ingest'), (t) => t === `${name}: through the gate`);
 		return {
@@ -819,7 +839,7 @@ export function buildFlow(o: {
 			na,
 			na,
 			cell('na', [], 'No screenshot to copy.'),
-			...renderCells(mode, run, key, stages, row).map((c) => fitCell(c))
+			...renderCells(mode, run, key, stages, row, retrying).map((c) => fitCell(c))
 		];
 		rows.push({
 			site: key,

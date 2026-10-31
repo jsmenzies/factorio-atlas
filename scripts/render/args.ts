@@ -2,6 +2,7 @@
  * `bun run render` options: parsing, defaults, and `--resume` (a new run with the options the latest
  * run recorded in `render_runs.options.args`, flags given now taking precedence). Pure, for tests.
  */
+import { RENDER_MEM_CAP_MB } from '#lib/sync.js';
 import { defaultReserveMb } from './memory.js';
 import { UPLOAD_TARGETS, type UploadTarget } from './upload.js';
 
@@ -81,7 +82,7 @@ export const defaultArgs = (machine: { threads: number; ramMb: number; records?:
 	planOnly: false,
 	workers: Math.max(1, Math.floor(machine.threads / 2)),
 	encodeParallel: 4,
-	memCapMb: 6144,
+	memCapMb: RENDER_MEM_CAP_MB,
 	recycleMb: 3072,
 	memBudgetMb: Math.round(machine.ramMb * 0.7),
 	memReserveMb: defaultReserveMb(machine.ramMb),

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { ScopeFigures } from '#lib/server/admin/render-scope.js';
-	import { HOLD_FLOOR, type SyncSettings } from '#lib/sync.js';
+	import { HOLD_FLOOR, MEM_CAP_MIN_MB, memCapMaxMb, type SyncSettings } from '#lib/sync.js';
 	import { bytes, duration, int } from '../metrics.js';
 	import Toggle from './Toggle.svelte';
 
@@ -16,6 +16,7 @@
 		live,
 		union,
 		modern,
+		ramMb,
 		errors,
 		onchange
 	}: {
@@ -24,6 +25,8 @@
 		union: ScopeFigures;
 		/** Prints with a 2.0+ page: always in the render scope. */
 		modern: number;
+		/** This machine's RAM: the memory cap's upper bound. */
+		ramMb: number;
 		errors: readonly string[];
 		onchange: () => void;
 	} = $props();
@@ -53,6 +56,14 @@
 		return () => clearTimeout(timer);
 	});
 
+	// The memory cap is in MB; the field is GB with one decimal.
+	const gb = (mb: number) => Math.round((mb / 1024) * 10) / 10;
+	const capMax = $derived(memCapMaxMb(ramMb));
+	let capGb = $state<number | null>(null);
+	$effect.pre(() => {
+		if (capGb === null) capGb = gb(settings.memCapMb);
+	});
+
 	// The change guard is a share; the field is a percentage.
 	let pct = $state<number | null>(null);
 	$effect.pre(() => {
@@ -74,7 +85,7 @@
 	<p class="rounded-lg border border-stone-800 bg-stone-900/50 px-4 py-2.5 text-xs text-stone-500">
 		Settings are locked while the update runs (it read them when it started): authors {settings.authors ? 'on' : 'off'} · screenshots
 		{settings.screenshots ? 'on' : 'off'} · render {settings.render
-			? `on, top ${int(settings.top)}, ${settings.perUpdate === null ? 'every print with work' : `≤ ${int(settings.perUpdate)} prints`}, ${settings.workers ?? 'default'} threads`
+			? `on, top ${int(settings.top)}, ${settings.perUpdate === null ? 'every print with work' : `≤ ${int(settings.perUpdate)} prints`}, ${settings.workers ?? 'default'} threads, ${gb(settings.memCapMb)} GB per worker${settings.retryFailed ? ', retrying failed pages' : ''}`
 			: 'off'} · hold back at {Math.round(settings.maxChange * 100)}% · codex {settings.polled.codex.on ? 'on' : 'off'} · fprints {settings.polled.fprints.on ? 'on' : 'off'}
 	</p>
 {:else}
@@ -117,6 +128,27 @@
 				<label class={lbl} title="Blank: half the CPU threads. 8 suits this machine (see the memory notes).">
 					Threads
 					<input id="workers" type="number" min="1" max="64" step="1" placeholder="auto" value={settings.workers ?? ''} class="{field('workers')} w-16" oninput={(e) => (settings.workers = numberInput(e))} onchange={() => onchange()} />
+				</label>
+				<label class={lbl} title="A worker is stopped past this much memory and its page retried. From {gb(MEM_CAP_MIN_MB)} GB to {gb(capMax)} GB (this machine’s RAM less what the render keeps free). 6 GB by default.">
+					Memory per worker (GB)
+					<input
+						id="memCapMb"
+						type="number"
+						min={gb(MEM_CAP_MIN_MB)}
+						max={gb(capMax)}
+						step="0.1"
+						value={capGb ?? ''}
+						class="{field('memCapMb')} w-16"
+						oninput={(e) => (capGb = numberInput(e))}
+						onchange={() => {
+							settings.memCapMb = capGb === null ? Number.NaN : Math.round(capGb * 1024);
+							onchange();
+						}}
+					/>
+				</label>
+				<label class="{lbl} cursor-pointer" title="The next update also redraws pages that failed every attempt, taking their prints first; then this turns itself off.">
+					<input id="retryFailed" type="checkbox" bind:checked={settings.retryFailed} onchange={() => onchange()} class="accent-amber-500" />
+					Retry failed pages: next update only
 				</label>
 			</div>
 			<Toggle bind:checked={settings.render} label="Render and upload" {onchange} />

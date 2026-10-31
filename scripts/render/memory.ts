@@ -6,6 +6,7 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { readdir, readFile, readlink, stat } from 'node:fs/promises';
+import { renderReserveMb } from '#lib/sync.js';
 
 export interface MemInfo {
 	totalMb: number;
@@ -86,7 +87,7 @@ export const pageGrowthMb = (entities: number) => 200 + entities * 0.02;
 export const pagePeakMb = (entities: number, workerMb: number) => Math.max(memEstimateMb(entities), workerMb + pageGrowthMb(entities));
 
 /** Memory kept free for everything else on the machine: the larger of 2 GB and 10% of RAM. */
-export const defaultReserveMb = (ramMb: number) => Math.round(Math.max(2048, ramMb * 0.1));
+export const defaultReserveMb = renderReserveMb;
 
 /**
  * A process's own memory from /proc/<pid>/status: anonymous plus shared-memory pages it maps.

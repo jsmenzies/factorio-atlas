@@ -79,6 +79,9 @@ export interface BatchState {
  * since), or their rows have work: pages pending or rendering, failed with attempts left (any
  * failed, with --retry-failed), or with --upload rendered but not up. A print --top added counts
  * also when favoriteWork says so. `unseen`: how many of them were never looked at.
+ *
+ * With --retry-failed, prints with a failed page come first (in the order given), then the rest, so
+ * a small batch redraws what failed before it takes new work. Without it the order is unchanged.
  */
 export function batchCandidates(ids: readonly string[], s: BatchState): { candidates: string[]; unseen: number } {
 	const rowWork = (id: string) => {
@@ -89,6 +92,10 @@ export function batchCandidates(ids: readonly string[], s: BatchState): { candid
 	};
 	const unseen = (id: string) => !s.seen.has(id) || s.seen.get(id) !== s.stamps.get(id);
 	const top = new Set(s.top);
-	const candidates = ids.filter((id) => unseen(id) || rowWork(id) || (top.has(id) && favoriteWork(s.rows.get(id))));
+	let candidates = ids.filter((id) => unseen(id) || rowWork(id) || (top.has(id) && favoriteWork(s.rows.get(id))));
+	if (s.retryFailed) {
+		const failed = (id: string) => !!s.rows.get(id)?.some((r) => r.status === 'failed');
+		candidates = [...candidates.filter(failed), ...candidates.filter((id) => !failed(id))];
+	}
 	return { candidates, unseen: candidates.filter(unseen).length };
 }

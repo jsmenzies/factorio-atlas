@@ -1,6 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 import { isLiveSync } from './server/sync';
-import { DEFAULT_SETTINGS, estimateRender, parseSettings, HOLD_FLOOR, holdBack, planTotals, sourceDigest, type SourcePlan } from './sync';
+import {
+	DEFAULT_SETTINGS,
+	estimateRender,
+	memCapMaxMb,
+	parseSettings,
+	HOLD_FLOOR,
+	holdBack,
+	planTotals,
+	renderReserveMb,
+	renderSettingArgs,
+	sourceDigest,
+	withoutRetry,
+	type SourcePlan
+} from './sync';
 
 describe('parseSettings', () => {
 	test('nothing stored: the defaults', () => {
@@ -26,6 +39,43 @@ describe('parseSettings', () => {
 		expect(parseSettings({ render: false }).settings.render).toBe(false);
 		expect(parseSettings({ top: 5 }).settings.render).toBe(true);
 		expect(parseSettings({ render: 'no' }).errors).toEqual(['render']);
+	});
+
+	test('memory cap: the render default, at least 2 GB, at most the RAM less the reserve', () => {
+		expect(DEFAULT_SETTINGS.memCapMb).toBe(6144);
+		// 32 GB: a 3,277 MB reserve (10%); 8 GB: the 2 GB floor.
+		expect(renderReserveMb(32_768)).toBe(3277);
+		expect(renderReserveMb(8192)).toBe(2048);
+		expect(memCapMaxMb(32_768)).toBe(29_491);
+		const ram = { ramMb: 32_768 };
+		expect(parseSettings({ memCapMb: 9728 }, ram).settings.memCapMb).toBe(9728);
+		expect(parseSettings({ memCapMb: 29_491 }, ram).errors).toEqual([]);
+		expect(parseSettings({ memCapMb: 29_492 }, ram).errors).toEqual(['memCapMb']);
+		expect(parseSettings({ memCapMb: 2047 }, ram).errors).toEqual(['memCapMb']);
+		expect(parseSettings({ memCapMb: 6144.5 }, ram).errors).toEqual(['memCapMb']);
+		// Stored before the setting: the default.
+		expect(parseSettings({ top: 5 }, ram).settings.memCapMb).toBe(6144);
+	});
+
+	test('the render step’s flags: the memory cap only when not the default; retry once', () => {
+		expect(renderSettingArgs(DEFAULT_SETTINGS)).toEqual([]);
+		expect(renderSettingArgs({ workers: 4, memCapMb: 9728, retryFailed: true })).toEqual([
+			'--workers',
+			'4',
+			'--mem-cap-mb',
+			'9728',
+			'--retry-failed'
+		]);
+		expect(parseSettings({ retryFailed: true }).settings.retryFailed).toBe(true);
+		expect(parseSettings({ retryFailed: 'yes' }).errors).toEqual(['retryFailed']);
+		// Cleared after the render step: every other field as saved, unknown ones too.
+		expect(withoutRetry({ top: 5, retryFailed: true, polled: { codex: { on: false } } })).toEqual({
+			top: 5,
+			retryFailed: false,
+			polled: { codex: { on: false } }
+		});
+		expect(withoutRetry({ top: 5, retryFailed: false })).toBeNull();
+		expect(withoutRetry(undefined)).toBeNull();
 	});
 
 	test('top 0 means no top list', () => {

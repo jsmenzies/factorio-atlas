@@ -84,7 +84,10 @@ export interface SnapshotInput {
 	tracked: Iterable<string>;
 	finished: Iterable<string>;
 	drawnPrints: Iterable<string>;
-	/** Uploading: each print's pages waiting to go up, and the print of each failing page; null without --upload. */
+	/**
+	 * Uploading: each print's pages waiting to go up, and the print of each failing page; null without --upload.
+	 * A finished print with neither counts as all up (`printsUp`).
+	 */
 	upload: { waiting: Iterable<[string, number]>; failing: Iterable<string> } | null;
 	/** The thumb step's progress by site, or null without it. */
 	thumbs: ReadonlyMap<StageSite, ThumbsStage> | null;
@@ -101,7 +104,7 @@ export function snapshot(o: SnapshotInput): RenderStages {
 			s = {
 				plan: { prints: 0, pages: 0, queued: 0, unchanged: 0, skipped: 0, failed: 0 },
 				draw: { drawn: 0, failed: 0, left: 0, printsDone: 0, printsDrawn: 0 },
-				upload: o.upload ? { pages: 0, files: 0, bytes: 0, waiting: 0, failing: 0 } : null,
+				upload: o.upload ? { pages: 0, files: 0, bytes: 0, waiting: 0, failing: 0, printsUp: 0 } : null,
 				thumbs: o.thumbs ? { done: 0, of: 0 } : null
 			};
 			sites.set(site, s);
@@ -115,11 +118,21 @@ export function snapshot(o: SnapshotInput): RenderStages {
 		if (s.upload) Object.assign(s.upload, { pages: t.upPages, files: t.upFiles, bytes: t.upBytes });
 	}
 	for (const id of o.tracked) at(stageSite(id)).plan.prints++;
-	for (const id of o.finished) at(stageSite(id)).draw.printsDone++;
+	const finished = [...o.finished];
+	for (const id of finished) at(stageSite(id)).draw.printsDone++;
 	for (const id of o.drawnPrints) at(stageSite(id)).draw.printsDrawn++;
 	if (o.upload) {
-		for (const [id, n] of o.upload.waiting) if (n > 0) at(stageSite(id)).upload!.waiting += n;
-		for (const id of o.upload.failing) at(stageSite(id)).upload!.failing++;
+		const notUp = new Set<string>();
+		for (const [id, n] of o.upload.waiting)
+			if (n > 0) {
+				at(stageSite(id)).upload!.waiting += n;
+				notUp.add(id);
+			}
+		for (const id of o.upload.failing) {
+			at(stageSite(id)).upload!.failing++;
+			notUp.add(id);
+		}
+		for (const id of finished) if (!notUp.has(id)) at(stageSite(id)).upload!.printsUp!++;
 	}
 	if (o.thumbs) for (const [site, t] of o.thumbs) if (t.of) at(site).thumbs = { ...t };
 	return { v: 1, at: o.at, sites: Object.fromEntries(sites), cleanup: o.cleanup, flags: o.flags };
