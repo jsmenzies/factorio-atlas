@@ -31,6 +31,7 @@ import type { ShotArgs } from './args.js';
 import { EXT, imageSize, md5, sniff } from './image.js';
 import { imageUrlOf, MAX_IMAGE_BYTES } from './site-images.js';
 import { formatEntry, originalPath, type StateEntry } from './state.js';
+import { progress } from '../sync/progress.js';
 
 /** One GET, body included: an image at MAX_IMAGE_BYTES needs ≈ 0.9 MB/s (codex's 97 MB one took 7 s here). */
 const FETCH_TIMEOUT_MS = 120_000;
@@ -243,6 +244,7 @@ export async function runFromSites(dir: string, stateFile: string, entries: Map<
 		}
 		const plan = planSiteImages(shown, entries, (e) => !!e.file && existsSync(join(dir, e.file)));
 		const todo = args.limit ? plan.todo.slice(0, args.limit) : plan.todo;
+		progress({ t: 'shots', toCopy: plan.todo.length });
 		console.log(
 			`screenshots: ${shown.length} images from other sites shown in ${stage}: ${plan.done} already copied, ${plan.dead} dead, ` +
 				`${plan.removed} removed; to copy ${plan.todo.length}${args.limit ? `, this run ${todo.length}` : ''} → ${dir}`
@@ -318,6 +320,7 @@ export async function runFromSites(dir: string, stateFile: string, entries: Map<
 					site.failed++;
 				}
 				console.log(`screenshots: ${s.id} (${s.prints[0]}): ${entry.status}${entry.reason ? ` (${entry.reason})` : ''}`);
+				if (entry.status === 'fetched' || entry.status === 'failed') progress({ t: 'shot', site: imageSite(s.id), outcome: entry.status });
 			}
 			console.log(
 				`screenshots: copied ${fetched} images from other sites, ${newlyDead} gone at the source, ${maybeDead} answered 404 once (asked again next run), failed ${failed.length}`

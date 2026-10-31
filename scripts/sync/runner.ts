@@ -29,6 +29,7 @@ import {
 	type SyncStepId
 } from '#lib/sync.js';
 import { alive } from '../render/queue';
+import { progress } from './progress';
 import type { PolledAdmitResult } from '../polled';
 
 /** How long a step may take to end after Quit before its process group is killed. */
@@ -185,7 +186,7 @@ export const polledAdmitStatus = (
 
 // --- steps
 
-export type Outcome = Pick<SyncStep, 'status' | 'summary' | 'runId' | 'code' | 'details' | 'render'>;
+export type Outcome = Pick<SyncStep, 'status' | 'summary' | 'runId' | 'code' | 'details' | 'render' | 'figures'>;
 
 export interface StepContext {
 	/** Aborts on Quit: for work the step does in this process (git). */
@@ -312,6 +313,7 @@ export class SyncRunner {
 	/** Run one command (`exec` with args, from `cwd`) to its end, its output into the log. */
 	runScript(args: string[], env: Record<string, string> = {}): Promise<ScriptResult> {
 		this.say(`$ bun ${args.join(' ')}`);
+		progress({ t: 'command', command: args.join(' ') });
 		const from = fstatSync(this.fd).size;
 		return new Promise((resolve) => {
 			const c = spawn(this.opts.exec ?? process.execPath, args, {
@@ -355,6 +357,7 @@ export class SyncRunner {
 			step.status = 'running';
 			step.startedAt = Date.now();
 			this.say(`\n== ${stepLabel(def.id)}`);
+			progress({ t: 'step', step: def.id });
 			void this.beat();
 			let out: Outcome;
 			try {

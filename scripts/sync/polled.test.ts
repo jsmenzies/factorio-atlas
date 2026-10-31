@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SourceRecord } from '#lib/server/pipeline/source-record.js';
+import { foldProgress, logProgress, SYNC_PROGRESS_ENV } from '#lib/sync-progress.js';
 import {
 	admissionWork,
 	applyPoll,
@@ -74,7 +75,10 @@ const NOW = 10_000_000_000;
  * Plan then apply, as the update's fetch step does; the state as saved. A first import is held back for Accept:
  * here it is let through as if accepted (`holdFirst` keeps it held), so the tests start from an imported site.
  */
-const fetchOnce = async (site: PolledSite, o: { maxChange?: number; accept?: string; holdFirst?: boolean; stopAfter?: number } = {}) => {
+const fetchOnce = async (
+	site: PolledSite,
+	o: { maxChange?: number; accept?: string; holdFirst?: boolean; stopAfter?: number; log?: (line: string) => void } = {}
+) => {
 	const maxChange = o.maxChange ?? 0.05;
 	const state = await readState(inbox, 'codex');
 	const first = Object.keys(state.records).length === 0;
@@ -85,7 +89,8 @@ const fetchOnce = async (site: PolledSite, o: { maxChange?: number; accept?: str
 	const counts = await applyPoll(site, inbox, state, work, h, {
 		maxChange,
 		now: () => NOW,
-		stopping: o.stopAfter === undefined ? undefined : () => h.reads >= o.stopAfter!
+		stopping: o.stopAfter === undefined ? undefined : () => h.reads >= o.stopAfter!,
+		log: o.log
 	});
 	return { plan, counts, state: await readState(inbox, 'codex') };
 };
@@ -93,6 +98,29 @@ const fetchOnce = async (site: PolledSite, o: { maxChange?: number; accept?: str
 const many = (n: number) => new Map([...Array(n)].map((_, i) => [String(i + 1), 100 + i] as [string, number]));
 
 describe('polled sites: fetch', () => {
+	test('each record read gives the Update tab the same live count as its log line did', async () => {
+		const events = join(inbox, 'progress.jsonl');
+		process.env[SYNC_PROGRESS_ENV] = events;
+		try {
+			const lines: string[] = [];
+			const log = (line: string) => lines.push(line);
+			const prints = many(7);
+			const version = { v: 1 };
+			const { site } = fakeSite(prints, { failing: new Set(['3']), version });
+			await fetchOnce(site, { log }); // new, and one failed read
+			prints.set('2', 300);
+			prints.delete('5');
+			version.v = 2;
+			await fetchOnce(site, { log, maxChange: 1 }); // changed, same text, gone, failed again
+			const text = await readFile(events, 'utf8');
+			const fromLog = logProgress(`== Fetch new prints\n${lines.join('\n')}\n`);
+			expect(new Set(Object.keys(fromLog.sites.codex))).toEqual(new Set(['new', 'failed', 'changed', 'same', 'gone']));
+			expect(foldProgress(`{"t":"step","step":"fetch"}\n${text}`)).toEqual(fromLog);
+		} finally {
+			delete process.env[SYNC_PROGRESS_ENV];
+		}
+	});
+
 	test('the first fetch lists every page and reads every print, oldest change first', async () => {
 		const prints = new Map([...Array(7)].map((_, i) => [String(i + 1), 100 + i] as [string, number]));
 		const { site, calls } = fakeSite(prints);

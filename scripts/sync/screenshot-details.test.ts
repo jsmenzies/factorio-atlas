@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test';
 import type { UploadRunResult } from '../screenshots/run';
 import type { FromUploadsResult } from '../screenshots/uploads';
-import { screenshotBucketDetails } from './screenshot-details';
+import { megabytes } from '#lib/sync.js';
+import { bucketPut, screenshotBucketDetails } from './screenshot-details';
 
 const uploaded: FromUploadsResult = {
 	mode: 'uploads',
@@ -26,6 +27,7 @@ const run = (over: Partial<UploadRunResult> = {}): UploadRunResult => ({
 	failed: 0,
 	stopped: false,
 	uploads: { images: 1, made: 1, put: 5, bytes: 400_000, deleted: 0, alreadyUp: 0, failed: 0 },
+	summary: 'prod bucket: 18032 images in 2s: made 1, put 5 files (0.4 MB), deleted 0, already up 18031, failed 0',
 	...over
 });
 const rows = (groups: ReturnType<typeof screenshotBucketDetails>, title: string) =>
@@ -68,4 +70,24 @@ test('without the From uploads figures (its run failed), upload images stay in t
 	const groups = screenshotBucketDetails('local', null, run());
 	expect(groups.map((g) => g.title)).toEqual(['Local bucket']);
 	expect(rows(groups, 'Local bucket')).toEqual({ 'already up': 18_031, 'sizes made': 1, 'files put': '5 (0.4 MB)', deleted: 0, failed: 0 });
+});
+
+test('the board’s typed bucket figure says what the bucket group’s “files put” row says', () => {
+	const cases: [FromUploadsResult | null, UploadRunResult][] = [
+		[uploaded, run()],
+		[
+			uploaded,
+			run({ put: 17, bytes: 2_000_000, uploads: { images: 2, made: 1, put: 5, bytes: 400_000, deleted: 1, alreadyUp: 1, failed: 1 } })
+		],
+		[null, run()],
+		[null, run({ put: 0, bytes: 0 })]
+	];
+	for (const [u, b] of cases) {
+		const groups = screenshotBucketDetails('prod', u, b);
+		const put = bucketPut(u, b)!;
+		expect(rows(groups, 'Prod bucket')['files put']).toEqual(
+			put.files ? `${put.files.toLocaleString('en-US')} (${megabytes(put.bytes)})` : 0
+		);
+	}
+	expect(bucketPut(uploaded, null)).toBeUndefined();
 });

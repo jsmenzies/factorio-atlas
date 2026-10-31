@@ -39,6 +39,7 @@ import { sha256Hex } from '#lib/server/hash.js';
 import type { SourceRecord } from '#lib/server/pipeline/source-record.js';
 import { dropRecord, putRecord, type StoreSite } from '../records/store';
 import type { PlanOptions, SourceAdapter } from './mirror';
+import { progress } from './progress';
 
 /** One print as a site lists it: its id, a revision that changes whenever the record does, and that change's time (unix ms). */
 export interface ListedPrint {
@@ -502,6 +503,7 @@ export async function applyPoll(
 			c.gone++;
 		}
 		log(`${site.site}/${siteId}: gone (${why})`);
+		progress({ t: 'record', site: site.site, outcome: 'gone' });
 	};
 	/**
 	 * One read. `rev` is the revision a listing showed (a print it lists as public): then a "gone" answer is a
@@ -519,6 +521,7 @@ export async function applyPoll(
 			c.failed++;
 			if (rev !== null) state.pending[siteId] = rev;
 			log(`${site.site}/${siteId}: ✗ ${e instanceof Error ? e.message : e}`);
+			progress({ t: 'record', site: site.site, outcome: 'failed' });
 			return 'failed' as const;
 		}
 		if ('gone' in got) {
@@ -527,11 +530,13 @@ export async function applyPoll(
 				c.failed++;
 				state.pending[siteId] = rev;
 				log(`${site.site}/${siteId}: ✗ listed, but its record answered ${got.gone}: tried again next update`);
+				progress({ t: 'record', site: site.site, outcome: 'failed' });
 				return 'failed' as const;
 			}
 			if (c.gone >= maxGone) {
 				c.goneHeld++;
 				log(`${site.site}/${siteId}: ✗ ${got.gone}, but ${c.gone} already gone in this fetch (the most it believes): kept`);
+				progress({ t: 'record', site: site.site, outcome: 'failed' });
 				return 'failed' as const;
 			}
 			await markGone(siteId, got.gone);
@@ -548,6 +553,7 @@ export async function applyPoll(
 			if (wrote) c.rewritten++;
 		} else c.new++;
 		log(`${site.site}/${siteId}: ${had ? (wrote ? 'changed' : 'same text') : 'new'}`);
+		progress({ t: 'record', site: site.site, outcome: had ? (wrote ? 'changed' : 'same') : 'new' });
 		return 'ok' as const;
 	};
 

@@ -50,6 +50,7 @@ import { confirmProd, jsonScript, n, parseStageArgs, requireSchema } from './sta
 import { openStageGate } from './sync/gate-env';
 import { otherLiveUpdate } from './sync/local-db';
 import { admissionWork, inboxDir, readLedger, readState, writeLedger, writeState } from './sync/polled';
+import { progress } from './sync/progress';
 
 const USAGE = 'usage: bun run polled --stage local|prod --site <site> [--dir DIR] [--dry-run] [--force] [--yes] [--json]';
 
@@ -170,6 +171,7 @@ try {
 	const work = admissionWork(state, ledger, Boolean(flags.force), lost);
 	result.waiting = work.records.length;
 	result.goneWaiting = work.gone.length;
+	progress({ t: 'admit', site, records: work.records.length });
 	say(
 		`${stage} ← ${site} inbox ${join(inbox, site)}: ${n(work.records.length)} records to admit` +
 			(lost.length ? ` (${n(lost.length)} whose print a hand-over lost)` : '') +
@@ -246,6 +248,7 @@ try {
 		result.counts[outcome]++;
 		if (!result.dryRun && (outcome === 'new' || outcome === 'joined' || outcome === 'updated')) result.wrote = true;
 		say(`${site}/${siteId}: ${outcome}${note ? ` (${note})` : ''}`);
+		progress({ t: 'record', site, outcome });
 		await save();
 	}
 
@@ -285,10 +288,12 @@ try {
 					await env.RAW.delete(key);
 				if (r !== 'none') result.wrote = true;
 				say(`${site}/${siteId}: gone from the site: ${r}`);
+				progress({ t: 'record', site, outcome: 'gone' });
 				ledger.records[siteId] = 'gone';
 			} catch (e) {
 				result.gone.failed++;
 				say(`${site}/${siteId}: ✗ gone from the site, but: ${reasonOf(e)}`);
+				progress({ t: 'record', site, outcome: 'failed' });
 			}
 			await save();
 		}

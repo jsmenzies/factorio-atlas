@@ -152,19 +152,21 @@ const { entries, bad } = parseState(await readFile(stateFile, 'utf8').catch(() =
 if (bad) console.warn(`screenshots: skipped ${bad} unreadable line(s) in ${stateFile}`);
 const plan = planWork(wanted, entries, { recheckDead: args.recheckDead, hasFile: (e) => !!e.file && existsSync(join(dir, e.file)) });
 const todo = args.limit ? plan.todo.slice(0, args.limit) : plan.todo;
-console.log(
-	`screenshots: ${plan.done} already copied, ${plan.dead} dead; to fetch ${plan.todo.length}` +
-		` (${plan.retrying} failed before, ${plan.missing} files missing, ${plan.recheck} dead rechecked)` +
-		(args.limit ? `, this run ${todo.length}` : '') +
-		` → ${dir}`
-);
-/** With --json: the fetch's counts as the last stdout line (the one-click update's step details). */
-const result = (r: { fetched: number; newlyDead: number; failed: number; stopped: boolean }) => {
+const planned =
+	`${plan.done} already copied, ${plan.dead} dead; to fetch ${plan.todo.length}` +
+	` (${plan.retrying} failed before, ${plan.missing} files missing, ${plan.recheck} dead rechecked)` +
+	(args.limit ? `, this run ${todo.length}` : '');
+console.log(`screenshots: ${planned} → ${dir}`);
+/**
+ * With --json: the fetch's counts as the last stdout line (the one-click update's step details), and its summary: the
+ * run's last line, or the plan's when it was stopped.
+ */
+const result = (r: { fetched: number; newlyDead: number; failed: number; stopped: boolean; summary: string }) => {
 	if (args.json)
 		console.log(JSON.stringify({ mode: 'fetch', alreadyCopied: plan.done, dead: plan.dead, toFetch: plan.todo.length, dir, ...r }));
 };
 if (args.planOnly || todo.length === 0) {
-	result({ fetched: 0, newlyDead: 0, failed: 0, stopped: false });
+	result({ fetched: 0, newlyDead: 0, failed: 0, stopped: false, summary: planned });
 	process.exit(0);
 }
 
@@ -310,16 +312,22 @@ clearInterval(ticker);
 
 const nFailed = [...failed.values()].reduce((a, b) => a + b, 0);
 const list = (m: Map<string, number>) => [...m].map(([k, v]) => `${k} ${v}`).join(', ');
-console.log(
-	`screenshots: ${stopReason ? 'stopped' : interrupted ? 'interrupted' : 'done'} in ${duration(Date.now() - started)}: ` +
-		`fetched ${fetched} (${mb(bytes)}), dead ${dead}, failed ${nFailed}, ` +
-		`served as another type than the record says ${[...mismatch.values()].reduce((a, b) => a + b, 0)}${mismatch.size ? ` (${list(mismatch)})` : ''}; ` +
-		`${todo.length - settled} of this run's ${todo.length} not done`
-);
+const ran =
+	`${stopReason ? 'stopped' : interrupted ? 'interrupted' : 'done'} in ${duration(Date.now() - started)}: ` +
+	`fetched ${fetched} (${mb(bytes)}), dead ${dead}, failed ${nFailed}, ` +
+	`served as another type than the record says ${[...mismatch.values()].reduce((a, b) => a + b, 0)}${mismatch.size ? ` (${list(mismatch)})` : ''}; ` +
+	`${todo.length - settled} of this run's ${todo.length} not done`;
+console.log(`screenshots: ${ran}`);
 if (failed.size) console.log(`screenshots: failures: ${list(failed)}`);
 const rep = guard.repeated();
 if (rep.sets)
 	console.log(`screenshots: identical bytes under several ids (state included): ${rep.sets} sets, ${rep.ids} ids, largest ${rep.largest}`);
 if (stopReason) console.error(`screenshots: STOPPED: ${stopReason}`);
-result({ fetched, newlyDead: dead, failed: nFailed, stopped: !!stopReason || interrupted });
+result({
+	fetched,
+	newlyDead: dead,
+	failed: nFailed,
+	stopped: !!stopReason || interrupted,
+	summary: stopReason || interrupted ? planned : ran
+});
 process.exit(stopReason ? 2 : interrupted ? 130 : 0);

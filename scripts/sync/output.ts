@@ -1,4 +1,4 @@
-/** Reading a step command's output: its summary line and its `--json` result. */
+/** Reading a step command's output: its `--json` result, and for a failure (or a command without one) its last line. */
 
 const lines = (text: string) =>
 	text
@@ -22,9 +22,6 @@ export const failureLine = (text: string) =>
 			.findLast((l) => /^(\w*error\b|.*\bError:)/i.test(l))
 			?.replace(/^error:\s*/i, '') ?? lastLine(text)
 	).slice(0, 300);
-
-/** The last line that matches `re`, else lastLine's pick. */
-export const lineMatching = (text: string, re: RegExp) => (lines(text).findLast((l) => re.test(l)) ?? lastLine(text)).slice(0, 300);
 
 /**
  * A `--json` command's result: the last line that parses as a JSON object (stderr lines, such as a

@@ -11,7 +11,7 @@
  *
  * Built only from what the page has: the sources' plan (sync_meta 'plan'), the update running now or the last one
  * (its `sources`, its steps' DetailGroups and the render step's `render` stages), the latest render run's row
- * (its `options.stages` while the step runs) and the log's live counts (#lib/sync-progress.js). Pure and
+ * (its `options.stages` while the step runs) and the steps' live counts (#lib/sync-progress.js). Pure and
  * browser-safe.
  */
 import type { RenderRun } from '#lib/server/admin/render.js';
@@ -23,6 +23,7 @@ import type { Site } from '#lib/print-id.js';
 import {
 	GROUP,
 	groupOf,
+	megabytes,
 	POLLED_SITES,
 	ROW,
 	SITE_SHOTS_GROUP,
@@ -309,7 +310,8 @@ function addedCell(mode: BoardMode, run: SyncRun | null, site: string, progress:
 				],
 				`The backfill over the mirror clone: ${rowsText(g) || 'nothing to do'}.`
 			);
-		const why = /^backfill skipped: ([^·]+)/.exec(ingest.summary ?? '')?.[1]?.trim();
+		// Updates before typed figures said it only in the summary.
+		const why = ingest.figures?.backfillSkipped ?? /^backfill skipped: ([^·]+)/.exec(ingest.summary ?? '')?.[1]?.trim();
 		if (why) return cell('done', [], `Backfill skipped: ${why}.`);
 		if (ingest.status === 'running')
 			return Object.keys(progress?.step === 'ingest' ? progress.toAdmit : {}).length
@@ -457,6 +459,26 @@ function shotsCell(mode: BoardMode, run: SyncRun | null, site: string, progress:
 	return cell('done', [], 'Nothing to copy.');
 }
 
+/** The files put in the bucket, and their size ("599 files", "156.1 MB"). */
+const putFacts = (put: { files: number; bytes: number }): Fact[] =>
+	put.files
+		? [
+				{ n: put.files.toLocaleString('en-US'), text: 'files' },
+				{ n: megabytes(put.bytes), text: '' }
+			]
+		: [];
+/** The same from an update before typed figures: its "files put" row's words ("599 (156.1 MB)"). */
+function legacyPutFacts(bucket: DetailGroup): Fact[] {
+	const put = bucket.rows.find((r) => r.label === ROW.filesPut)?.value;
+	const m = typeof put === 'string' ? /^([\d,]+) \((.+)\)$/.exec(put) : null;
+	return m
+		? [
+				{ n: m[1], text: 'files' },
+				{ n: m[2], text: '' }
+			]
+		: fact(typeof put === 'number' ? put : null, 'files');
+}
+
 function sizingCell(mode: BoardMode, run: SyncRun | null, progress: LogProgress | null): Cell {
 	const label = 'Sizing and upload';
 	const step = stepOf(run, 'screenshots');
@@ -468,18 +490,11 @@ function sizingCell(mode: BoardMode, run: SyncRun | null, progress: LogProgress 
 			: cell('wait', [], `After the copies. ${tip}`, { label });
 	const bucket = groupOf(step, GROUP.isBucket);
 	if (!bucket) return { ...notRun(step), label };
-	const put = bucket.rows.find((r) => r.label === ROW.filesPut)?.value;
-	const m = typeof put === 'string' ? /^([\d,]+) \((.+)\)$/.exec(put) : null;
 	const cards = groupOf(step, (t) => t === GROUP.searchCards);
 	return {
 		...settled(
 			[
-				...(m
-					? [
-							{ n: m[1], text: 'files' },
-							{ n: m[2], text: '' }
-						]
-					: fact(typeof put === 'number' ? put : null, 'files')),
+				...(step.figures?.bucketPut ? putFacts(step.figures.bucketPut) : legacyPutFacts(bucket)),
 				...fact(valueOf(bucket, ROW.failed), 'failed', 'bad')
 			],
 			`${tip} ${rowsText(bucket, [ROW.alreadyUp, ROW.sizesMade, ROW.deleted])}${cards ? ` · cards: ${rowsText(cards)}` : ''}.`

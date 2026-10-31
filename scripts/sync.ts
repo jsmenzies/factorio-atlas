@@ -58,7 +58,7 @@
  * finished with no step failed (warnings included), 1 when a step failed or it was stopped, 2 on
  * bad usage or when it refuses to start.
  */
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir, totalmem } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -70,6 +70,7 @@ import { newRunId } from '#lib/server/pipeline/runs.js';
 import { VIEWER_VERSION } from '#lib/server/pipeline/viewer-files.js';
 import { parseStages } from '#lib/render-stages.js';
 import { rendersDir } from '#lib/server/renders-dir.js';
+import { progressFileOf, SYNC_PROGRESS_ENV } from '#lib/sync-progress.js';
 import { LIVE_SYNC_WHERE, liveSyncParams, readMeta, writeMeta } from '#lib/server/sync.js';
 import { PROCESSING_ATTEMPTS } from '#lib/server/uploads/uploads.js';
 import {
@@ -104,7 +105,7 @@ import { confirmProd, fail, n } from './stage-command';
 import { localDbFile, openLocalDb } from './sync/local-db';
 import { holdSharedStage } from './sync/shared-stage';
 import { MIRROR_SITE, mirrorSource, type SourceAdapter } from './sync/mirror';
-import { failureLine, lastJsonLine, lastLine, lineMatching } from './sync/output';
+import { failureLine, lastJsonLine, lastLine } from './sync/output';
 import { failedPlan, plansAfterFetch, resolveAccept } from './sync/plan';
 import { UPLOADS_SOURCE, uploadsSource } from './sync/uploads';
 import { codexSite } from './sync/codex';
@@ -114,7 +115,8 @@ import type { PolledAdmitResult } from './polled';
 import type { UploadRunResult } from './screenshots/run';
 import type { FromUploadsResult } from './screenshots/uploads';
 import type { FromSitesResult } from './screenshots/sites';
-import { screenshotBucketDetails } from './sync/screenshot-details';
+import type { FlagsResult } from './screenshots-flags';
+import { bucketPut, screenshotBucketDetails } from './sync/screenshot-details';
 import {
 	authorsDetails,
 	recordStoreFetch,
@@ -379,6 +381,11 @@ const refusal = claimRun(local.sqlite, run);
 if (refusal) fail(refusal);
 
 mkdirSync(logDir, { recursive: true });
+// The steps' live progress for the Update tab, as typed events beside the log (#lib/sync-progress.js): this process
+// and every step's (they inherit the environment) append to it.
+const progressFile = join(logDir, progressFileOf(logName));
+writeFileSync(progressFile, '');
+process.env[SYNC_PROGRESS_ENV] = progressFile;
 const runner = new SyncRunner({ db, run, logFile: join(logDir, logName), cwd: ROOT, echo: true });
 say = (line) => runner.say(line);
 stopRequested = runner.stopping;
@@ -498,7 +505,8 @@ async function admitPolled(backfill: Outcome, stopping: () => boolean): Promise<
 		summary: [backfill.status === 'skipped' ? `backfill skipped: ${backfill.summary}` : backfill.summary, ...parts]
 			.filter(Boolean)
 			.join(' · '),
-		details: [...(backfill.details ?? []), ...details]
+		details: [...(backfill.details ?? []), ...details],
+		...(backfill.status === 'skipped' && backfill.summary ? { figures: { backfillSkipped: backfill.summary } } : {})
 	};
 }
 
@@ -692,6 +700,8 @@ const steps: StepDef[] = [
 				newlyDead: number;
 				failed: number;
 				dir: string;
+				/** Its last line, or its plan's when stopped: `done in 26s: fetched 89 (109.0 MB), …`. */
+				summary: string;
 			}>(fetched.tail);
 			const details: DetailGroup[] = [];
 			if (copy)
@@ -708,13 +718,7 @@ const steps: StepDef[] = [
 					]
 				});
 			warning ||= fetched.code === 2;
-			// `screenshots: done in 26s: fetched 89 (109.0 MB), dead 0, failed 0, …`, or with nothing to
-			// fetch its plan line, `screenshots: 18111 already copied, 2 dead; to fetch 0 (…) → <dir>`.
-			parts.push(
-				lineMatching(fetched.tail, /^screenshots: (done in |\d+ already copied)/)
-					.replace(/^screenshots: /, '')
-					.replace(/ → .*$/, '')
-			);
+			parts.push(copy?.summary ?? lastLine(fetched.tail));
 			if (stopping()) return { status: 'stopped', summary: parts.join(' · '), details };
 			// Approved upload screenshots, copied from the stage's private RAW: an input beside Imgur. A failure here
 			// still lets Imgur's go up.
@@ -760,20 +764,17 @@ const steps: StepDef[] = [
 			if (stopping()) return { status: 'stopped', summary: parts.join(' · '), details };
 			const up = await script(['scripts/screenshots.ts', '--upload', stage, '--json']);
 			if (up.code !== 0) return { ...failed(up), details };
-			details.push(...screenshotBucketDetails(stage, uploaded, lastJsonLine<UploadRunResult>(up.tail)));
-			// `screenshots: local bucket: 18120 images in 830s: made 89, put 122048 files (…), …`
-			parts.push(
-				lineMatching(up.tail, /^screenshots: \S+ bucket: /)
-					.replace(/^screenshots: /, '')
-					.replace(/\. Then: .*$/, '')
-			);
-			const flagged = await script(['scripts/screenshots-flags.ts', '--stage', stage, '--yes']);
-			if (flagged.code !== 0) return { ...failed(flagged), details };
-			parts.push(lastLine(flagged.tail));
-			// `✓ 89 D1 rows written; cached pages purged`, or `already in sync; nothing written`.
-			const written = Number(/([\d,]+) D1 rows written/.exec(flagged.tail)?.[1]?.replace(/,/g, '') ?? 0);
-			details.push({ title: GROUP.searchCards, rows: [{ label: 'rows written', value: written }] });
-			return { status: warning ? 'warning' : 'done', summary: parts.filter(Boolean).join(' · '), details };
+			const bucket = lastJsonLine<UploadRunResult>(up.tail);
+			details.push(...screenshotBucketDetails(stage, uploaded, bucket));
+			const put = bucketPut(uploaded, bucket);
+			const figures = put ? { bucketPut: put } : undefined;
+			parts.push(bucket?.summary ?? lastLine(up.tail));
+			const flagged = await script(['scripts/screenshots-flags.ts', '--stage', stage, '--yes', '--json']);
+			if (flagged.code !== 0) return { ...failed(flagged), details, figures };
+			const flags = lastJsonLine<FlagsResult>(flagged.tail);
+			parts.push(flags?.summary ?? lastLine(flagged.tail));
+			details.push({ title: GROUP.searchCards, rows: [{ label: 'rows written', value: flags?.written ?? 0 }] });
+			return { status: warning ? 'warning' : 'done', summary: parts.filter(Boolean).join(' · '), details, figures };
 		}
 	},
 	{

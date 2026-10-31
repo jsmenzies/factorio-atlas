@@ -128,6 +128,18 @@ describe('the board after the update of 2026-10-30', () => {
 		expect(said(f.shared.sizing)).toBe('done · 4,653 files · 1348.0 MB');
 	});
 
+	test('typed figures read as the words they replace did: the backfill skipped, the files put', () => {
+		// The run as the typed update writes it, with the words those figures were once read from changed.
+		const typed = structuredClone(RUN);
+		const ingest = typed.steps.find((s) => s.id === 'ingest')!;
+		ingest.figures = { backfillSkipped: /^backfill skipped: ([^·]+)/.exec(ingest.summary!)![1].trim() };
+		ingest.summary = ingest.summary!.replace(/^backfill skipped: /, 'reworded: ');
+		const shots = typed.steps.find((s) => s.id === 'screenshots')!;
+		shots.figures = { bucketPut: { files: 4_653, bytes: 1_348_000_000 } };
+		for (const r of shots.details!.find((g) => g.title === GROUP.bucket('prod'))!.rows) if (r.label === ROW.filesPut) r.value = 'reworded';
+		expect(flowOf({ run: typed, phase: 'current' })).toEqual(f);
+	});
+
 	test('Render skipped: every stage not run, with the reason', () => {
 		for (const c of ['plan', 'draw', 'upload', 'thumbs'] as const)
 			expect(cellOf(f, 'codex', c)).toMatchObject({ kind: 'wait', tip: 'Not run: needs "update the site\'s prints", which failed.' });

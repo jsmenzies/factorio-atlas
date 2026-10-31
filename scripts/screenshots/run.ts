@@ -93,6 +93,8 @@ export interface UploadRunResult {
 	failed: number;
 	stopped: boolean;
 	uploads: UploadBucketCounts;
+	/** The run's line for people: `prod bucket: 18120 images in 830s: made 89, …, failed 0`. */
+	summary: string;
 }
 
 export async function runUpload(dir: string, entries: Map<string, StateEntry>, args: ShotArgs): Promise<number> {
@@ -169,10 +171,10 @@ export async function runUpload(dir: string, entries: Map<string, StateEntry>, a
 	);
 	clearInterval(ticker);
 	await opened.dispose();
-	console.log(
-		`screenshots: ${target} bucket: ${done} images in ${secs(Date.now() - started)}: made ${made}, put ${put} files (${mb(bytes)}), ` +
-			`deleted ${deleted}, already up ${unchanged}, failed ${failed.length}. Then: bun run screenshots:flags --stage ${target}`
-	);
+	const summary =
+		`${target} bucket: ${done} images in ${secs(Date.now() - started)}: made ${made}, put ${put} files (${mb(bytes)}), ` +
+		`deleted ${deleted}, already up ${unchanged}, failed ${failed.length}`;
+	console.log(`screenshots: ${summary}. Then: bun run screenshots:flags --stage ${target}`);
 	for (const f of failed.slice(0, 20)) console.log(`  ${f}`);
 	if (stop) console.error(`screenshots: STOPPED: ${stop}`);
 	if (args.json)
@@ -188,7 +190,8 @@ export async function runUpload(dir: string, entries: Map<string, StateEntry>, a
 				alreadyUp: unchanged,
 				failed: failed.length,
 				stopped: !!stop,
-				uploads
+				uploads,
+				summary
 			} satisfies UploadRunResult)
 		);
 	return stop ? 2 : failed.length ? 1 : 0;

@@ -12,6 +12,7 @@
  *   --db N        D1 generation for prod (default: DATABASES.<stage>.bound in infra/databases.ts)
  *   --dry-run     show what would change, write nothing
  *   --yes         don't ask before writing to prod
+ *   --json        its result as the last stdout line (FlagsResult: rows written, the summary line)
  *
  * Prod is reached through the backfill's remote bindings (scripts/backfill/stage.ts), so it needs
  * `wrangler login` and Node on PATH, and the stage must be deployed with migration 0019.
@@ -23,9 +24,20 @@ import { screenshotsDir } from './screenshots/args.js';
 import { ledgerFile, readLedger } from './screenshots/ledger.js';
 import { confirmProd, fail, n, openStage, parseStageArgs, requireSchema, runOn } from './stage-command';
 
-const USAGE = 'usage: bun run screenshots:flags --stage local|prod [--db N] [--dry-run] [--yes]';
+const USAGE = 'usage: bun run screenshots:flags --stage local|prod [--db N] [--dry-run] [--yes] [--json]';
 
-const { flags, stage, generation } = parseStageArgs(USAGE, {});
+/** `--json`: the result as the last stdout line (the update's screenshots step). */
+export interface FlagsResult {
+	written: number;
+	summary: string;
+}
+
+const { flags, stage, generation } = parseStageArgs(USAGE, { json: { type: 'boolean', default: false } });
+/** The last line (marked ✓ when it wrote): for people, and with --json in the result too. */
+const finish = (summary: string, written?: number) => {
+	console.log(written === undefined ? summary : `✓ ${summary}`);
+	if (flags.json) console.log(JSON.stringify({ written: written ?? 0, summary } satisfies FlagsResult));
+};
 
 const dir = screenshotsDir(join(import.meta.dirname, '..'));
 const file = join(dir, ledgerFile(stage));
@@ -48,14 +60,14 @@ await runOn(target, async () => {
 		`${target.database}: ${n(preview.plan.upsert.length)} rows to set, ${n(preview.plan.remove.length)} to delete ` +
 			`(${n(preview.rows)} rows now; ${n(preview.removed)} images taken down on request, kept 'removed')`
 	);
-	if (shotPlanSize(preview.plan) === 0) console.log('already in sync; nothing written');
-	else if (flags['dry-run']) console.log('dry run; nothing written');
+	if (shotPlanSize(preview.plan) === 0) finish('already in sync; nothing written');
+	else if (flags['dry-run']) finish('dry run; nothing written');
 	else {
 		await confirmProd(stage, flags.yes, 'Write these to PROD?');
 		const done = await syncScreenshotFlags(db, wanted, {
 			onBatch: (i, total) => process.stdout.write(`\r  ${n(i)}/${n(total)} statements`)
 		});
 		process.stdout.write('\n');
-		console.log(`✓ ${n(done.rowsWritten)} D1 rows written; cached pages purged`);
+		finish(`${n(done.rowsWritten)} D1 rows written; cached pages purged`, done.rowsWritten);
 	}
 });

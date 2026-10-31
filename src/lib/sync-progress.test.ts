@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { logProgress, recordsSeen } from './sync-progress';
+import { foldProgress, logProgress, progressFileOf, recordsSeen, type ProgressEvent } from './sync-progress';
 
 // Lines as the 2026-10-30 update wrote them (sync-2026-10-30T12-00-29-288Z.log).
 const LOG = `== Apply removals
@@ -88,5 +88,61 @@ flags: render:flags --stage prod
 			shots: { toCopy: null, bySite: {}, last: null },
 			command: 'scripts/render-game.ts --next 50 --upload prod --flags'
 		});
+	});
+});
+
+/** The LOG above as the events the update now writes beside it (one per line it parsed). */
+const EVENTS: ProgressEvent[] = [
+	{ t: 'step', step: 'removals' },
+	{ t: 'step', step: 'fetch' },
+	{ t: 'record', site: 'codex', outcome: 'new' },
+	{ t: 'record', site: 'codex', outcome: 'new' },
+	{ t: 'record', site: 'fprints', outcome: 'new' },
+	{ t: 'step', step: 'ingest' },
+	{ t: 'command', command: 'scripts/polled.ts --stage prod --site codex --dir /home/james/data/factorio-records --yes --json' },
+	{ t: 'admit', site: 'codex', records: 431 },
+	{ t: 'record', site: 'codex', outcome: 'joined' },
+	{ t: 'record', site: 'codex', outcome: 'new' },
+	{ t: 'record', site: 'codex', outcome: 'failed' },
+	{ t: 'record', site: 'codex', outcome: 'failed' },
+	{ t: 'admit', site: 'fprints', records: 407 },
+	{ t: 'record', site: 'fprints', outcome: 'undecodable' },
+	{ t: 'record', site: 'fprints', outcome: 'new' }
+];
+const jsonl = (events: ProgressEvent[]) => events.map((e) => `${JSON.stringify(e)}\n`).join('');
+
+describe('foldProgress: the typed events give what the log gave', () => {
+	test('the gate, the fetch, and before the first step', () => {
+		expect(foldProgress(jsonl(EVENTS))).toEqual(logProgress(LOG));
+		const fetch = EVENTS.findIndex((e) => e.t === 'step' && e.step === 'ingest');
+		expect(foldProgress(jsonl(EVENTS.slice(0, fetch)))).toEqual(logProgress(LOG.slice(0, LOG.indexOf('== Update'))));
+		expect(foldProgress('')).toEqual(logProgress('sync 2026… → prod\n'));
+	});
+
+	test("screenshots from other sites and the step's last command; a broken line is skipped", () => {
+		const events = jsonl([
+			{ t: 'step', step: 'screenshots' },
+			{ t: 'command', command: 'scripts/screenshots.ts --from-clone /x --json' },
+			{ t: 'command', command: 'scripts/screenshots.ts --from-sites prod --json' },
+			{ t: 'shots', toCopy: 716 },
+			{ t: 'shot', site: 'codex', outcome: 'fetched' },
+			{ t: 'shot', site: 'codex', outcome: 'failed' },
+			{ t: 'shot', site: 'fprints', outcome: 'fetched' }
+		]);
+		expect(foldProgress(`${events}{"t":"shot","site":"fpr`)).toEqual(
+			logProgress(`== Copy screenshots
+$ bun scripts/screenshots.ts --from-clone /x --json
+screenshots: done in 3s: fetched 0
+$ bun scripts/screenshots.ts --from-sites prod --json
+screenshots: 749 images from other sites shown in prod: 33 already copied, 0 dead, 0 removed; to copy 716 → /x
+screenshots: codex.2cc33feefb7dd975 (codex-34): fetched
+screenshots: codex.ad495edadaac02a8 (codex-108): failed (over 30 MB)
+screenshots: fprints.0f688ce08ceec6a7 (fprints-1a2b): fetched
+`)
+		);
+	});
+
+	test('the file sits beside the log', () => {
+		expect(progressFileOf('sync-2026-10-31T09-47-25-289Z.log')).toBe('sync-2026-10-31T09-47-25-289Z.progress.jsonl');
 	});
 });

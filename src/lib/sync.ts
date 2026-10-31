@@ -206,7 +206,20 @@ export interface SyncStep {
 	details?: DetailGroup[];
 	/** The render step: its run's stages per source as the run ended (#lib/render-stages.js). */
 	render?: RenderStages;
+	/** Figures the board reads as they are, not from `summary` or a row's words (rows older than these have none). */
+	figures?: StepFigures;
 }
+
+/** A step's typed figures for the board (flow.ts), beside its `details` for people. */
+export interface StepFigures {
+	/** ingest: why the backfill was skipped, when the polled sites were admitted after it. */
+	backfillSkipped?: string;
+	/** screenshots: the files put in the stage's bucket (the upload screenshots' left out), and their bytes. */
+	bucketPut?: { files: number; bytes: number };
+}
+
+/** Bytes as the screenshots step shows them: "156.1 MB". */
+export const megabytes = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
 
 /** The screenshots step's group of one site's images (`From other sites: codex`). */
 export const SITE_SHOTS_GROUP = 'From other sites: ';
