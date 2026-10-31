@@ -66,13 +66,19 @@ export const pageAnalysis = ({ labels: _labels, nodes, ...rest }: PrintAnalysis)
 	})
 });
 
+/**
+ * The author name a record carries itself: factorioprints' `displayName`, another site's author's name. An empty
+ * name counts as none, in the document as in D1.
+ */
+export const ownAuthorName = (record: FirebaseRecord) => record.author?.displayName || record.source?.author?.name || null;
+
 export const toPrintDoc = (id: string, sourceUrl: string, r: FirebaseRecord, analysis: PrintAnalysis): PrintDoc => ({
 	v: PRINT_DOC_VERSION,
 	print: {
 		id,
 		title: r.title,
 		author_id: r.author?.userId ?? r.authorId ?? null,
-		author_name: r.author?.displayName ?? r.source?.author?.name ?? null,
+		author_name: ownAuthorName(r),
 		favorites: r.numberOfFavorites ?? 0,
 		image_id: r.image?.id ?? null,
 		image_type: r.image?.type ?? null,

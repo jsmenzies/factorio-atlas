@@ -8,7 +8,7 @@ import type { Admission } from './admit.js';
 import { fingerprintPrint, type PrintFingerprint } from './identity.js';
 import type { FoldMember } from './fold.js';
 import { blockHashes, docSourcesOf, withSourceRow, type PrintSourceRow } from './identity-db.js';
-import { analysisKey, parsePrintDoc, toPrintDoc, withAuthorName, withFold, withSources } from './print-doc.js';
+import { analysisKey, ownAuthorName, parsePrintDoc, toPrintDoc, withAuthorName, withFold, withSources } from './print-doc.js';
 import { RawStore } from './raw-store.js';
 import { FirebaseRecord, stripPrivateFields } from './record.js';
 import {
@@ -29,9 +29,6 @@ const sha256 = (text: string) => Effect.promise(() => sha256Hex(text));
 
 /** Where a factorioprints record is archived; other sites' records go to `<site>/<siteId>.json` (source-record.ts). */
 export const rawKey = (id: string) => `factorioprints/${id}.json`;
-
-/** The author name a record carries itself: factorioprints' `displayName`, another site's author's name. */
-const ownAuthorName = (record: FirebaseRecord) => record.author?.displayName || record.source?.author?.name || null;
 
 /**
  * The name a print is credited to: its record's own author name, else the `authors` table's
