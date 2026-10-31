@@ -64,9 +64,9 @@
 			<p class="text-stone-200">The local database is busy (a run is writing to it); trying again in a moment.</p>
 		</div>
 	{:else}
-		<Attention figures={view.figures?.value ?? null} plan={view.plan?.value ?? null} {run} totals={view.totals} now={clock.now} />
+		<Attention figures={view.figures?.value ?? null} plan={view.plan?.value ?? null} {run} totals={view.totals} waiting={view.scopes.union.left} now={clock.now} />
 
-		<Figures figures={view.figures?.value ?? null} scopes={view.scopes} totals={view.totals} now={clock.now} />
+		<Figures figures={view.figures?.value ?? null} scopes={view.scopes} siteRender={view.siteRender} totals={view.totals} now={clock.now} />
 
 		{#if run}
 			<section class="rounded-lg border border-stone-800 bg-stone-900/50 p-4" aria-labelledby="last-title">

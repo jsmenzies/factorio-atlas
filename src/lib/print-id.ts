@@ -57,3 +57,10 @@ export const siteOfPrintId = (id: string): Site | null => {
 	const prefix = id.slice(0, id.indexOf('-'));
 	return (Object.entries(SITE_PREFIX) as [Exclude<Site, 'factorioprints'>, string][]).find(([, p]) => p === prefix)?.[0] ?? null;
 };
+
+/**
+ * siteOfPrintId as an SQL expression over the id column `col`, for grouping by site in a query: a site's prefix
+ * and a dash, else factorioprints (ids that are no print id at all included).
+ */
+export const siteOfPrintIdSql = (col: string) =>
+	`CASE ${(Object.entries(SITE_PREFIX) as [Site, string][]).map(([site, prefix]) => `WHEN ${col} LIKE '${prefix}-%' THEN '${site}'`).join(' ')} ELSE 'factorioprints' END`;

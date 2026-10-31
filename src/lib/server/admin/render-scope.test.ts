@@ -3,7 +3,15 @@ import { Database } from 'bun:sqlite';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { d1FromSqlite } from '../pipeline/d1-sqlite';
-import { parseScopes, scopeStatements, STORE_WAITING_SQL, withStoreWaiting } from './render-scope';
+import {
+	parseScopes,
+	parseSiteScopes,
+	scopeStatements,
+	SITE_SCOPES_SQL,
+	SITE_STORE_WAITING_SQL,
+	STORE_WAITING_SQL,
+	withStoreWaiting
+} from './render-scope';
 
 const ROOT = join(import.meta.dirname, '../../../..');
 
@@ -15,7 +23,7 @@ const setup = () => {
 		sqlite.run(readFileSync(join(ROOT, 'migrations', f), 'utf8'));
 	const seen = sqlite.query('INSERT INTO render_prints (print_id, stamp, modern, checked_at) VALUES (?, ?, ?, ?)');
 	const job = sqlite.query(
-		`INSERT INTO render_jobs (print_id, path, input_key, status, reason, attempts, queued_at, uploaded_at) VALUES (?, ?, 'k', ?, ?, 0, 0, ?)`
+		`INSERT INTO render_jobs (print_id, path, input_key, status, reason, attempts, queued_at, uploaded_at, bytes) VALUES (?, ?, 'k', ?, ?, 0, 0, ?, 10)`
 	);
 	const fav = sqlite.query(
 		'INSERT INTO render_favorites (print_id, favorites, rank, in_top, refreshed_at, first_added_at) VALUES (?, ?, ?, ?, 0, 0)'
@@ -101,5 +109,44 @@ describe('record-store prints waiting to render (the Update tab)', () => {
 		const scopes = withStoreWaiting(parseScopes(await db.batch(scopeStatements(db))), w);
 		expect(scopes.union).toEqual({ total: 5, rendered: 2, uploaded: 0, left: 3, none: 0, failed: 0, updated: 1 });
 		expect(scopes.modern).toEqual(scopes.union);
+	});
+});
+
+describe('render coverage by credited site (the Overview)', () => {
+	test('by the site a print is credited to; unreadable records out of scope; drawn pages wherever they are', async () => {
+		const { sqlite, db, seen, job, fav } = setup();
+		const FP = '-AAAAAAAAAAAAAAAAAAA';
+		const CODEX_FIRST = '-BBBBBBBBBBBBBBBBBBB';
+		seen.run(FP, 's', 1, 10);
+		job.run(FP, '1', 'done', null, 1);
+		job.run(FP, '2', 'done', null, 1);
+		seen.run('-UNREADABLEAAAAAAAAA', 's', 1, 10);
+		job.run('-UNREADABLEAAAAAAAAA', '', 'skipped', 'undecodable: zlib', null);
+		seen.run('-MODDEDAAAAAAAAAAAAA', 's', 1, 10);
+		job.run('-MODDEDAAAAAAAAAAAAA', '', 'skipped', 'modded: x', null);
+		// A favourite with a pre-2.0 page still to draw: left.
+		seen.run('-OLDAAAAAAAAAAAAAAAA', 's', 0, 10);
+		job.run('-OLDAAAAAAAAAAAAAAAA', '', 'skipped', 'pre-2.0', null);
+		fav.run('-OLDAAAAAAAAAAAAAAAA', 9, 1, 1);
+		// Credited to codex though its id is factorioprints'; a failed fprints print; a former favourite with pages drawn.
+		seen.run(CODEX_FIRST, 's', 1, 10);
+		job.run(CODEX_FIRST, '', 'done', null, 1);
+		seen.run('fprints-x', 's', 1, 10);
+		job.run('fprints-x', '', 'failed', 'boom', null);
+		seen.run('-FORMERAAAAAAAAAAAAA', 's', 0, 10);
+		job.run('-FORMERAAAAAAAAAAAAA', '', 'done', null, 1);
+		fav.run('-FORMERAAAAAAAAAAAAA', 1, 50, 0);
+		const figures = { credit: { [CODEX_FIRST]: 'codex' } };
+		sqlite.query(`INSERT INTO sync_meta (key, value, updated_at) VALUES ('figures', ?, 1)`).run(JSON.stringify(figures));
+		// The record store: a codex print never looked at.
+		sqlite
+			.query(`INSERT INTO sync_meta (key, value, updated_at) VALUES ('store-prints', ?, 1)`)
+			.run(JSON.stringify({ at: 1, modern: [['codex-9', 'a']], older: 0, unreadable: 0 }));
+		const [scopes, store] = await db.batch([db.prepare(SITE_SCOPES_SQL), db.prepare(SITE_STORE_WAITING_SQL)]);
+		expect(parseSiteScopes(scopes, store)).toEqual({
+			factorioprints: { total: 3, rendered: 1, none: 1, failed: 0, left: 1, pages: 3, bytes: 30 },
+			codex: { total: 2, rendered: 1, none: 0, failed: 0, left: 1, pages: 1, bytes: 10 },
+			fprints: { total: 1, rendered: 0, none: 0, failed: 1, left: 0, pages: 0, bytes: 0 }
+		});
 	});
 });

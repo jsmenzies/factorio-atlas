@@ -1,24 +1,25 @@
 <script lang="ts">
 	import { invalidate } from '$app/navigation';
-	import type { RenderScopes } from '#lib/server/admin/render-scope.js';
+	import type { RenderScopes, SiteRender } from '#lib/server/admin/render-scope.js';
 	import type { RenderTotals } from '#lib/server/admin/sync.js';
-	import { SITES, type Site } from '#lib/print-id.js';
-	import { SOURCE_SITES } from '#lib/sources.js';
-	import type { SyncFigures } from '#lib/sync.js';
+	import { R2_STORAGE_PER_GB_MONTH, type SyncFigures } from '#lib/sync.js';
 	import { PIPELINE_DEP } from '../live.svelte.js';
-	import { ago, bytes, int, percent } from '../metrics.js';
+	import { ago, int, percent } from '../metrics.js';
+	import { BUCKET_TEXT, NO_NAMES, NOT_APPLICABLE, r2Panel, rendersBySite, siteTable, size, type SiteRow } from './site-figures.js';
 
 	/**
-	 * The Overview's figures: the site's prints by the source they are credited to, analysis and
-	 * screenshots (as the last update, or Count again, counted them on the stage: sync_meta 'figures'),
-	 * then render coverage (the local render queue) as one bar.
+	 * The Overview's "What the site has": headline cards, then one row per source (the site each print is credited
+	 * to) with every figure out of that source's own prints, as the last update (or Count again) counted them on the
+	 * stage (sync_meta 'figures'), render coverage from the local render queue by the same sites, and the site's R2
+	 * storage as the figures step read it from Cloudflare's analytics.
 	 */
 	let {
 		figures,
 		scopes,
+		siteRender,
 		totals,
 		now
-	}: { figures: SyncFigures | null; scopes: RenderScopes; totals: RenderTotals; now: number } = $props();
+	}: { figures: SyncFigures | null; scopes: RenderScopes; siteRender: Record<string, SiteRender>; totals: RenderTotals; now: number } = $props();
 
 	let refreshing = $state(false);
 	let error = $state<string | null>(null);
@@ -37,42 +38,113 @@
 		}
 	};
 
-	const u = $derived(scopes.union);
-	const versions = $derived(figures ? Object.entries(figures.analysed).sort(([a], [b]) => Number(b) - Number(a)) : []);
-	const folded = $derived(figures?.bySource ? Object.values(figures.bySource).reduce((n, s) => n + s.folded, 0) : null);
-	/** Every site, in the site table's order, with what the figures have for it (sites without prints too, when counted). */
-	const sources = $derived.by(() => {
-		const by = figures?.bySource;
-		if (!by) return [];
-		const known = new Set<string>(SITES);
-		const sites = [...SITES, ...Object.keys(by).filter((s) => !known.has(s))];
-		const max = Math.max(1, ...Object.values(by).map((s) => s.prints));
-		return sites.map((site) => {
-			const c = by[site] ?? { prints: 0, folded: 0 };
-			const records = figures?.sourceRecords?.[site] ?? 0;
-			return {
-				site,
-				name: SOURCE_SITES[site as Site]?.name ?? site,
-				prints: c.prints,
-				folded: c.folded,
-				// Posts on that site joined to a print credited elsewhere ("Also on …").
-				joined: Math.max(0, records - c.prints),
-				width: c.prints ? Math.max(0.5, (c.prints / max) * 100) : 0
-			};
-		});
-	});
-	const shots = $derived(figures ? Object.values(figures.screenshots).reduce((a, b) => a + b, 0) : 0);
-	const bar = $derived([
-		{ n: u.rendered, label: 'Rendered', class: 'bg-emerald-600' },
-		{ n: u.none, label: "Can't be drawn", class: 'bg-amber-700' },
-		{ n: u.failed, label: 'Failed', class: 'bg-rose-600' },
-		{ n: u.left, label: 'Left to render', class: 'bg-stone-500' }
+	const table = $derived(siteTable(figures, siteRender));
+	const version = $derived(figures ? Math.max(0, ...Object.keys(figures.analysed).map(Number)) : 0);
+	const r2 = $derived(figures?.r2 && 'buckets' in figures.r2 ? r2Panel(figures.r2.buckets) : null);
+	const r2Error = $derived(figures?.r2 && 'error' in figures.r2 ? figures.r2.error : null);
+	const estimate = $derived(r2 && table ? rendersBySite(table.rows, r2.buckets.find((b) => b.kind === 'renders')?.bytes ?? 0) : []);
+	const left = $derived(scopes.union.left);
+
+	const cards = $derived([
+		{ t: 'Prints on the site', n: figures ? int(figures.prints) : '—', sub: table ? `${table.rows.length} sources` : null },
+		{ t: 'Listed in search', n: table ? int(table.total.listed) : '—', sub: table ? `${int(table.total.folded)} folded copies kept out` : null },
+		{
+			t: 'With a render',
+			n: int(figures?.rendered ?? scopes.union.rendered),
+			sub: `${int(totals.pages)} book pages${left ? ` · ${int(left)} left` : ''}`
+		},
+		{ t: 'R2 storage', n: r2 ? `≈ ${size(r2.bytes)}` : '—', sub: r2 ? `≈ $${r2.dollars.toFixed(2)} a month` : r2Error ? 'couldn’t be read' : null }
+	]);
+
+	const HEADS = $derived([
+		{ t: 'Prints', sub: '', tip: 'Prints on the site credited to this source: the site where the blueprint was posted first. Every “out of its prints” counts these.' },
+		{ t: 'In search', sub: '', tip: 'Prints listed in search and the sitemap: all but folded copies (later exact copies of an earlier print, page kept).' },
+		{ t: `Analysed (v${version})`, sub: 'out of its prints', tip: 'Prints analysed with today’s analyser and game data.' },
+		{
+			t: 'Author',
+			sub: 'out of its prints',
+			tip: 'Prints whose card names who made it. fprints gives no names; factoriobin posts are anonymous (n/a, left out of the total).'
+		},
+		{ t: 'Screenshot', sub: 'out of its prints', tip: 'Prints showing a screenshot (our own copy). factoriobin has none (n/a): its render stands in.' },
+		{
+			t: 'Rendered',
+			sub: 'out of its prints we render',
+			tip: 'We render prints with a page saved in Factorio 2.0 or later, plus factorioprints’ top favourites. The bar: rendered, can’t be drawn (mods, empty, planners only), failed, waiting. From this machine’s render queue.'
+		},
+		{ t: 'Book pages drawn', sub: 'and their size on this machine', tip: 'Pages with a render: each page of a book is its own render. The size is their files on this machine.' },
+		{
+			t: 'Pulled (all time)',
+			sub: 'posts fetched from the site',
+			tip: 'Every post pulled from the site and still there. Duplicates of another site’s print show on it as “Also on”; duplicates on the same site join the first post; unreadable posts never became prints.'
+		}
 	]);
 
 	const card = 'rounded-lg border border-stone-800 bg-stone-900/50 p-4';
 	const label = 'text-xs font-semibold tracking-wide text-stone-500 uppercase';
-	const row = 'flex justify-between gap-3 text-sm';
+	const plural = (n: number, one: string, many: string) => `${int(n)} ${n === 1 ? one : many}`;
+	const share = (a: number, of: number) => (of ? Math.min(100, (a / of) * 100) : 0);
+	const sliceClass = ['bg-emerald-600', 'bg-amber-700', 'bg-rose-600', 'bg-stone-500'];
+	const namedNote = (r: SiteRow, total: boolean) => {
+		if (r.named === null) return null;
+		const missing = r.namedOf - r.named;
+		if (missing) return NO_NAMES[r.site as keyof typeof NO_NAMES] ?? `${int(missing)} with no name`;
+		return total && r.namedOf < r.prints ? 'anonymous posts left out' : null;
+	};
 </script>
+
+{#snippet q(tip: string)}
+	<span class="ml-1 inline-grid size-3.5 cursor-help place-items-center rounded-full border border-stone-700 align-[1px] text-[9px] font-bold text-stone-500" title={tip}
+		>?</span
+	>
+{/snippet}
+
+{#snippet frac(a: number | null, of: number, note: string | null, na: string | undefined)}
+	{#if a === null}
+		<div class="text-stone-600">n/a</div>
+		<div class="text-xs text-stone-600">{na}</div>
+	{:else}
+		{@const full = a >= of * 0.995}
+		<div class="text-stone-100">{int(a)}<span class="text-xs text-stone-500">&nbsp;/ {int(of)}</span></div>
+		<div class="mt-1 h-0.5 max-w-28 overflow-hidden rounded-full bg-stone-800">
+			<div class="h-full rounded-full {full ? 'bg-emerald-600' : 'bg-amber-600'}" style="width: {share(a, of)}%"></div>
+		</div>
+		{#if note}<div class="mt-0.5 text-xs {full ? 'text-stone-500' : 'text-amber-300/80'}">{note}</div>{/if}
+	{/if}
+{/snippet}
+
+{#snippet row(r: SiteRow, total: boolean)}
+	{@const na = NOT_APPLICABLE[r.site as keyof typeof NOT_APPLICABLE]}
+	<tr class="border-t align-top {total ? 'border-stone-700 bg-white/[0.02]' : 'border-stone-800/70'}">
+		<th scope="row" class="sticky left-0 bg-stone-950 py-2.5 pr-3 pl-3 text-left font-semibold whitespace-nowrap text-stone-100 sm:static sm:bg-transparent">{r.name}</th>
+		<td class="px-2 py-2.5 text-base font-semibold text-stone-100">{int(r.prints)}</td>
+		<td class="px-2 py-2.5 text-stone-200">{int(r.listed)}</td>
+		<td class="px-2 py-2.5">{@render frac(r.analysed, r.prints, r.prints - r.analysed ? `${int(r.prints - r.analysed)} on an older one` : null, undefined)}</td>
+		<td class="px-2 py-2.5">{@render frac(r.named, r.namedOf, namedNote(r, total), na?.author)}</td>
+		<td class="px-2 py-2.5">{@render frac(r.shot, r.shotOf, r.shot !== null && r.shotOf > r.shot ? `${int(r.shotOf - r.shot)} with none` : null, na?.shot)}</td>
+		<td class="px-2 py-2.5">
+			<div class="text-stone-100">{int(r.render.rendered)}<span class="text-xs text-stone-500">&nbsp;/ {int(r.render.total)}</span></div>
+			<div class="mt-1 flex h-1 max-w-32 gap-px overflow-hidden rounded-full bg-stone-800">
+				{#each [r.render.rendered, r.render.none, r.render.failed, r.render.left] as n, i (i)}
+					{#if n}<span class="block h-full {sliceClass[i]}" style="width: {share(n, r.render.total)}%"></span>{/if}
+				{/each}
+			</div>
+			<div class="mt-0.5 text-xs text-stone-500">
+				{#if r.render.none}<div>{int(r.render.none)} can’t be drawn</div>{/if}
+				{#if r.render.failed}<div class="text-rose-300">{int(r.render.failed)} failed</div>{/if}
+				{#if r.render.left}<div>{int(r.render.left)} waiting</div>{/if}
+			</div>
+		</td>
+		<td class="px-2 py-2.5"><div class="text-stone-100">{int(r.render.pages)}</div><div class="text-xs text-stone-500">{size(r.render.bytes)}</div></td>
+		<td class="px-2 py-2.5">
+			<div class="text-stone-100">{int(r.pulled)}</div>
+			<div class="text-xs text-stone-500">
+				{#if r.dupOther}<div>{plural(r.dupOther, 'duplicate', 'duplicates')} of another site’s print</div>{/if}
+				{#if r.dupSame}<div>{plural(r.dupSame, 'duplicate', 'duplicates')} on the same site</div>{/if}
+				{#if r.unreadable}<div class="text-amber-300/80">{int(r.unreadable)} unreadable</div>{/if}
+			</div>
+		</td>
+	</tr>
+{/snippet}
 
 <section aria-labelledby="site-title" class="space-y-3">
 	<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -86,87 +158,127 @@
 		</p>
 	</div>
 
-	<!-- The headline numbers. -->
 	<dl class="grid grid-cols-2 gap-3 lg:grid-cols-4">
-		{#each [{ t: 'prints on the site', n: figures?.prints, sub: folded ? `${int(figures!.prints - folded)} listed, ${int(folded)} folded copies` : null }, { t: 'with a render', n: figures?.rendered ?? u.rendered, sub: `${int(totals.pages)} pages · ${totals.uploaded === totals.pages ? 'all on prod' : `${int(totals.uploaded)} on prod`}` }, { t: 'screenshots copied', n: figures?.screenshots.copied, sub: figures ? `${int(figures.screenshots.dead ?? 0)} dead on Imgur · ${int(figures.screenshots.removed ?? 0)} removed` : null }, { t: 'failed to read', n: figures?.failed, sub: 'known failures, skipped by updates' }] as f (f.t)}
+		{#each cards as f (f.t)}
 			<div class="{card} flex flex-col-reverse">
 				<dt class="text-sm text-stone-400">
 					{f.t}
 					{#if f.sub}<span class="block text-xs text-stone-500">{f.sub}</span>{/if}
 				</dt>
-				<dd class="text-2xl font-semibold text-stone-100 tabular-nums">{f.n === undefined ? '—' : int(f.n)}</dd>
+				<dd class="text-2xl font-semibold text-stone-100 tabular-nums">{f.n}</dd>
 			</div>
 		{/each}
 	</dl>
 
-	<div class="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-		<section class={card} aria-labelledby="by-source-title">
-			<h3 id="by-source-title" class={label}>Prints by source</h3>
-			{#if sources.length}
-				<ul class="mt-2 space-y-2">
-					{#each sources as s (s.site)}
-						<li>
-							<div class="flex flex-wrap items-baseline justify-between gap-x-3 text-sm">
-								<span class="text-stone-200">{s.name}{s.site === 'upload' ? ' uploads' : ''}</span>
-								<span class="text-stone-100 tabular-nums">{int(s.prints)}</span>
-							</div>
-							<div class="mt-1 h-1.5 overflow-hidden rounded-full bg-stone-800">
-								<div class="h-full rounded-full bg-amber-500/80" style="width: {s.width}%"></div>
-							</div>
-							{#if s.joined || s.folded}
-								<p class="mt-0.5 text-xs text-stone-500">
-									{[s.joined ? `+${int(s.joined)} joined prints from elsewhere ("Also on")` : '', s.folded ? `${int(s.folded)} folded copies` : ''].filter(Boolean).join(' · ')}
-								</p>
-							{/if}
-						</li>
-					{/each}
-				</ul>
-			{:else}
-				<p class="mt-2 text-sm text-stone-400">Not counted by source yet: the next update (or Count again) counts them.</p>
-			{/if}
-		</section>
-
-		<section class={card} aria-labelledby="analysis-title">
-			<h3 id="analysis-title" class={label}>Analysis and screenshots</h3>
-			{#if figures}
-				<dl class="mt-2 space-y-1">
-					<div class={row}>
-						<dt class="text-stone-400">Analyser version</dt>
-						<dd class="text-right tabular-nums">
-							{#each versions as [v, count], i (v)}{i ? ', ' : ''}<span class={i ? 'text-amber-200' : 'text-emerald-300'}>v{v} {int(count)}</span>{/each}
-						</dd>
-					</div>
-					<div class={row}>
-						<dt class="text-stone-400">factorioprints prints with no author name</dt><dd class="tabular-nums {figures.unnamed ? 'text-amber-200' : ''}">{int(figures.unnamed)}</dd>
-					</div>
-					<div class={row}><dt class="text-stone-400">Screenshots dead on Imgur</dt><dd class="tabular-nums">{int(figures.screenshots.dead ?? 0)}</dd></div>
-					<div class={row}><dt class="text-stone-400">Screenshots removed</dt><dd class="tabular-nums">{int(figures.screenshots.removed ?? 0)}</dd></div>
-					<div class={row}><dt class="text-stone-400">Prints without a screenshot</dt><dd class="tabular-nums">{int(Math.max(0, figures.prints - shots))}</dd></div>
-					<div class={row}><dt class="text-stone-400">Renders on disk</dt><dd class="tabular-nums">{bytes(totals.bytes)}</dd></div>
-				</dl>
-			{:else}
-				<p class="mt-2 text-sm text-stone-400">Not counted yet.</p>
-			{/if}
-		</section>
-	</div>
-
-	<section class={card} aria-labelledby="coverage-title">
-		<div class="flex flex-wrap items-baseline justify-between gap-2">
-			<h3 id="coverage-title" class={label}>Render coverage · prints in scope</h3>
-			<p class="text-xs text-stone-500">
-				{int(scopes.modern.total)} with a 2.0+ page{scopes.favorites ? ` + the top ${int(scopes.favorites.n)} (≥ ${int(scopes.favorites.cutoff)} favourites)` : ''}
-				= {int(u.total)}
-			</p>
+	{#if table}
+		<div class="overflow-x-auto rounded-lg border border-stone-800 bg-stone-900/50">
+			<table class="w-full min-w-[1100px] table-fixed text-sm tabular-nums">
+				<colgroup>
+					<col class="w-40" />
+					<col class="w-20" />
+					<col class="w-24" />
+					<col class="w-32" />
+					<col class="w-32" />
+					<col class="w-32" />
+					<col class="w-36" />
+					<col class="w-32" />
+					<col class="w-48" />
+				</colgroup>
+				<thead class="bg-stone-950/40">
+					<tr class="align-bottom">
+						<th scope="col" class="px-3 py-2.5 text-left {label}">Source</th>
+						{#each HEADS as h (h.t)}
+							<th scope="col" class="px-2 py-2.5 text-left font-medium">
+								<span class="whitespace-nowrap text-stone-200">{h.t}{@render q(h.tip)}</span>
+								{#if h.sub}<span class="block text-xs font-normal text-stone-500">{h.sub}</span>{/if}
+							</th>
+						{/each}
+					</tr>
+				</thead>
+				<tbody>
+					{#each table.rows as r (r.site)}{@render row(r, false)}{/each}
+					{@render row(table.total, true)}
+				</tbody>
+			</table>
 		</div>
-		<div class="mt-3 flex h-4 overflow-hidden rounded-md bg-stone-800" role="img" aria-label={bar.map((b) => `${b.label} ${int(b.n)}`).join(', ')}>
-			{#each bar as b (b.label)}
-				{#if b.n}<span class="block h-full {b.class}" style="width: {percent(b.n, u.total || 1)}" title="{b.label}: {int(b.n)}"></span>{/if}
+		<ul class="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-stone-400">
+			{#each ['Rendered', 'Can’t be drawn', 'Failed', 'Waiting'] as l, i (l)}
+				<li><span class="mr-1.5 inline-block size-2.5 rounded-sm align-[-1px] {sliceClass[i]}"></span>{l}</li>
 			{/each}
-		</div>
-		<ul class="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-stone-400">
-			{#each bar as b (b.label)}
-				<li><span class="mr-1.5 inline-block size-2.5 rounded-sm align-[-1px] {b.class}"></span>{b.label} {int(b.n)}{u.total ? ` (${percent(b.n, u.total)})` : ''}</li>
-			{/each}
+			<li class="text-stone-500">“a / b”: a out of b prints, as each column says. Render columns come from this machine’s render queue.</li>
 		</ul>
+	{:else}
+		<p class="{card} text-sm text-stone-400">Not counted by source yet: the next update (or Count again) counts them.</p>
+	{/if}
+
+	<section class={card} aria-labelledby="r2-title">
+		<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+			<h3 id="r2-title" class={label}>
+				R2 storage{@render q('What Cloudflare stores for the site, from R2’s own analytics, read by the figures step. The site’s buckets only.')}
+			</h3>
+			<p class="text-xs text-stone-500">from Cloudflare’s R2 analytics · whole site, not per source</p>
+		</div>
+		{#if r2}
+			<div class="mt-2 grid gap-x-8 gap-y-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+				<table class="w-full text-sm tabular-nums">
+					<thead>
+						<tr class="text-xs tracking-wide text-stone-500 uppercase">
+							<th></th>
+							<th scope="col" class="px-2 pb-1 text-right font-semibold">Files</th>
+							<th scope="col" class="px-2 pb-1 text-right font-semibold">Size</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each r2.buckets as b (b.name)}
+							<tr class="border-t border-stone-800/70 align-top">
+								<th scope="row" class="py-1.5 pr-2 text-left font-normal">
+									<span class="text-stone-200">{BUCKET_TEXT[b.kind].title}</span>
+									<span class="block text-xs text-stone-500">{BUCKET_TEXT[b.kind].holds}</span>
+								</th>
+								<td class="px-2 py-1.5 text-right text-stone-300">{int(b.objects)}</td>
+								<td class="px-2 py-1.5 text-right whitespace-nowrap text-stone-300">{size(b.bytes)}</td>
+							</tr>
+						{/each}
+						<tr class="border-t border-stone-700 font-semibold text-stone-100">
+							<th scope="row" class="py-1.5 pr-2 text-left">All</th>
+							<td class="px-2 py-1.5 text-right">{int(r2.objects)}</td>
+							<td class="px-2 py-1.5 text-right whitespace-nowrap">≈ {size(r2.bytes)}</td>
+						</tr>
+					</tbody>
+				</table>
+				<div class="space-y-3 text-sm">
+					<p>
+						<span class="text-lg font-semibold text-amber-300">≈ ${r2.dollars.toFixed(2)} a month</span>
+						<span class="block text-xs text-stone-500"
+							>at ${R2_STORAGE_PER_GB_MONTH} per GB-month. R2’s free 10 GB is shared with the account’s other buckets, so it isn’t taken off here.</span
+						>
+					</p>
+					{#if estimate.length}
+						<div>
+							<p class="text-stone-300">
+								Renders bucket by source <span class="rounded border border-amber-800 px-1 text-[10px] font-bold tracking-wide text-amber-300/80 uppercase"
+									>estimate</span
+								>{@render q(
+									'Each source’s share of the drawn pages’ bytes on this machine, applied to the bucket’s size. R2 also holds thumbnails and replaced files waiting to be deleted.'
+								)}
+							</p>
+							<ul class="mt-1 grid gap-x-6 gap-y-0.5 sm:grid-cols-2">
+								{#each estimate as e (e.site)}
+									<li class="flex justify-between gap-3">
+										<span class="text-stone-400">{e.name}</span><span class="text-stone-200 tabular-nums"
+											>≈ {size(e.bytes)} <span class="text-xs text-stone-500">{percent(e.share, 1)}</span></span
+										>
+									</li>
+								{/each}
+							</ul>
+						</div>
+					{/if}
+				</div>
+			</div>
+		{:else}
+			<p class="mt-2 text-sm text-stone-400">
+				{r2Error ? `Unavailable: ${r2Error}` : 'Not read yet: the next update (or Count again) reads it.'}
+			</p>
+		{/if}
 	</section>
 </section>

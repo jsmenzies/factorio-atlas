@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { RenderTotals } from '#lib/server/admin/sync.js';
+	import { figureAttention } from './site-figures.js';
 	import type { SyncFigures, SyncPlan, SyncRun } from '#lib/sync.js';
 	import { ago, int } from '../metrics.js';
 	import { heldBack, unchecked, updateState } from './view.js';
@@ -8,15 +9,18 @@
 	 * The Overview's "needs a look": the stage's queues (open removal requests, upload screenshots to
 	 * approve, accounts being deleted, uploads still processing, as last counted: sync_meta 'figures'),
 	 * failed render pages (the local queue) and the update itself (one that stopped responding or failed
-	 * a step, a source held back or not reachable). Each links to where it is dealt with.
+	 * a step, a source held back or not reachable), and the figures' own gaps past a threshold (site-figures.ts
+	 * figureAttention: prints with no author, waiting to render, unreadable posts, unused screenshot copies). Each links
+	 * to where it is dealt with.
 	 */
 	let {
 		figures,
 		plan,
 		run,
 		totals,
+		waiting,
 		now
-	}: { figures: SyncFigures | null; plan: SyncPlan | null; run: SyncRun | null; totals: RenderTotals; now: number } = $props();
+	}: { figures: SyncFigures | null; plan: SyncPlan | null; run: SyncRun | null; totals: RenderTotals; waiting: number; now: number } = $props();
 
 	const a = $derived(figures?.attention);
 	const phase = $derived(updateState(run, plan, now));
@@ -28,8 +32,9 @@
 		{ label: 'Upload screenshots to approve', n: a?.screenshots, href: '/admin/screenshots' },
 		{ label: 'Accounts being deleted', n: a?.deleting, href: '/admin/accounts' },
 		{ label: 'Uploads still processing', n: a?.processing, href: '/admin/update' },
-		{ label: 'Render pages failed', n: totals.failed, href: '/admin/render' }
-	]);
+		{ label: 'Render pages failed', n: totals.failed, href: '/admin/render' },
+		...figureAttention(figures, waiting).map((f) => ({ label: f.label, n: f.n, href: f.href, flag: f.flag, detail: f.detail }))
+	] as { label: string; n: number | undefined; href: string; flag?: boolean; detail?: string }[]);
 	const update = $derived(
 		phase === 'running'
 			? { text: 'An update is running', tone: 'run' }
@@ -65,12 +70,15 @@
 			<li>
 				<a
 					href={it.href}
-					class="flex h-full flex-col rounded-lg border px-3 py-2 hover:border-amber-400/60 {it.n ? 'border-amber-700/60 bg-amber-950/20' : 'border-stone-800 bg-stone-900/50'}"
+					class="flex h-full flex-col rounded-lg border px-3 py-2 hover:border-amber-400/60 {(it.flag ?? it.n)
+						? 'border-amber-700/60 bg-amber-950/20'
+						: 'border-stone-800 bg-stone-900/50'}"
 				>
-					<span class="text-xl font-semibold tabular-nums {it.n ? 'text-amber-200' : it.n === 0 ? 'text-stone-500' : 'text-stone-600'}">
+					<span class="text-xl font-semibold tabular-nums {(it.flag ?? it.n) ? 'text-amber-200' : it.n ? 'text-stone-300' : it.n === 0 ? 'text-stone-500' : 'text-stone-600'}">
 						{it.n === undefined ? '—' : it.n === 0 ? 'none' : int(it.n)}
 					</span>
 					<span class="text-xs text-stone-400">{it.label}</span>
+					{#if it.detail}<span class="text-xs text-stone-500">{it.detail}</span>{/if}
 				</a>
 			</li>
 		{/each}

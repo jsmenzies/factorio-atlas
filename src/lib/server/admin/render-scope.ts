@@ -1,9 +1,10 @@
 /**
  * What the offline renders cover, for /admin/render: prints with a 2.0+ page (render_prints.modern),
  * the top-N most-favourited prints (render_favorites, migration 0014) and both together, each by
- * state, from render_jobs, prod uploads and the latest source check (render_source_changes). Pure
+ * state, from render_jobs, prod uploads and the latest source check (render_source_changes). Also the Overview's coverage by the site each print is credited to. Pure
  * SQL and parsing, so the dashboard adds the statements to its one batch and tests can run them.
  */
+import { siteOfPrintIdSql } from '#lib/print-id.js';
 
 /** A print's state in a scope; each print has exactly one. */
 export type ScopeState = 'rendered' | 'left' | 'failed' | 'none';
@@ -44,27 +45,40 @@ export interface RenderScopes {
 }
 
 /**
- * One row per combination of scope membership and state, counted. render_jobs is grouped by print
- * once (its primary key's order, no sort); everything else is joined by primary key.
+ * Per print with render rows: its open, failed, done and old (pre-2.0 skipped) pages, the done pages' bytes, and
+ * whether its record couldn't be decoded (one 'undecodable' row: never a print on the site). Grouped by print once
+ * (render_jobs' primary key's order, no sort).
  */
-const SCOPES_SQL = `WITH jobs AS (
+const JOBS_CTE = `jobs AS (
 	SELECT print_id,
 		sum(status IN ('pending', 'rendering')) AS open,
 		sum(status = 'failed') AS failed,
 		sum(status = 'done') AS done,
 		sum(status = 'done' AND uploaded_at IS NULL) AS not_up,
-		sum(status = 'skipped' AND reason = 'pre-2.0') AS old
+		sum(status = 'skipped' AND reason = 'pre-2.0') AS old,
+		sum(CASE WHEN status = 'done' THEN bytes ELSE 0 END) AS bytes,
+		sum(status = 'skipped' AND reason LIKE 'undecodable%') AS unreadable
 	FROM render_jobs GROUP BY print_id
 ), members AS (
 	SELECT print_id FROM render_prints WHERE modern = 1
 	UNION SELECT print_id FROM render_favorites WHERE in_top = 1
-)
+)`;
+
+/** A print's state as a 2.0+ print, and as a favourite (its pre-2.0 pages count as work), from `jobs` j. */
+const STATE_MODERN = `CASE WHEN j.print_id IS NULL OR j.open > 0 THEN 'left' WHEN j.failed > 0 THEN 'failed' WHEN j.done > 0 THEN 'rendered' ELSE 'none' END`;
+const STATE_TOP = `CASE WHEN j.print_id IS NULL OR j.open > 0 OR j.old > 0 THEN 'left' WHEN j.failed > 0 THEN 'failed' WHEN j.done > 0 THEN 'rendered' ELSE 'none' END`;
+
+/**
+ * One row per combination of scope membership and state, counted. render_jobs is grouped by print
+ * once (its primary key's order, no sort); everything else is joined by primary key.
+ */
+const SCOPES_SQL = `WITH ${JOBS_CTE}
 SELECT
 	coalesce(p.modern, 0) AS modern,
 	p.print_id IS NOT NULL AS seen,
 	coalesce(f.in_top, 0) AS top,
-	CASE WHEN j.print_id IS NULL OR j.open > 0 THEN 'left' WHEN j.failed > 0 THEN 'failed' WHEN j.done > 0 THEN 'rendered' ELSE 'none' END AS state_modern,
-	CASE WHEN j.print_id IS NULL OR j.open > 0 OR j.old > 0 THEN 'left' WHEN j.failed > 0 THEN 'failed' WHEN j.done > 0 THEN 'rendered' ELSE 'none' END AS state_top,
+	${STATE_MODERN} AS state_modern,
+	${STATE_TOP} AS state_top,
 	coalesce(j.done > 0 AND j.not_up = 0, 0) AS up,
 	coalesce(c.print_id IS NOT NULL AND c.checked_at >= p.checked_at, 0) AS updated,
 	count(*) AS n
@@ -163,3 +177,91 @@ export const withStoreWaiting = (scopes: RenderScopes, store: { unseen: number; 
 	});
 	return { ...scopes, modern: add(scopes.modern), union: add(scopes.union) };
 };
+
+/**
+ * Prints credited to another site than the one their id names (sync_meta 'figures' `credit`, read on the stage by
+ * the figures step: a factorioprints id whose blueprint was posted first on codex, say). Empty before the first count.
+ */
+const CREDIT_CTE = `credit AS (
+	SELECT key AS print_id, value AS site
+	FROM json_each(coalesce((SELECT json_extract(value, '$.credit') FROM sync_meta WHERE key = 'figures'), '{}'))
+)`;
+const creditedSite = (col: string) => `coalesce(cr.site, ${siteOfPrintIdSql(col)})`;
+
+/**
+ * Render coverage by the site each print is credited to, for the Overview: every print the queue knows (in scope or
+ * with pages drawn), its union state (a favourite's as a favourite), in scope unless its record couldn't be decoded
+ * (those never became prints), with its drawn pages and their bytes. The same `jobs`, `members` and states as
+ * SCOPES_SQL.
+ */
+export const SITE_SCOPES_SQL = `WITH ${JOBS_CTE}, ${CREDIT_CTE},
+ids AS (SELECT print_id FROM members UNION SELECT print_id FROM jobs)
+SELECT
+	${creditedSite('i.print_id')} AS site,
+	m.print_id IS NOT NULL AND coalesce(j.unreadable, 0) = 0 AS in_scope,
+	CASE WHEN coalesce(f.in_top, 0) = 1 THEN ${STATE_TOP} ELSE ${STATE_MODERN} END AS state,
+	count(*) AS n,
+	coalesce(sum(j.done), 0) AS pages,
+	coalesce(sum(j.bytes), 0) AS bytes
+FROM ids i
+LEFT JOIN members m ON m.print_id = i.print_id
+LEFT JOIN render_favorites f ON f.print_id = i.print_id
+LEFT JOIN jobs j ON j.print_id = i.print_id
+LEFT JOIN credit cr ON cr.print_id = i.print_id
+GROUP BY 1, 2, 3`;
+
+/** STORE_WAITING_SQL by credited site. */
+export const SITE_STORE_WAITING_SQL = `WITH ${CREDIT_CTE},
+store AS (
+	SELECT json_extract(value, '$[0]') AS id, json_extract(value, '$[1]') AS stamp
+	FROM json_each(coalesce((SELECT json_extract(value, '$.modern') FROM sync_meta WHERE key = 'store-prints'), '[]'))
+)
+SELECT
+	${creditedSite('s.id')} AS site,
+	coalesce(sum(p.print_id IS NULL), 0) AS unseen
+FROM store s
+LEFT JOIN render_prints p ON p.print_id = s.id
+LEFT JOIN credit cr ON cr.print_id = s.id
+GROUP BY 1`;
+
+/** One site's render coverage (prints in scope by state, as `union`) and its drawn pages. */
+export interface SiteRender {
+	total: number;
+	rendered: number;
+	none: number;
+	failed: number;
+	left: number;
+	/** Pages drawn, and their bytes on this machine (every print the queue drew, in scope or not). */
+	pages: number;
+	bytes: number;
+}
+
+const emptySite = (): SiteRender => ({ total: 0, rendered: 0, none: 0, failed: 0, left: 0, pages: 0, bytes: 0 });
+
+/** SITE_SCOPES_SQL and SITE_STORE_WAITING_SQL's rows as figures by site; record-store prints never looked at are in scope and left. */
+export function parseSiteScopes(scopes: { results?: unknown[] }, store: { results?: unknown[] }): Record<string, SiteRender> {
+	const out: Record<string, SiteRender> = {};
+	const at = (site: string) => (out[site] ??= emptySite());
+	for (const r of (scopes.results ?? []) as {
+		site: string;
+		in_scope: number;
+		state: ScopeState;
+		n: number;
+		pages: number;
+		bytes: number;
+	}[]) {
+		const f = at(r.site);
+		f.pages += r.pages;
+		f.bytes += r.bytes;
+		if (!r.in_scope) continue;
+		f.total += r.n;
+		f[r.state] += r.n;
+	}
+	for (const r of (store.results ?? []) as { site: string; unseen: number }[]) {
+		if (!r.unseen) continue;
+		const f = at(r.site);
+		f.total += r.unseen;
+		f.left += r.unseen;
+	}
+	return out;
+}

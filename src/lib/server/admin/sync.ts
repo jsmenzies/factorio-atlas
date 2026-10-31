@@ -1,6 +1,6 @@
 /**
  * The admin Overview and Update tabs (local only): the latest updates (`sync_runs`), the saved settings, the last
- * mirror check and stage figures (`sync_meta`), render coverage and the render queue's totals, in
+ * mirror check and stage figures (`sync_meta`), render coverage (also by credited site) and the render queue's totals, in
  * one `db.batch` (see busy.ts for why one).
  */
 import { LIVE_STATES } from '#lib/server/pipeline/runs.js';
@@ -17,7 +17,15 @@ import {
 	type SyncRunRow
 } from '#lib/sync.js';
 import type { RenderRun } from './render.js';
-import { parseScopes, scopeStatements, STORE_WAITING_SQL, withStoreWaiting } from './render-scope.js';
+import {
+	parseScopes,
+	parseSiteScopes,
+	scopeStatements,
+	SITE_SCOPES_SQL,
+	SITE_STORE_WAITING_SQL,
+	STORE_WAITING_SQL,
+	withStoreWaiting
+} from './render-scope.js';
 
 export const SYNC_RUNS_SHOWN = 10;
 
@@ -74,9 +82,11 @@ export const syncOverview = async (db: D1Database, now = Date.now()) => {
 			.bind(...LIVE_STATES, now - RENDER_STALE_MS),
 		db.prepare(`${RENDER_SELECT} ORDER BY started_at DESC LIMIT 1`),
 		db.prepare(STORE_WAITING_SQL),
+		db.prepare(SITE_SCOPES_SQL),
+		db.prepare(SITE_STORE_WAITING_SQL),
 		...scopes
 	]);
-	const [runRows, metaRows, totals, liveRender, latestRender, storeWaiting, ...scopeResults] = results;
+	const [runRows, metaRows, totals, liveRender, latestRender, storeWaiting, siteScopes, siteStore, ...scopeResults] = results;
 	const store = storeWaiting.results[0] as { unseen?: number; changed?: number } | undefined;
 	const waiting = { unseen: Number(store?.unseen ?? 0), changed: Number(store?.changed ?? 0) };
 	const runs: SyncRun[] = (runRows.results as SyncRunRow[]).map(parseSyncRun);
@@ -99,7 +109,9 @@ export const syncOverview = async (db: D1Database, now = Date.now()) => {
 		latestRender: render,
 		/** Record-store prints never rendered (already in `scopes`' total and left) and changed since (in `updated`). */
 		storeWaiting: waiting,
-		scopes: withStoreWaiting(parseScopes(scopeResults), waiting)
+		scopes: withStoreWaiting(parseScopes(scopeResults), waiting),
+		/** Render coverage and drawn pages by the site prints are credited to (the Overview's table). */
+		siteRender: parseSiteScopes(siteScopes, siteStore)
 	};
 };
 

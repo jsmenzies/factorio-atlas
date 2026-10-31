@@ -874,11 +874,11 @@ const steps: StepDef[] = [
 						{ label: 'factorioprints prints without an author name', value: figures.unnamed }
 					]
 				},
-				...(figures.bySource
+				...(figures.sources
 					? [
 							{
 								title: 'prints by source',
-								rows: Object.entries(figures.bySource)
+								rows: Object.entries(figures.sources)
 									.sort(([, x], [, y]) => y.prints - x.prints)
 									.map(([site, c]) => ({ label: site, value: c.prints }))
 							}

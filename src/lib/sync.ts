@@ -495,6 +495,45 @@ export const planTotals = (plan: SyncPlan | null) => {
 	};
 };
 
+/**
+ * One site's prints on the stage (`prints.source`: the site each print is credited to, where its blueprint was posted
+ * first) and the posts we hold from it (`print_sources`).
+ */
+export interface SourceFigures {
+	prints: number;
+	/** Folded copies (`duplicate_of`): pages kept, out of search. */
+	folded: number;
+	/** Analysed with today's analyser (ANALYZER_VERSION). */
+	analysed: number;
+	/** With an author name on the card. */
+	named: number;
+	/** Showing a screenshot (our copy). */
+	shot: number;
+	/** Live posts from this site (`print_sources` not gone), whatever print they are part of. */
+	posts: number;
+	/** Of those, posts whose blueprint is a print credited to another site (shown there as "Also on"). */
+	dupOther: number;
+	/** Posts on this site of a print credited here beyond its first: the site posted the same blueprint again. */
+	dupSame: number;
+	/**
+	 * Posts that never became part of a print: factorioprints' undecodable records (ingest_state 'failed'), a polled
+	 * site's records its ledger says the stage was given but that have no `print_sources` row (refused: unreadable, too
+	 * big or blocked). Null where nothing records them (uploads, factoriobin).
+	 */
+	unreadable: number | null;
+}
+
+/** One of the site's R2 buckets, as Cloudflare's R2 analytics last measured it. */
+export interface R2Bucket {
+	kind: 'renders' | 'screenshots' | 'raw' | 'sprites';
+	name: string;
+	objects: number;
+	bytes: number;
+}
+
+/** The figures step's R2 storage reading: the site's buckets, or why there is none. */
+export type R2Storage = { at: number; buckets: R2Bucket[] } | { at: number; error: string };
+
 /** The stage's counts, read at the end of each update (`bun run sync --figures`). */
 export interface SyncFigures {
 	at: number;
@@ -503,19 +542,22 @@ export interface SyncFigures {
 	/** ingest_state: analysed (by analyzer version) and failed. */
 	analysed: Record<string, number>;
 	failed: number;
-	/** Prints with no author name. */
+	/** factorioprints prints with no author name. */
 	unnamed: number;
 	/** Prints flagged as rendered (print_renders). */
 	rendered: number;
 	/** Screenshot rows by state (copied, dead, removed). */
 	screenshots: Record<string, number>;
-	/** The fields below were added on 2026-10-30: figures counted before then lack them. */
-	/** Prints by the site they are credited to (`prints.source`), and how many of them are folded copies (`duplicate_of`). */
-	bySource?: Record<string, { prints: number; folded: number }>;
-	/** Live sources by site (`print_sources`), joined copies of prints credited elsewhere included. */
-	sourceRecords?: Record<string, number>;
 	/** What needs looking at: open removal requests, upload screenshots to approve, accounts being deleted, uploads still processing. */
 	attention?: { reports: number; screenshots: number; deleting: number; processing: number };
+	/** The fields below were added on 2026-10-31: figures counted before then lack them. */
+	/** By the site prints are credited to (SourceFigures), every site with prints or posts. */
+	sources?: Record<string, SourceFigures>;
+	/** Prints credited to another site than the one their id names (id → site), for the local render coverage by site. */
+	credit?: Record<string, string>;
+	/** Screenshot copies no print shows (the author changed it, or the print is now credited to another site's post). */
+	unusedShots?: number;
+	r2?: R2Storage;
 }
 
 /**
