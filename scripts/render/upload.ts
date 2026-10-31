@@ -4,8 +4,9 @@
  * reads that bucket.
  *
  * The unit of work is a print: syncing one brings the bucket in line with its render_jobs rows.
- * Per page: its tiles not in the bucket yet, `<page>.<stamp>.avif` and `<page>.page.json`, all at
- * once, then `<page>.json` (the sidecar) once they are all up. Then the print's `index.json`,
+ * Per page: its tiles not in the bucket yet and `<page>.<stamp>.avif`, all at once; once they are
+ * all up (and any tile another page sends), `<page>.page.json`, then `<page>.json` (the sidecar),
+ * both rewritten in place. Then the print's `index.json`,
  * rebuilt from the pages whose files are up, then (scheduling a re-rendered page's previous
  * overview for deletion) the render_uploads rows of the pages it newly lists. The index goes up
  * once the print's pages are done, and in between at most every `indexEveryMs` (a big book shows
@@ -134,10 +135,8 @@ export const hasUploadWork = (plan: PrintPlan) => plan.upload.length > 0 || plan
 export const remoteIndex = (listed: Pick<UploadRow, 'path' | 'stamp'>[]) =>
 	buildIndex(listed.filter((u) => u.stamp).map((u) => ({ path: u.path, stamp: u.stamp, overview: overviewFile(u.path, u.stamp!) })));
 
-/** Objects this uploader puts under `<id>/`, including overviews named `<base>.avif` before they carried the stamp. */
-const OURS = /^(?:(?:root|\d+(?:\/\d+)*)(?:\.(?:[0-9a-f]{10}\.)?avif|\.json|\.page\.json)|t\/[0-9a-f]{16}\.avif|index\.json)$/;
-/** A page's overview under its old, unstamped name. */
-const legacyOverview = (path: string) => `${pageBase(path)}.avif`;
+/** Objects this uploader puts under `<id>/`. */
+const OURS = /^(?:(?:root|\d+(?:\/\d+)*)(?:\.[0-9a-f]{10}\.avif|\.json|\.page\.json)|t\/[0-9a-f]{16}\.avif|index\.json)$/;
 
 export interface UploaderDb {
 	jobsOf(printId: string): Promise<UploadJob[]>;
@@ -197,19 +196,13 @@ export interface UploadStats {
 	/** Objects put (index rewrites not counted) and their bytes. */
 	files: number;
 	bytes: number;
-	/** Tiles that were in the bucket already. */
-	reused: number;
 	/** Objects deleted from the bucket (due deletions, and emptied indexes). */
 	deleted: number;
-	/** Keys put into render_deletes, and pending deletions dropped because a page uses the key again. */
+	/** Keys put into render_deletes. */
 	deletesScheduled: number;
 	/** Pages put at a new stamp over an older one in the bucket, and pages dropped from the index. */
 	replaced: number;
 	removed: number;
-	deletesCancelled: number;
-	indexes: number;
-	/** Sweeps of unused objects put off because the bucket holds older versions of some pages. */
-	sweepsDeferred: number;
 	lastError: string | null;
 }
 
@@ -280,14 +273,10 @@ export function createUploader(opts: UploaderOptions) {
 		pages: 0,
 		files: 0,
 		bytes: 0,
-		reused: 0,
 		deleted: 0,
 		deletesScheduled: 0,
 		replaced: 0,
 		removed: 0,
-		deletesCancelled: 0,
-		indexes: 0,
-		sweepsDeferred: 0,
 		lastError: null
 	};
 	/** Rows in render_deletes for the target: counted by processDeletes, kept up to date in between. */
@@ -473,7 +462,6 @@ export function createUploader(opts: UploaderOptions) {
 			for (const k of hit) ctx.pending.add(k);
 			throw e;
 		}
-		stats.deletesCancelled += hit.length;
 		deletesPending = Math.max(0, deletesPending - hit.length);
 	}
 
@@ -492,7 +480,6 @@ export function createUploader(opts: UploaderOptions) {
 			await del(`${id}/index.json`);
 			remote.delete(`${id}/index.json`);
 		}
-		stats.indexes++;
 	}
 
 	/** The page's sidecar on disk, checked against its render_jobs row. */
@@ -644,14 +631,8 @@ export function createUploader(opts: UploaderOptions) {
 	async function listPage(id: string, up: PageUp, before: string | null | undefined, ctx: PrintCtx) {
 		const { job, row } = up;
 		if (before && before !== row.stamp) stats.replaced++;
-		await deleteLater(
-			id,
-			[before ? overviewFile(job.path, before) : null, legacyOverview(job.path)].filter(
-				(rel): rel is string => !!rel && rel !== up.overview && ctx.remote.has(`${id}/${rel}`)
-			),
-			'replaced',
-			ctx
-		);
+		const old = before ? overviewFile(job.path, before) : null;
+		await deleteLater(id, old && old !== up.overview && ctx.remote.has(`${id}/${old}`) ? [old] : [], 'replaced', ctx);
 		await db.recordUpload(row);
 		const files = row.files ?? 0;
 		const bytes = row.bytes ?? 0;
@@ -659,7 +640,6 @@ export function createUploader(opts: UploaderOptions) {
 		pageWindow.add(1);
 		stats.files += files;
 		stats.bytes += bytes;
-		stats.reused += up.reused;
 		opts.onPageUp?.(id, files, bytes);
 		log(`  ↑ ${id} ${pageBase(job.path).padEnd(6)} ${files} files, ${mb(bytes)} (${up.reused} tiles already up)`);
 	}
@@ -693,7 +673,6 @@ export function createUploader(opts: UploaderOptions) {
 		const { names, tiles, behind } = await usedKeys(id, listed);
 		if (!tiles) {
 			if ([...remote].some((k) => k.startsWith(`${id}/t/`))) {
-				stats.sweepsDeferred++;
 				log(`  upload: ${id}: unused objects (if any) stay until page ${pageBase(behind!)} is up at its current version`);
 			}
 			return;
@@ -829,7 +808,6 @@ export function createUploader(opts: UploaderOptions) {
 				if (!ctx.indexCurrent) await writeIndex(id, listed, ctx.remote);
 				const files = plan.orphans.flatMap((u) => [
 					...(u.stamp ? [overviewFile(u.path, u.stamp)] : []),
-					legacyOverview(u.path),
 					pageDataFile(u.path),
 					sidecarFile(u.path)
 				]);
@@ -893,7 +871,6 @@ export function createUploader(opts: UploaderOptions) {
 		await db.dropDeletes(target, [...drop, ...done]);
 		tally.deleted += done.length;
 		tally.dropped += drop.length;
-		stats.deletesCancelled += drop.length;
 	}
 
 	/**

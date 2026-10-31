@@ -1,11 +1,9 @@
 /**
  * The runner's own file work under <renders dir>/<id>/ (RENDERS_DIR, else data/renders): index.json (from render_jobs), reading a
- * page's sidecar back, the page data of pages rendered before it existed, renaming overviews made
- * before they carried the stamp, removing pages a print no longer has, and deleting tiles and
- * overviews no sidecar uses.
+ * page's sidecar back, the page data of pages rendered before it existed, removing pages a print no
+ * longer has, and deleting tiles and overviews no sidecar uses.
  */
-import { existsSync } from 'node:fs';
-import { readdir, readFile, rename, rm, stat } from 'node:fs/promises';
+import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
 	overviewFile,
@@ -71,24 +69,8 @@ export async function writePageData(outDir: string, id: string, sc: RenderSideca
 	return bytes;
 }
 
-/** An overview file in a print's folder or a book folder: `<base>.<stamp>.avif`, or `<base>.avif` from before stamps. */
-const OVERVIEW_NAME = /^(?:root|\d+)(?:\.[0-9a-f]{10})?\.avif$/;
-
-/**
- * A page rendered before overviews carried the stamp: rename `<base>.avif` to `<base>.<stamp>.avif`
- * and point the sidecar at it, without redrawing (same input key). Returns the updated sidecar, or
- * the same one when it's current. Safe to repeat after a crash in between.
- */
-export async function renameOverview(outDir: string, id: string, sc: RenderSidecar): Promise<RenderSidecar> {
-	const want = overviewFile(sc.path, sc.stamp);
-	if (sc.overview.file === want) return sc;
-	const from = join(outDir, id, sc.overview.file);
-	if (existsSync(from)) await rename(from, join(outDir, id, want));
-	else if (!existsSync(join(outDir, id, want))) throw new Error(`${id}/${sc.overview.file}: overview missing`);
-	const next: RenderSidecar = { ...sc, overview: { ...sc.overview, file: want } };
-	await writeAtomic(join(outDir, id, sidecarFile(sc.path)), JSON.stringify(next));
-	return next;
-}
+/** An overview file in a print's folder or a book folder: `<base>.<stamp>.avif`. */
+const OVERVIEW_NAME = /^(?:root|\d+)\.[0-9a-f]{10}\.avif$/;
 
 /** A page the print no longer has: its overviews, page data and sidecar go (its tiles go with the next sweep). */
 export async function removePage(outDir: string, id: string, path: string) {

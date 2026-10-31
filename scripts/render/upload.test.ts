@@ -325,7 +325,6 @@ describe('uploader', () => {
 		expect(store.calls.filter((c) => c.startsWith('DELETE'))).toEqual([]);
 		expect([...db.deletes.keys()]).toEqual([`${ID}/1.bbbbbbbbbb.avif`]);
 		expect(store.objects.has(`${ID}/1.bbbbbbbbbb.avif`)).toBe(true);
-		expect(v.stats.sweepsDeferred).toBe(1);
 		// What the --flags step's page-cache bump goes by.
 		expect(v.stats).toMatchObject({ replaced: 1, removed: 0 });
 		expect(u.stats).toMatchObject({ replaced: 0, removed: 0 });
@@ -428,7 +427,6 @@ describe('uploader', () => {
 		w.schedule(ID);
 		await w.drain();
 		expect(store.calls).not.toContain(`PUT ${ID}/t/${H(1)}.avif`);
-		expect(w.stats.deletesCancelled).toBe(2);
 		expect([...db.deletes.keys()].sort()).toEqual([`${ID}/root.${B}.avif`, `${ID}/t/${H(2)}.avif`].sort());
 
 		const x = uploader(store, db, { now: () => 20_000 + DELETE_GRACE_MS });
@@ -517,25 +515,6 @@ describe('uploader', () => {
 		expect(store.objects.has(`${ID}/1.json`)).toBe(true);
 		await later().processDeletes();
 		expect([...store.objects.keys()]).toEqual([]);
-	});
-
-	test('an overview uploaded under its old unstamped name is replaced and deleted later', async () => {
-		await renderPage('', A, [H(1)]);
-		const store = fakeStore();
-		const db = fakeDb([job('', A)]);
-		const u = uploader(store, db);
-		u.schedule(ID, 1);
-		await u.drain();
-		// As if uploaded before stamps: the bucket has root.avif, and the row was marked stale by the rename.
-		store.objects.set(`${ID}/root.avif`, { body: new Uint8Array([1]), type: 'image/avif', cacheControl: '' });
-		db.uploads.get(`local\n${ID}\n`)!.stale = 1;
-		const v = uploader(store, db);
-		v.schedule(ID);
-		await v.drain();
-		expect(store.objects.has(`${ID}/root.avif`)).toBe(true);
-		await uploader(store, db, { now: () => 10_000_000 }).processDeletes();
-		expect(store.objects.has(`${ID}/root.avif`)).toBe(false);
-		expect(store.objects.has(`${ID}/root.${A}.avif`)).toBe(true);
 	});
 
 	test('deletions retry like uploads, and a stop leaves the rest due', async () => {
@@ -734,7 +713,7 @@ describe('uploader: pages at once', () => {
 			expect(c.store.objects.get(k)?.body).toEqual(o.body);
 		}
 		expect(rowsOf(db)).toEqual(rowsOf(oneDb));
-		expect(u.stats).toMatchObject({ pages: 6, files: serial.stats.files, bytes: serial.stats.bytes, reused: serial.stats.reused });
+		expect(u.stats).toMatchObject({ pages: 6, files: serial.stats.files, bytes: serial.stats.bytes });
 		expect(ups.reduce((n, [, f]) => n + f, 0)).toBe(u.stats.files);
 		expect(u.pending).toBe(0);
 		expect(u.failing).toBe(0);
@@ -885,7 +864,6 @@ describe('uploader: pages at once', () => {
 		expect(v.stats.pages).toBe(6);
 		// The tiles made it up the first time: only each page's overview, page data and sidecar go again.
 		expect(store.calls.filter((x) => x.includes('/t/'))).toEqual([]);
-		expect(v.stats.reused).toBe(6 * 3 + 3);
 	});
 });
 

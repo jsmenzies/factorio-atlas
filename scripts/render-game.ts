@@ -140,7 +140,7 @@ import type { RenderDb } from '@rickyzhangca/fpsr';
 import { localAssets } from '@rickyzhangca/fpsr/node';
 import { getPlatformProxy } from 'wrangler';
 import { gameCatalog } from '#lib/viewer/catalog.server.js';
-import { overviewFile, PAGE_DATA_VERSION, pageBase } from '#lib/viewer/game-render.js';
+import { PAGE_DATA_VERSION, pageBase } from '#lib/viewer/game-render.js';
 import { newRunId, type RunControl } from '#lib/server/pipeline/runs.js';
 import { loadRemovedPrintIds } from '#lib/server/removal-blocks.js';
 import { RENDER_HEARTBEAT_MS, type RenderJobRow, type RenderRunPhase } from '#lib/server/render-queue.js';
@@ -157,7 +157,7 @@ import {
 	type RecordedOptions,
 	type RenderArgs
 } from './render/args.js';
-import { readSidecar, removePage, renameOverview, sweepTiles, writeIndex, writePageData } from './render/files.js';
+import { readSidecar, removePage, sweepTiles, writeIndex, writePageData } from './render/files.js';
 import { childWorkerd, stopOrphanedWorkerd } from './render/orphans.js';
 import { admit, maxWorkers, memEstimateMb, pagePeakMb, readMeminfo, type Admission, type WorkerMemory } from './render/memory.js';
 import { createPool, type Outcome, type Pool, type Slot } from './render/pool.js';
@@ -578,8 +578,6 @@ let noPagesLeftOut = 0;
 const preModernFavorites = { prints: 0, pages: 0 };
 /** Pages rendered before page data existed (or an older PAGE_DATA_VERSION) that got it now, without redrawing. */
 let pageDataWritten = 0;
-/** Overviews named `<base>.avif` (before stamps) renamed to `<base>.<stamp>.avif`, without redrawing. */
-let overviewsRenamed = 0;
 
 const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
 
@@ -878,21 +876,9 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		}
 		// A resumed --force redraws only what the forced run left pending.
 		const forced = forceAll || (forcePending && (old?.status === 'pending' || old?.status === 'rendering'));
-		let sc = forced ? null : await readSidecar(OUT_DIR, id, page.path);
+		const sc = forced ? null : await readSidecar(OUT_DIR, id, page.path);
 		// A drawn page is measured against the assets that drew it, not the current ones (drawnKey).
 		const kept = sc && sc.assets.id !== assets.id ? drawnKey(prep.json, sc.assets.id, assets) : key;
-		if (sc && !planOnly && sc.inputKey === kept && sc.overview.file !== overviewFile(page.path, sc.stamp)) {
-			// Rendered before overviews carried the stamp: renamed, no redraw. Buckets need the new
-			// name (marked first, so a crash in between only re-sends the page). No overview: drawn again.
-			try {
-				await queue.markStale(id, page.path);
-				sc = await renameOverview(OUT_DIR, id, sc);
-				overviewsRenamed++;
-			} catch (e) {
-				log(`  ${id} ${pageBase(page.path)}: ${e instanceof Error ? e.message : e}; rendering it again`);
-				sc = null;
-			}
-		}
 		if (sc && sc.inputKey === kept) {
 			run.done++;
 			run.unchanged++;
@@ -1414,7 +1400,6 @@ try {
 				: '') +
 			(topPicked.length ? `\n  top list: ${topPicked.length} prints first in the selection` : '') +
 			(pageDataWritten ? `; page data ${planOnly ? 'to write' : 'written'} for ${pageDataWritten} pages rendered before it existed` : '') +
-			(overviewsRenamed ? `; ${overviewsRenamed} overviews renamed to carry their stamp` : '') +
 			(batch ? `\n  batch: ${batch.picked.length} of ${batch.next} prints picked; about ${batch.left} prints may have work after it` : '') +
 			(uploader ? `\n  ${uploader.pending} rendered pages to upload so far` : '')
 	);
