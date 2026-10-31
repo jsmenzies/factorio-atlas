@@ -230,13 +230,15 @@ GROUP BY 1`;
  * favourite's renders stay). Records no run has looked at and undecodable ones (modern = 1, one 'undecodable' row)
  * never land here.
  */
-export const SITE_OLDER_SQL = `WITH ${CREDIT_CTE}
+export const SITE_OLDER_SQL = `WITH ${CREDIT_CTE},
+drawn AS (SELECT DISTINCT print_id FROM render_jobs WHERE status = 'done')
 SELECT ${creditedSite('p.print_id')} AS site, count(*) AS n
 FROM render_prints p
 LEFT JOIN render_favorites f ON f.print_id = p.print_id
 LEFT JOIN credit cr ON cr.print_id = p.print_id
 WHERE p.modern = 0 AND coalesce(f.in_top, 0) = 0
-	AND NOT EXISTS (SELECT 1 FROM render_jobs j WHERE j.print_id = p.print_id AND j.status = 'done')
+	-- Drawn prints once, as a list: a NOT EXISTS per print searched every done row (render_jobs has no print_id index).
+	AND p.print_id NOT IN (SELECT print_id FROM drawn)
 GROUP BY 1`;
 
 /** One site's render coverage (prints in scope by state, as `union`) and its drawn pages. */
