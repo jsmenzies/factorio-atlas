@@ -37,6 +37,7 @@
 import { appendFileSync, existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { chunks, runBatches } from '#lib/server/d1-batch.js';
 import type { RunState } from '#lib/server/pipeline/runs.js';
 import { rendersDir, thumbsDir } from '#lib/server/renders-dir.js';
 import { insertBlocks, loadBlocks } from '#lib/server/removal-blocks.js';
@@ -166,8 +167,7 @@ try {
 	const rowCounts = new Map<string, number>();
 	for (const table of tables) {
 		let count = 0;
-		for (let i = 0; i < ids.length; i += 50) {
-			const chunk = ids.slice(i, i + 50);
+		for (const chunk of chunks(ids, 50)) {
 			const row = await ldb
 				.prepare(`SELECT count(*) AS c FROM ${table} WHERE ${where}print_id IN (${chunk.map(() => '?').join(', ')})`)
 				.bind(...chunk)
@@ -203,13 +203,12 @@ try {
 			...changes.drop.map((b) => ldb.prepare('DELETE FROM removal_blocks WHERE kind = ? AND value = ?').bind(b.kind, b.value)),
 			...insertBlocks(ldb, changes.add)
 		];
-		for (let i = 0; i < stmts.length; i += 50) await ldb.batch(stmts.slice(i, i + 50));
+		await runBatches(ldb, stmts, 50);
 		checkpoint();
 
 		for (const table of rowCounts.keys()) {
-			for (let i = 0; i < ids.length; i += 50) {
+			for (const chunk of chunks(ids, 50)) {
 				checkpoint();
-				const chunk = ids.slice(i, i + 50);
 				await ldb
 					.prepare(`DELETE FROM ${table} WHERE ${where}print_id IN (${chunk.map(() => '?').join(', ')})`)
 					.bind(...chunk)
@@ -270,10 +269,10 @@ try {
 			}
 		} else {
 			// Nothing remote to sweep for the local stage: its rows are all there is.
-			for (let i = 0; i < fresh.length; i += 50) {
+			for (const chunk of chunks(fresh, 50)) {
 				checkpoint();
-				await ldb.batch(fresh.slice(i, i + 50).map((t) => sweptStatement(ldb, t.print_id, t.at)));
-				result.newlySwept += Math.min(50, fresh.length - i);
+				await ldb.batch(chunk.map((t) => sweptStatement(ldb, t.print_id, t.at)));
+				result.newlySwept += chunk.length;
 			}
 		}
 		report(

@@ -128,8 +128,8 @@ export const syncViews = async (
 		db.prepare(`SELECT COUNT(*) AS n FROM prints WHERE id IN (${ids.map(() => '?').join(', ')})`).bind(...ids)
 	);
 	let known = 0;
-	for (let i = 0; i < counts.length; i += size) {
-		for (const r of await db.batch<{ n: number }>(counts.slice(i, i + size))) known += r.results?.[0]?.n ?? 0;
+	for (const batch of chunks(counts, size)) {
+		for (const r of await db.batch<{ n: number }>(batch)) known += r.results?.[0]?.n ?? 0;
 	}
 	let rowsWritten = 0;
 	if (!options.dryRun) {

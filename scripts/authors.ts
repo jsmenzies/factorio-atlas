@@ -35,6 +35,7 @@ import {
 	recordNames,
 	unknownAuthors
 } from '#lib/server/pipeline/authors.js';
+import { runBatches } from '#lib/server/d1-batch.js';
 import { confirmProd, fail, n, openStage, parseStageArgs, requireSchema, runOn } from './stage-command';
 import { errorText } from '#lib/error-text.js';
 
@@ -102,7 +103,7 @@ await runOn(target, async () => {
 		await confirmProd(stage, flags.yes, 'Write names to PROD?');
 		const known: [string, string | null][] = cached.map((id) => [id, cache.get(id) ?? null]);
 		const first = [...authorRowStatements(db, seeded, 'record'), ...authorRowStatements(db, known, 'firebase')];
-		for (let i = 0; i < first.length; i += 50) await db.batch(first.slice(i, i + 50));
+		await runBatches(db, first, 50);
 		for (const [id, name] of [...seeded, ...known]) state.authors.set(id, name);
 
 		// One lookup at a time, no faster than `rate`; answers are saved every 50 and at the end.
