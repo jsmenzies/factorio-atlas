@@ -21,7 +21,6 @@ import { byPrint } from './scope.js';
 import { planPrint, type UploadJob, type UploadRow } from './upload.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
-export const LOCAL_D1_DIR = join(ROOT, '.wrangler', 'state', 'v3', 'd1', 'miniflare-D1DatabaseObject');
 export const RENDERS_DIR = rendersDir(ROOT);
 export const THUMBS_DIR = thumbsDir(ROOT);
 
@@ -41,14 +40,6 @@ export function mergePages(...sources: Map<string, number>[]): Map<string, numbe
 	const out = new Map<string, number>();
 	for (const s of sources) for (const [id, n] of s) if (n > 0) out.set(id, Math.max(out.get(id) ?? 0, n));
 	return out;
-}
-
-/** The local D1's SQLite file (the one miniflare keeps for DB), or null when there is none. */
-export function localD1File(dir = LOCAL_D1_DIR): string | null {
-	if (!existsSync(dir)) return null;
-	const files = readdirSync(dir).filter((f) => f.endsWith('.sqlite') && f !== 'metadata.sqlite');
-	if (files.length > 1) throw new Error(`more than one D1 database in ${dir}: ${files.join(', ')}`);
-	return files[0] ? join(dir, files[0]) : null;
 }
 
 /** render_jobs and `target`'s render_uploads rows from the local D1 file, read-only. */

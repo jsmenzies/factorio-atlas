@@ -11,12 +11,12 @@ import { bumpPageVersion } from '#lib/server/page-cache.js';
 import { planSize, syncRenderFlags, type RenderCover } from '#lib/server/pipeline/render-flags.js';
 import { loadRemovedPrintIds } from '#lib/server/removal-blocks.js';
 import { openTarget, type Stage, type Target } from '../backfill/stage.js';
+import { localD1File } from '../local-d1.js';
 import { n, requireSchema } from '../stage-command.js';
 import {
 	coversFrom,
 	diskPages,
 	diskThumbs,
-	localD1File,
 	mergePages,
 	readThumbUploads,
 	readUploads,
@@ -47,7 +47,7 @@ export const needsPageBump = (c: PageChanges) => c.replaced > 0 || c.removed > 0
 export async function flagInputs(
 	stage: Stage
 ): Promise<{ wanted: Map<string, number>; covers: Map<string, RenderCover>; summary: string[] }> {
-	const file = localD1File();
+	const file = localD1File({ onlyOne: true });
 	if (!file) throw new Error('no local D1 database (.wrangler/state): run `bun run db:migrate`, and render with --upload first');
 	const { jobs, uploads } = readUploads(file, stage);
 	const thumbs = readThumbUploads(file, stage);

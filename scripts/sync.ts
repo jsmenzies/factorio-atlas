@@ -105,7 +105,8 @@ import { recordsDir } from './records/store';
 import { scanStorePrints, STORE_SCOPE_CACHE } from './render/store-scope';
 import { cloneSource } from './render/source';
 import { confirmProd, fail, n } from './stage-command';
-import { localDbFile, openLocalDb } from './sync/local-db';
+import { localD1File } from './local-d1';
+import { openLocalDb } from './sync/local-db';
 import { holdSharedStage } from './sync/shared-stage';
 import { MIRROR_SITE, mirrorSource, type SourceAdapter } from './sync/mirror';
 import { failureLine, lastJsonLine, lastLine } from './sync/output';
@@ -177,7 +178,7 @@ if ([flags.plan, flags.figures, flags.accept !== undefined, flags['top-preview']
 	fail(`pick one of --plan, --accept, --figures and --top-preview\n${USAGE}`);
 
 const clone = process.env.RENDER_CLONE_DIR || join(homedir(), 'data', 'factorio-mirror');
-const dbFile = localDbFile(ROOT) ?? fail('no local D1 database: run `bun run db:migrate`');
+const dbFile = localD1File({ root: ROOT }) ?? fail('no local D1 database: run `bun run db:migrate`');
 const local = openLocalDb(dbFile);
 const db = local.db;
 await db

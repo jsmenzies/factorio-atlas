@@ -35,12 +35,12 @@ import { LIVE_STATES } from '#lib/server/pipeline/runs.js';
 import { RENDER_STALE_MS } from '#lib/server/render-queue.js';
 import { rendersDir } from '#lib/server/renders-dir.js';
 import { LIVE_SYNC_WHERE, liveSyncParams } from '#lib/server/sync.js';
+import { localD1File } from '../local-d1.js';
 import { defaultAssets } from './assets-dir.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 /** The run logs, in the renders folder (RENDERS_DIR from .env or the environment; set in configResolved). */
 let LOG_DIR = join(rendersDir(ROOT), 'logs');
-const D1_DIR = join(ROOT, '.wrangler', 'state', 'v3', 'd1', 'miniflare-D1DatabaseObject');
 const LOG_NAME = /^render-[0-9TZ-]+\.log$/;
 /** SQLite's lock errors: a run writing to the database at that moment. */
 const LOCKED = /SQLITE_BUSY|database is locked/i;
@@ -179,17 +179,12 @@ type LiveRun = { id: string; state: string; pid?: number };
 
 /** The newest live run in the local D1 (read-only), null when there is none, or 'busy' when a run's writes kept it locked. */
 async function liveRun(): Promise<LiveRun | null | 'busy'> {
-	let file: string | undefined;
-	try {
-		file = readdirSync(D1_DIR).find((f) => f.endsWith('.sqlite') && f !== 'metadata.sqlite');
-	} catch {
-		return null;
-	}
+	const file = localD1File({ root: ROOT });
 	if (!file) return null;
 	const { DatabaseSync } = await import('node:sqlite');
 	let db: InstanceType<typeof DatabaseSync>;
 	try {
-		db = new DatabaseSync(join(D1_DIR, file), { readOnly: true, timeout: BUSY_TIMEOUT_MS });
+		db = new DatabaseSync(file, { readOnly: true, timeout: BUSY_TIMEOUT_MS });
 	} catch (e) {
 		return LOCKED.test(String(e)) ? 'busy' : null;
 	}
@@ -224,17 +219,11 @@ async function liveRun(): Promise<LiveRun | null | 'busy'> {
  * refresh the top N and start a render run themselves, so this panel's do neither meanwhile.
  */
 async function liveSync(): Promise<{ id: string } | null | 'busy'> {
-	const file = (() => {
-		try {
-			return readdirSync(D1_DIR).find((f) => f.endsWith('.sqlite') && f !== 'metadata.sqlite');
-		} catch {
-			return undefined;
-		}
-	})();
+	const file = localD1File({ root: ROOT });
 	if (!file) return null;
 	const { DatabaseSync } = await import('node:sqlite');
 	try {
-		const db = new DatabaseSync(join(D1_DIR, file), { readOnly: true, timeout: BUSY_TIMEOUT_MS });
+		const db = new DatabaseSync(file, { readOnly: true, timeout: BUSY_TIMEOUT_MS });
 		try {
 			return (
 				(db.prepare(`SELECT id FROM sync_runs WHERE ${LIVE_SYNC_WHERE} LIMIT 1`).get(...liveSyncParams()) as { id: string } | undefined) ??

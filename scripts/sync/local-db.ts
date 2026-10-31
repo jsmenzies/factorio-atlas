@@ -4,23 +4,11 @@
  * and a render run; a write that meets theirs waits up to BUSY_TIMEOUT_MS.
  */
 import { Database } from 'bun:sqlite';
-import { readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { d1FromSqlite } from '#lib/server/pipeline/d1-sqlite.js';
 import { LIVE_SYNC_WHERE, liveSyncParams, SYNC_RUN_ENV } from '#lib/server/sync.js';
+import { localD1File } from '../local-d1';
 
 const BUSY_TIMEOUT_MS = 10_000;
-
-/** The miniflare file under `root`, or null when `bun run db:migrate` hasn't made one. */
-export const localDbFile = (root: string): string | null => {
-	const dir = join(root, '.wrangler', 'state', 'v3', 'd1', 'miniflare-D1DatabaseObject');
-	try {
-		const file = readdirSync(dir).find((f) => f.endsWith('.sqlite') && f !== 'metadata.sqlite');
-		return file ? join(dir, file) : null;
-	} catch {
-		return null;
-	}
-};
 
 /** `db` for ordinary reads and writes; `sqlite` for the few that need a transaction of their own. */
 export const openLocalDb = (file: string): { db: D1Database; sqlite: Database; close: () => void } => {
@@ -34,7 +22,7 @@ export const openLocalDb = (file: string): { db: D1Database; sqlite: Database; c
  * steps carry SYNC_RUN_ENV); null when there is none, no local D1, or no sync tables yet.
  */
 export const otherLiveUpdate = (root: string, env: Record<string, string | undefined> = process.env, now = Date.now()): string | null => {
-	const file = localDbFile(root);
+	const file = localD1File({ root });
 	if (!file) return null;
 	const sqlite = new Database(file);
 	try {
