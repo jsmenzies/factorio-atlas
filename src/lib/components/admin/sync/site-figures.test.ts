@@ -32,6 +32,7 @@ const figures = (sources: Record<string, SourceFigures>, more: Partial<SyncFigur
 describe('the Overview’s table by source', () => {
 	const f = figures({
 		upload: src({ prints: 1, analysed: 1, named: 1, shot: 1, posts: 1 }),
+		codex: src({ unreadable: 0 }),
 		fprints: src({ prints: 405, analysed: 405, named: 0, shot: 366, posts: 430, dupOther: 20, dupSame: 5, unreadable: 2 }),
 		factorioprints: src({
 			prints: 18026,
@@ -71,6 +72,15 @@ describe('the Overview’s table by source', () => {
 		expect(table.total.render).toMatchObject({ total: 5768, rendered: 5433, left: 1, pages: 60624 });
 	});
 
+	test('a site whose unreadable posts aren’t known here: the total and the tile say so', () => {
+		const g = figures({ factorioprints: src({ prints: 1, unreadable: 3 }), codex: src({ prints: 1 }) });
+		expect(siteTable(g, {})!.rows.map((r) => r.unreadable)).toEqual([3, null]);
+		expect(siteTable(g, {})!.total.unreadable).toBeNull();
+		expect(figureAttention(g, 0).find((i) => i.key === 'unreadable')).toMatchObject({ n: undefined, flag: false });
+		// Sites nothing records them for count 0.
+		expect(siteTable(figures({ factoriobin: src({ prints: 1 }) }), {})!.total.unreadable).toBe(0);
+	});
+
 	test('no table before the figures had sources', () => {
 		expect(siteTable(figures({}, { sources: undefined }), {})).toBeNull();
 	});
@@ -94,7 +104,8 @@ describe('R2 storage', () => {
 			{ kind: 'renders', name: 'r', objects: 4, bytes: 200e9 },
 			{ kind: 'raw', name: 'w', objects: 1, bytes: 4e9 }
 		]);
-		expect(p).toMatchObject({ objects: 5, bytes: 204e9 });
+		expect(p).toMatchObject({ objects: 5, bytes: 204e9, missing: 0 });
+		expect(r2Panel([{ kind: 'sprites', name: 's', objects: null, bytes: null }])).toMatchObject({ objects: 0, bytes: 0, missing: 1 });
 		expect(p.dollars).toBeCloseTo(3.06);
 		const rows = siteTable(figures({ factorioprints: src({}), codex: src({}) }), {
 			factorioprints: render({ bytes: 3 }),

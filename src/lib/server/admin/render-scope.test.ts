@@ -136,8 +136,7 @@ describe('render coverage by credited site (the Overview)', () => {
 		seen.run('-FORMERAAAAAAAAAAAAA', 's', 0, 10);
 		job.run('-FORMERAAAAAAAAAAAAA', '', 'done', null, 1);
 		fav.run('-FORMERAAAAAAAAAAAAA', 1, 50, 0);
-		const figures = { credit: { [CODEX_FIRST]: 'codex' } };
-		sqlite.query(`INSERT INTO sync_meta (key, value, updated_at) VALUES ('figures', ?, 1)`).run(JSON.stringify(figures));
+		sqlite.query(`INSERT INTO sync_meta (key, value, updated_at) VALUES ('credit', ?, 1)`).run(JSON.stringify({ [CODEX_FIRST]: 'codex' }));
 		// The record store: a codex print never looked at.
 		sqlite
 			.query(`INSERT INTO sync_meta (key, value, updated_at) VALUES ('store-prints', ?, 1)`)

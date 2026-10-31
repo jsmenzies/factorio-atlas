@@ -263,7 +263,7 @@ export interface AdmittedLedger {
 	records: Record<string, string>;
 }
 
-const ledgerFile = (inbox: string, site: string, stage: string) => join(inbox, site, `.admitted.${stage}.json`);
+export const ledgerFile = (inbox: string, site: string, stage: string) => join(inbox, site, `.admitted.${stage}.json`);
 
 export async function readLedger(inbox: string, site: string, stage: string): Promise<AdmittedLedger> {
 	try {

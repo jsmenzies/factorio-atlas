@@ -7,7 +7,7 @@ const answer = (rows: { name: string; at: string; objects: number; bytes: number
 			accounts: [
 				{
 					r2StorageAdaptiveGroups: rows.map((r) => ({
-						max: { objectCount: r.objects, payloadSize: r.bytes },
+						max: { objectCount: r.objects, payloadSize: r.bytes, metadataSize: 1 },
 						dimensions: { bucketName: r.name, datetime: r.at }
 					}))
 				}
@@ -29,7 +29,7 @@ describe('R2 storage for the Overview', () => {
 		]);
 	});
 
-	test('each bucket’s latest point; other buckets ignored; a bucket with no point is 0', () => {
+	test('each bucket’s latest point, data plus metadata; other buckets ignored; a bucket with no point has no reading', () => {
 		const got = parseR2Storage(
 			answer([
 				{ name: 'factorio-prints-prod-renders', at: '2026-10-31T11:00:00Z', objects: 10, bytes: 100 },
@@ -40,10 +40,10 @@ describe('R2 storage for the Overview', () => {
 			wanted
 		);
 		expect(got).toEqual([
-			{ kind: 'renders', name: 'factorio-prints-prod-renders', objects: 12, bytes: 120 },
-			{ kind: 'screenshots', name: 'factorio-prints-prod-screenshots', objects: 0, bytes: 0 },
-			{ kind: 'raw', name: 'factorio-prints-prod-raw', objects: 3, bytes: 30 },
-			{ kind: 'sprites', name: 'factorio-prints-sprites', objects: 0, bytes: 0 }
+			{ kind: 'renders', name: 'factorio-prints-prod-renders', objects: 12, bytes: 121 },
+			{ kind: 'screenshots', name: 'factorio-prints-prod-screenshots', objects: null, bytes: null },
+			{ kind: 'raw', name: 'factorio-prints-prod-raw', objects: 3, bytes: 31 },
+			{ kind: 'sprites', name: 'factorio-prints-sprites', objects: null, bytes: null }
 		]);
 	});
 
@@ -65,6 +65,6 @@ describe('R2 storage for the Overview', () => {
 		const got = await readR2Storage({ ...base, token: 't', fetch: ok });
 		expect(sent.variables?.account).toBe('acc');
 		expect(sent.variables?.buckets?.length).toBe(4);
-		expect('buckets' in got && got.buckets.find((b) => b.kind === 'sprites')).toMatchObject({ objects: 1, bytes: 2 });
+		expect('buckets' in got && got.buckets.find((b) => b.kind === 'sprites')).toMatchObject({ objects: 1, bytes: 3 });
 	});
 });

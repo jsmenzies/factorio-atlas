@@ -516,19 +516,23 @@ export interface SourceFigures {
 	/** Posts on this site of a print credited here beyond its first: the site posted the same blueprint again. */
 	dupSame: number;
 	/**
-	 * Posts that never became part of a print: factorioprints' undecodable records (ingest_state 'failed'), a polled
-	 * site's records its ledger says the stage was given but that have no `print_sources` row (refused: unreadable, too
-	 * big or blocked). Null where nothing records them (uploads, factoriobin).
+	 * Posts that never became part of a print, each once: records the ingest couldn't decode (ingest_state 'failed'),
+	 * and a polled site's records its ledger says the stage was given that have no `print_sources` row (refused:
+	 * unreadable, too big or blocked) and haven't gone from the site. Null where it isn't known: a polled site with no
+	 * ledger for the stage on this machine, and sites nothing records refusals for (uploads, factoriobin).
 	 */
 	unreadable: number | null;
 }
 
-/** One of the site's R2 buckets, as Cloudflare's R2 analytics last measured it. */
+/**
+ * One of the site's R2 buckets, as Cloudflare's R2 analytics last measured it within the window: objects, and bytes
+ * of object data plus metadata (what storage is billed on). Null: no reading in the window.
+ */
 export interface R2Bucket {
 	kind: 'renders' | 'screenshots' | 'raw' | 'sprites';
 	name: string;
-	objects: number;
-	bytes: number;
+	objects: number | null;
+	bytes: number | null;
 }
 
 /** The figures step's R2 storage reading: the site's buckets, or why there is none. */
@@ -553,8 +557,8 @@ export interface SyncFigures {
 	/** The fields below were added on 2026-10-31: figures counted before then lack them. */
 	/** By the site prints are credited to (SourceFigures), every site with prints or posts. */
 	sources?: Record<string, SourceFigures>;
-	/** Prints credited to another site than the one their id names (id → site), for the local render coverage by site. */
-	credit?: Record<string, string>;
+	/** ANALYZER_VERSION when counted: `sources[].analysed` counts prints analysed with it. */
+	analyzerVersion?: number;
 	/** Screenshot copies no print shows (the author changed it, or the print is now credited to another site's post). */
 	unusedShots?: number;
 	r2?: R2Storage;
@@ -574,10 +578,11 @@ export interface StorePrints {
 }
 
 /**
- * settings, plan, figures: above; accept: a held-back source update to fetch anyway, by site (its `to` cursor id);
+ * settings, plan, figures: above; credit: prints credited to another site than the one their id names (id → site,
+ * written with the figures), for the Overview's render coverage by site; accept: a held-back source update to fetch anyway, by site (its `to` cursor id);
  * store-prints: above. An old 'imgur-recheck' row (the Imgur recheck, removed) is never read.
  */
-export type SyncMetaKey = 'settings' | 'plan' | 'figures' | 'accept' | 'store-prints';
+export type SyncMetaKey = 'settings' | 'plan' | 'figures' | 'credit' | 'accept' | 'store-prints';
 
 // --- estimates
 

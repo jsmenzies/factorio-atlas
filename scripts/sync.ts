@@ -313,8 +313,9 @@ const figuresText = (f: SyncFigures) =>
 
 if (flags.figures) {
 	const { readFigures } = await import('./sync/figures');
-	const figures = await readFigures(stage);
+	const { figures, credit } = await readFigures(stage);
 	await writeMeta(db, 'figures', figures);
+	await writeMeta(db, 'credit', credit);
 	console.log(flags.json ? JSON.stringify(figures) : figuresText(figures));
 	local.close();
 	process.exit(0);

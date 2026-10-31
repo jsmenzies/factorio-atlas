@@ -179,12 +179,12 @@ export const withStoreWaiting = (scopes: RenderScopes, store: { unseen: number; 
 };
 
 /**
- * Prints credited to another site than the one their id names (sync_meta 'figures' `credit`, read on the stage by
- * the figures step: a factorioprints id whose blueprint was posted first on codex, say). Empty before the first count.
+ * Prints credited to another site than the one their id names (sync_meta 'credit', read on the stage by the figures
+ * step: a factorioprints id whose blueprint was posted first on codex, say). Empty before the first count.
  */
 const CREDIT_CTE = `credit AS (
 	SELECT key AS print_id, value AS site
-	FROM json_each(coalesce((SELECT json_extract(value, '$.credit') FROM sync_meta WHERE key = 'figures'), '{}'))
+	FROM json_each(coalesce((SELECT value FROM sync_meta WHERE key = 'credit'), '{}'))
 )`;
 const creditedSite = (col: string) => `coalesce(cr.site, ${siteOfPrintIdSql(col)})`;
 

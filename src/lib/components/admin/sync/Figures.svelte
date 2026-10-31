@@ -39,7 +39,7 @@
 	};
 
 	const table = $derived(siteTable(figures, siteRender));
-	const version = $derived(figures ? Math.max(0, ...Object.keys(figures.analysed).map(Number)) : 0);
+	const version = $derived(figures?.analyzerVersion ?? (figures ? Math.max(0, ...Object.keys(figures.analysed).map(Number)) : 0));
 	const r2 = $derived(figures?.r2 && 'buckets' in figures.r2 ? r2Panel(figures.r2.buckets) : null);
 	const r2Error = $derived(figures?.r2 && 'error' in figures.r2 ? figures.r2.error : null);
 	const estimate = $derived(r2 && table ? rendersBySite(table.rows, r2.buckets.find((b) => b.kind === 'renders')?.bytes ?? 0) : []);
@@ -75,7 +75,7 @@
 		{
 			t: 'Pulled (all time)',
 			sub: 'posts fetched from the site',
-			tip: 'Every post pulled from the site and still there. Duplicates of another site’s print show on it as “Also on”; duplicates on the same site join the first post; unreadable posts never became prints.'
+			tip: 'Every post pulled from the site and still there. Duplicates of another site’s print show on it as “Also on”; duplicates on the same site join the first post; posts that couldn’t be read or were refused (blocked, too big) never became prints. “—”: not known on this machine.'
 		}
 	]);
 
@@ -140,7 +140,8 @@
 			<div class="text-xs text-stone-500">
 				{#if r.dupOther}<div>{plural(r.dupOther, 'duplicate', 'duplicates')} of another site’s print</div>{/if}
 				{#if r.dupSame}<div>{plural(r.dupSame, 'duplicate', 'duplicates')} on the same site</div>{/if}
-				{#if r.unreadable}<div class="text-amber-300/80">{int(r.unreadable)} unreadable</div>{/if}
+				{#if r.unreadable === null}<div title="No admission ledger for this stage on this machine">— unreadable</div>
+				{:else if r.unreadable}<div class="text-amber-300/80">{int(r.unreadable)} unreadable</div>{/if}
 			</div>
 		</td>
 	</tr>
@@ -214,7 +215,7 @@
 	<section class={card} aria-labelledby="r2-title">
 		<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
 			<h3 id="r2-title" class={label}>
-				R2 storage{@render q('What Cloudflare stores for the site, from R2’s own analytics, read by the figures step. The site’s buckets only.')}
+				R2 storage{@render q('What Cloudflare stores for the site, from R2’s own analytics, read by the figures step. The site’s buckets only; sizes are object data plus metadata, as storage is billed, at each bucket’s latest reading in the last week.')}
 			</h3>
 			<p class="text-xs text-stone-500">from Cloudflare’s R2 analytics · whole site, not per source</p>
 		</div>
@@ -235,8 +236,8 @@
 									<span class="text-stone-200">{BUCKET_TEXT[b.kind].title}</span>
 									<span class="block text-xs text-stone-500">{BUCKET_TEXT[b.kind].holds}</span>
 								</th>
-								<td class="px-2 py-1.5 text-right text-stone-300">{int(b.objects)}</td>
-								<td class="px-2 py-1.5 text-right whitespace-nowrap text-stone-300">{size(b.bytes)}</td>
+								<td class="px-2 py-1.5 text-right text-stone-300">{b.objects === null ? '—' : int(b.objects)}</td>
+								<td class="px-2 py-1.5 text-right whitespace-nowrap text-stone-300">{b.bytes === null ? 'no reading' : size(b.bytes)}</td>
 							</tr>
 						{/each}
 						<tr class="border-t border-stone-700 font-semibold text-stone-100">

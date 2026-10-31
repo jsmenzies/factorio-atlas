@@ -6,10 +6,13 @@
 import type { SiteRender } from '#lib/server/admin/render-scope.js';
 import type { Site } from '#lib/print-id.js';
 import { SOURCE_SITES } from '#lib/sources.js';
-import { R2_STORAGE_PER_GB_MONTH, type R2Bucket, type SourceFigures, type SyncFigures } from '#lib/sync.js';
+import { POLLED_SITES, R2_STORAGE_PER_GB_MONTH, type R2Bucket, type SourceFigures, type SyncFigures } from '#lib/sync.js';
 
 /** The table's order: the mirror, then the polled sites, then sites added one at a time. Unknown sites go last. */
 const ORDER: Site[] = ['factorioprints', 'codex', 'fprints', 'factoriobin', 'upload'];
+
+/** Sites whose unreadable posts are recorded (the ingest's failures, polled ledgers): a null count there is unknown. */
+const UNREADABLE_KNOWN = new Set<string>(['factorioprints', ...POLLED_SITES.map((p) => p.site)]);
 
 /** Columns that don't apply to a site, and why (the cell says n/a). */
 export const NOT_APPLICABLE: Partial<Record<Site, { author?: string; shot?: string }>> = {
@@ -33,11 +36,12 @@ export interface SiteRow {
 	shot: number | null;
 	shotOf: number;
 	render: SiteRender;
-	/** Posts pulled from the site: live posts plus those that couldn't be read. */
+	/** Posts pulled from the site: live posts plus those that couldn't be read or were refused. */
 	pulled: number;
 	dupOther: number;
 	dupSame: number;
-	unreadable: number;
+	/** null: not known here (a polled site with no ledger for the stage on this machine). */
+	unreadable: number | null;
 }
 
 const noRender = (): SiteRender => ({ total: 0, rendered: 0, none: 0, failed: 0, left: 0, pages: 0, bytes: 0 });
@@ -59,7 +63,7 @@ const rowOf = (site: string, s: SourceFigures, render: SiteRender | undefined): 
 		pulled: s.posts + (s.unreadable ?? 0),
 		dupOther: s.dupOther,
 		dupSame: s.dupSame,
-		unreadable: s.unreadable ?? 0
+		unreadable: s.unreadable ?? (UNREADABLE_KNOWN.has(site) ? null : 0)
 	};
 };
 
@@ -108,7 +112,7 @@ export function siteTable(figures: SyncFigures | null, render: Record<string, Si
 		pulled: sum((r) => r.pulled),
 		dupOther: sum((r) => r.dupOther),
 		dupSame: sum((r) => r.dupSame),
-		unreadable: sum((r) => r.unreadable)
+		unreadable: rows.some((r) => r.unreadable === null) ? null : sum((r) => r.unreadable ?? 0)
 	};
 	return { rows, total };
 }
@@ -132,12 +136,16 @@ export const BUCKET_TEXT: Record<R2Bucket['kind'], { title: string; holds: strin
 	sprites: { title: 'Icons', holds: 'the game’s item icons, one set for every stage' }
 };
 
-/** The R2 panel: each bucket, the total and its monthly cost at R2's list price (the free 10 GB isn't taken off). */
+/**
+ * The R2 panel: each bucket, the total and its monthly cost at R2's list price (the free 10 GB isn't taken off).
+ * Buckets with no reading add nothing; `missing` says how many.
+ */
 export function r2Panel(buckets: R2Bucket[]) {
-	const bytes = buckets.reduce((n, b) => n + b.bytes, 0);
+	const bytes = buckets.reduce((n, b) => n + (b.bytes ?? 0), 0);
 	return {
 		buckets,
-		objects: buckets.reduce((n, b) => n + b.objects, 0),
+		missing: buckets.filter((b) => b.bytes === null).length,
+		objects: buckets.reduce((n, b) => n + (b.objects ?? 0), 0),
 		bytes,
 		dollars: (bytes / 1e9) * R2_STORAGE_PER_GB_MONTH
 	};
@@ -179,7 +187,7 @@ export function figureAttention(figures: SyncFigures | null, waiting: number) {
 		{
 			key: 'unreadable',
 			label: 'Posts that couldn’t be read',
-			n: table?.total.unreadable,
+			n: table?.total.unreadable ?? undefined,
 			detail: '',
 			href: '#site-title',
 			at: ATTENTION_AT.unreadable
