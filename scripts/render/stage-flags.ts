@@ -133,3 +133,39 @@ export async function runStageFlags(stage: Stage, opts: StageFlagsOptions): Prom
 		if (!opts.target) await target.dispose();
 	}
 }
+
+/** The longest a render run's `--flags` step may take (a hung prod sidecar or openTarget) before the run gives up on it. */
+export const FLAGS_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * `work`'s result, unless `ms` pass or `signal` aborts first: then a rejection saying which (the work is left
+ * behind, unfinished; the caller exits soon after). For the `--flags` step, which runs while the run row is live.
+ */
+export function withDeadline<T>(work: Promise<T>, ms: number, signal: AbortSignal): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		const done = () => {
+			clearTimeout(timer);
+			signal.removeEventListener('abort', abandon);
+		};
+		const abandon = () => {
+			done();
+			reject(new Error(`abandoned: ${signal.reason instanceof Error ? signal.reason.message : String(signal.reason ?? 'stop requested')}`));
+		};
+		const timer = setTimeout(() => {
+			done();
+			reject(new Error(`timed out after ${Math.round(ms / 1000)} s`));
+		}, ms);
+		if (signal.aborted) return abandon();
+		signal.addEventListener('abort', abandon, { once: true });
+		work.then(
+			(v) => {
+				done();
+				resolve(v);
+			},
+			(e: unknown) => {
+				done();
+				reject(e);
+			}
+		);
+	});
+}

@@ -575,6 +575,7 @@ that renders (it needs the mirror clone, the sprite assets and the renders folde
 bun run sync                 # prod; asks for "prod" unless --yes
 bun run sync --plan          # fetch the mirror and say what an update would do; changes nothing
 bun run sync --accept <hash> # let a held-back mirror commit through on the next update
+bun run sync --accept codex  # let the change the last check held back on codex through (or codex:<id>)
 bun run sync --stage local   # try it on the local stage
 ```
 
@@ -589,8 +590,9 @@ In order, each step being the command you'd otherwise run by hand:
    prints this machine knows from it and more than 25; edits never count. A first import (nothing
    known yet) is held back once too, and so is a source that would be left with no prints, or a clone
    with commits the mirror doesn't have. The message names the counts ("62 new, 3 removed: more than
-   5% (25 at least) of 466"). Once you've looked at the source, `bun run sync --accept <id>` (or Accept
-   on the Update tab) lets that change through.
+   5% (25 at least) of 466"). Once you've looked at the source, `bun run sync --accept <commit>` for the
+   mirror, `bun run sync --accept codex` (or `codex:<id>`, the id `--plan` names) for another site, or
+   Accept on the Update tab lets that change through.
 3. Ingest: `backfill --from-clone`, skipped when neither the sources nor the analyzer, index or
    viewer version changed since the last update that ran it to the end. A backfill whose failures
    aren't the records' own (storage, the network, a worker) doesn't count as the end.

@@ -285,6 +285,17 @@ describe('polled sites: fetch', () => {
 			expect(accepted.counts).toMatchObject({ new: 3 });
 		});
 
+		test('reads left pending passed an earlier plan: an accepted first import stopped part-way isn’t held again', async () => {
+			const { site } = fakeSite(many(456), { per: 100 });
+			const held = await fetchOnce(site, { holdFirst: true });
+			expect(held.plan.blocked).toContain('456 new, 0 removed: a first import');
+			const first = await fetchOnce(site, { holdFirst: true, accept: held.plan.to.id, stopAfter: 100 });
+			expect(first.counts).toMatchObject({ new: 100, left: 356 });
+			const next = await fetchOnce(site, { holdFirst: true });
+			expect(next.plan).toMatchObject({ added: 356, blocked: null });
+			expect(next.counts).toMatchObject({ new: 356, left: 0 });
+		});
+
 		test('an empty list while prints are known is a hard stop, whatever the share', async () => {
 			const prints = many(20);
 			const { site } = fakeSite(prints, { per: 10 });

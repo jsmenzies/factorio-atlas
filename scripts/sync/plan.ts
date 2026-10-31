@@ -64,3 +64,33 @@ export const plansAfterFetch = (
 		}
 		return to && to.id === p.to.id ? { ...p, from: to, added: 0, edited: 0, favourites: 0, deleted: [], modern: 0 } : p;
 	});
+
+/**
+ * `sync --accept <arg>` against the last check's plan: a mirror commit (`<hex>`, 7 to 40 characters), a source's
+ * name (`codex`: the change the last check held back), or `<site>:<id>` (that held change, by its id). The
+ * source and the id to save in sync_meta 'accept', or why not. Pure.
+ */
+export function resolveAccept(
+	arg: string,
+	sources: readonly SourcePlan[],
+	mirror: string
+): { site: string; id: string } | { error: string } {
+	const a = arg.trim();
+	const held = (site: string) => sources.find((p) => p.site === site && p.blocked);
+	const again = 'run `bun run sync --plan` and accept what it holds back';
+	if (/^[0-9a-f]{7,40}$/.test(a)) {
+		const p = held(mirror);
+		return p && p.to.id.startsWith(a)
+			? { site: mirror, id: p.to.id }
+			: { error: `the last check didn't hold back the mirror at ${a}: ${again}` };
+	}
+	const at = a.indexOf(':');
+	const site = at < 0 ? a : a.slice(0, at);
+	const id = at < 0 ? null : a.slice(at + 1);
+	if (!/^[a-z]+$/.test(site)) return { error: '--accept takes a mirror commit (its hash), a source (codex), or <source>:<id>' };
+	const p = held(site);
+	if (!p) return { error: `the last check didn't hold ${site} back: ${again}` };
+	if (id !== null && p.to.id !== id && !(id.length >= 7 && p.to.id.startsWith(id)))
+		return { error: `the last check held ${site} back at ${p.to.id}, not ${id}: ${again}` };
+	return { site, id: p.to.id };
+}

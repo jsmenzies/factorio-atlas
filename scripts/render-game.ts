@@ -186,7 +186,7 @@ import { createUploader, DELETE_GRACE_MS, hasUploadWork, planPrint, type Uploade
 import { thumbsDir } from '#lib/server/renders-dir.js';
 import { createThumbStep, THUMB_STEP_MB, type ThumbStep } from './render/thumb-step.js';
 import { createThumbUploader, thumbUploadDb } from './render/thumbs-upload.js';
-import { needsPageBump, runStageFlags } from './render/stage-flags.js';
+import { FLAGS_TIMEOUT_MS, needsPageBump, runStageFlags, withDeadline } from './render/stage-flags.js';
 import { snapshot, stageTally } from './render/stages.js';
 import { stageMismatch, stageSite, type CleanupStage, type FlagsStage, type RenderStages } from '#lib/render-stages.js';
 
@@ -527,6 +527,8 @@ const uploadsAtStart = new Map<string, UploadRow[]>();
 let paused = false;
 let stopping = false;
 let aborting = false;
+/** Aborted by a stop request or a signal during the flags step: the run gives up on it (withDeadline). */
+const flagsAbort = new AbortController();
 /** Pages/s and the ETA, from rendered and failed pages. */
 const progress = renderProgress();
 
@@ -648,6 +650,8 @@ async function actOn(control: RunControl) {
 }
 
 function requestStop(why: string) {
+	// During `--flags` (which runs after a stop too), a stop request gives up on it: a hung stage mustn't keep the run live.
+	if (runOptions.phase === 'flags') flagsAbort.abort(new Error(why));
 	if (stopping) return;
 	stopping = true;
 	paused = false;
@@ -682,6 +686,7 @@ let pool = null as Pool | null;
 /** Pages in flight: each settles once its row is written. */
 const running = new Set<Promise<void>>();
 const onSignal = (sig: string) => {
+	if (runOptions.phase === 'flags') flagsAbort.abort(new Error(`${sig} again`));
 	if (!stopping) return requestStop(sig);
 	if (aborting) return;
 	aborting = true;
@@ -1419,6 +1424,8 @@ try {
 	endState = stopping || planOnly ? 'stopped' : 'finished';
 } catch (e) {
 	endState = 'failed';
+	// Still live (the drain and the flags step come), but not 'running'.
+	run.state = 'stopping';
 	run.error = e instanceof Error ? e.message : String(e);
 	console.error(run.error);
 	exitCode = 1;
@@ -1439,7 +1446,8 @@ try {
 		flagsFailed = !(await flagsStep());
 	}
 	runOptions.phase = null;
-	run.state = endState;
+	// A stop requested during the flags step ends a run that had finished as stopped.
+	run.state = endState === 'finished' && stopping ? 'stopped' : endState;
 	beating = false;
 	await beat;
 	run.finished_at = Date.now();
@@ -1521,7 +1529,11 @@ async function flagsStep(): Promise<boolean> {
 						dispose: async () => {}
 					}
 				: undefined;
-		const done = await runStageFlags(args.upload!, { confirm: async () => {}, bump, log, target });
+		const done = await withDeadline(
+			runStageFlags(args.upload!, { confirm: async () => {}, bump, log, target }),
+			FLAGS_TIMEOUT_MS,
+			flagsAbort.signal
+		);
 		flagsStage = { state: 'done', stage: args.upload!, rowsWritten: done.rowsWritten, bumped: done.bumped };
 		return true;
 	} catch (e) {

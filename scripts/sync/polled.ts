@@ -402,7 +402,8 @@ export async function planPoll(
 		blocked = `the site lists no prints (this machine has ${knownCount.toLocaleString('en-US')}): check the site before fetching`;
 	else
 		blocked = holdBack({
-			added,
+			// Reads left pending (a stopped fetch, a failed read) passed an earlier plan: only prints new since count.
+			added: [...read.keys()].filter((id) => !(id in state.records) && !(id in state.pending)).length,
 			removed: missing.length,
 			known: knownCount,
 			maxChange: o.maxChange,

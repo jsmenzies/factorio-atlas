@@ -45,7 +45,9 @@
  *
  *   bun run sync [--stage prod|local] [--yes]   one update (prod asks for "prod" unless --yes)
  *   bun run sync --plan [--json]                fetch and say what an update would do (sync_meta 'plan')
- *   bun run sync --accept <commit>              fetch a held-back mirror commit anyway (sync_meta 'accept')
+ *   bun run sync --accept <commit|site|site:id> fetch a held-back change anyway (sync_meta 'accept'): a mirror
+ *                                               commit, or a source the last check held back (`codex`), or that
+ *                                               held change by its id (`codex:471@…`)
  *   bun run sync --figures [--stage S] [--json] count what the stage has (sync_meta 'figures')
  *   bun run sync --top-preview N                what a top N would add to the render scope (JSON)
  *
@@ -96,7 +98,7 @@ import { confirmProd, fail, n } from './stage-command';
 import { localDbFile, openLocalDb } from './sync/local-db';
 import { MIRROR_SITE, mirrorSource, type SourceAdapter } from './sync/mirror';
 import { failureLine, lastJsonLine, lastLine, lineMatching } from './sync/output';
-import { failedPlan, plansAfterFetch } from './sync/plan';
+import { failedPlan, plansAfterFetch, resolveAccept } from './sync/plan';
 import { UPLOADS_SOURCE, uploadsSource } from './sync/uploads';
 import { codexSite } from './sync/codex';
 import { fprintsSite } from './sync/fprints';
@@ -124,7 +126,7 @@ import {
 } from './sync/runner';
 
 const USAGE =
-	'usage: bun run sync [--stage prod|local] [--yes] | --plan [--json] | --accept <commit> | --figures [--stage S] [--json] | --top-preview N';
+	'usage: bun run sync [--stage prod|local] [--yes] | --plan [--json] | --accept <commit|site|site:id> | --figures [--stage S] [--json] | --top-preview N';
 const ROOT = join(import.meta.dirname, '..');
 const WEEK_MS = 7 * 24 * 3600_000;
 
@@ -278,15 +280,10 @@ if (flags.plan) {
 }
 
 if (flags.accept !== undefined) {
-	const commit = flags.accept.trim();
-	if (!/^[0-9a-f]{7,40}$/.test(commit)) fail('--accept takes a mirror commit (its hash)');
-	const last = (await readMeta<SyncPlan>(db, 'plan'))?.value.sources.find((p) => p.site === MIRROR_SITE);
-	const held =
-		last?.blocked && last.to.id.startsWith(commit)
-			? last
-			: fail(`the last check didn't hold back ${commit}: run \`bun run sync --plan\` and accept the commit it names`);
-	await writeMeta(db, 'accept', { ...(await acceptedIds()), [MIRROR_SITE]: held.to.id });
-	console.log(`accepted ${MIRROR_SITE} ${short(held.to.id)}: the next update fetches it`);
+	const resolved = resolveAccept(flags.accept, (await readMeta<SyncPlan>(db, 'plan'))?.value.sources ?? [], MIRROR_SITE);
+	const got = 'error' in resolved ? fail(resolved.error) : resolved;
+	await writeMeta(db, 'accept', { ...(await acceptedIds()), [got.site]: got.id });
+	console.log(`accepted ${got.site} ${got.site === MIRROR_SITE ? short(got.id) : got.id}: the next update fetches it`);
 	local.close();
 	process.exit(0);
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SourcePlan, SourceRun } from '#lib/sync.js';
 import { upToDateLine } from '#lib/components/admin/sync/view.js';
-import { failedPlan, plansAfterFetch } from './plan';
+import { failedPlan, plansAfterFetch, resolveAccept } from './plan';
 
 const level = (site: string, id: string): SourcePlan => ({
 	site,
@@ -44,5 +44,38 @@ describe('the plan the fetch step saves', () => {
 			() => '400 prints on this machine'
 		);
 		expect(after).toMatchObject({ from: to, to, added: 0, position: '400 prints on this machine', stateText: '32 left' });
+	});
+});
+
+const errorOf = (r: ReturnType<typeof resolveAccept>) => ('error' in r ? r.error : '');
+
+describe('resolveAccept: --accept <commit|site|site:id>', () => {
+	const mirror: SourcePlan = {
+		...level('factorioprints', 'aaa'),
+		to: { id: 'afb755bc880a13a3', date: 2 },
+		blocked: '30 new, 0 removed: …'
+	};
+	const codex: SourcePlan = {
+		...level('codex', '466@1'),
+		to: { id: '528@2:abcdef', date: 2 },
+		polled: true,
+		blocked: '62 new, 0 removed: …'
+	};
+	const fprints = level('fprints', '432@1');
+	const sources = [mirror, codex, fprints];
+
+	test('a mirror commit by its hash, as before', () => {
+		expect(resolveAccept('afb755b', sources, 'factorioprints')).toEqual({ site: 'factorioprints', id: 'afb755bc880a13a3' });
+		expect('error' in resolveAccept('0123456', sources, 'factorioprints')).toBe(true);
+	});
+
+	test('a polled site by name takes the change the last check held back; site:id must match it', () => {
+		expect(resolveAccept('codex', sources, 'factorioprints')).toEqual({ site: 'codex', id: '528@2:abcdef' });
+		expect(resolveAccept('codex:528@2:abcdef', sources, 'factorioprints')).toEqual({ site: 'codex', id: '528@2:abcdef' });
+		expect(resolveAccept('factorioprints', sources, 'factorioprints')).toEqual({ site: 'factorioprints', id: 'afb755bc880a13a3' });
+		expect(errorOf(resolveAccept('codex:999@3:x', sources, 'factorioprints'))).toContain('not 999@3:x');
+		// Not held back, or not a source.
+		expect(errorOf(resolveAccept('fprints', sources, 'factorioprints'))).toContain("didn't hold fprints back");
+		expect('error' in resolveAccept('Codex!', sources, 'factorioprints')).toBe(true);
 	});
 });
