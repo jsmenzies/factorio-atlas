@@ -14,6 +14,7 @@
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import type { SourceCursor, SourcePlan } from '#lib/sync.js';
+import { sha256Hex } from '#lib/server/hash.js';
 import type { ProcessingOutcome } from '#lib/server/uploads/uploads.js';
 import type { SourceAdapter } from './mirror';
 import { lastJsonLine } from './output';
@@ -32,9 +33,8 @@ export interface UploadsResult {
 	/** Processing uploads when it started, and a digest of them and the names to update (`none` when neither): the update's cursor. */
 	processing: number;
 	digest: string;
-	/** The oldest and latest change among them (unix ms), or null. */
+	/** The oldest change among them (unix ms), or null. */
 	oldest: number | null;
-	latest: number | null;
 	counts: Record<ProcessingOutcome, number>;
 	/** Still processing at the end (failed or not reached), and their digest. */
 	left: number;
@@ -54,8 +54,7 @@ export interface UploadsResult {
 export const uploadsDigest = async (rows: readonly { print_id: string; updated_at: number }[], staleNames = 0) => {
 	if (!rows.length && !staleNames) return 'none';
 	const text = [...rows.map((r) => `${r.print_id}:${r.updated_at}`), `names:${staleNames}`].join('\n');
-	const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
-	return `${rows.length}-${Array.from(hash.slice(0, 6), (b) => b.toString(16).padStart(2, '0')).join('')}`;
+	return `${rows.length}-${(await sha256Hex(text)).slice(0, 12)}`;
 };
 
 const NONE: SourceCursor = { id: 'none', date: 0 };

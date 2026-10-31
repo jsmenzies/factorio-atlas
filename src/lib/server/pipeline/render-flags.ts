@@ -9,6 +9,7 @@
  * and writes only the difference, so a second run writes nothing, and an FTS row that drifted
  * (e.g. written by an older build) is put right.
  */
+import { chunks, runBatches } from '../d1-batch.js';
 import { bumpPageVersion } from '../page-cache.js';
 import { addToken, hasToken, removeToken } from './facet-token.js';
 import { RENDER_TOKEN } from './repository.js';
@@ -118,8 +119,6 @@ export async function loadRenderFlagState(db: D1Database, pageSize = 5000, cover
 	return covers ? { rows, covers: coverMap, fts } : { rows, fts };
 }
 
-/** Bound parameters per statement stay under D1's 100. */
-const chunks = <T>(xs: T[], n: number): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 const marks = (n: number) => Array(n).fill('?').join(', ');
 
 /** The plan as D1 statements, each with at most 99 bound parameters. */
@@ -186,13 +185,7 @@ export async function syncRenderFlags(
 	const searchable = state.fts.filter((f) => (wanted.get(f.print_id) ?? 0) > 0).length;
 	let rowsWritten = 0;
 	if (!options.dryRun) {
-		const stmts = renderFlagStatements(db, plan, options.now);
-		const size = options.batchSize ?? 50;
-		for (let i = 0; i < stmts.length; i += size) {
-			const results = await db.batch(stmts.slice(i, i + size));
-			rowsWritten += results.reduce((n, r) => n + (r.meta?.rows_written ?? 0), 0);
-			options.onBatch?.(Math.min(i + size, stmts.length), stmts.length);
-		}
+		rowsWritten = await runBatches(db, renderFlagStatements(db, plan, options.now), options.batchSize ?? 50, options.onBatch);
 		// Cards show render badges (and may show the cover thumbnail), so cached pages go (lib/server/page-cache.ts).
 		if (rowsWritten > 0) await bumpPageVersion(db).run();
 	}

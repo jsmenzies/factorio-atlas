@@ -7,6 +7,7 @@ import { buildingsIn } from './buildings.js';
 import { gameData } from './game-data.js';
 import { StorageError } from './errors.js';
 import type { PrintFingerprint } from './identity.js';
+import { rowsWritten } from '../d1-batch.js';
 import { bumpPageVersion } from '../page-cache.js';
 import { blockedBy, identityStatements, sourcesOf, sourcesStatement, type PrintSourceRow } from './identity-db.js';
 import {
@@ -317,8 +318,6 @@ const stateRow = (
 		);
 
 const tryD1 = <A>(op: string, run: () => Promise<A>) => Effect.tryPromise({ try: run, catch: (cause) => new StorageError({ op, cause }) });
-
-const rowsWritten = (results: D1Result[]) => results.reduce((n, r) => n + (r.meta?.rows_written ?? 0), 0);
 
 const STATE_COLUMNS =
 	'print_id, content_sha256, status, reason, analyzer_version, game_data_version, viewer_version, index_version, favorites';

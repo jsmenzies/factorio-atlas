@@ -34,7 +34,7 @@
  *   --yes       don't ask before writing to prod
  *   --json      the result as JSON on stdout (for the one-click update)
  */
-import { appendFileSync, existsSync, writeSync } from 'node:fs';
+import { appendFileSync, existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { RunState } from '#lib/server/pipeline/runs.js';
@@ -58,10 +58,9 @@ import { SIZES_DIR } from './screenshots/make.js';
 import { formatEntry, parseState, STATE_FILE, type StateEntry } from './screenshots/state.js';
 import { openShotStore } from './screenshots/store.js';
 import { syncImage } from './screenshots/upload.js';
-import { confirmProd, n, openStage, parseStageArgs, requireSchema } from './stage-command';
+import { confirmProd, jsonScript, n, openStage, parseStageArgs, requireSchema } from './stage-command';
 
 const USAGE = 'usage: bun run removals --stage local|prod [--dry-run] [--yes] [--json]';
-const JSON_OUT = process.argv.includes('--json');
 
 /** The `--json` result: the last stdout line, whatever the outcome. */
 export interface RemovalsResult {
@@ -103,36 +102,9 @@ const result: RemovalsResult = {
 	nothingToDo: false
 };
 
-// With --json, stdout is the result's alone: what libraries print (wrangler) goes to stderr. The last error
-// printed (a usage error) names why a run that never got going stopped.
-let lastError: string | null = null;
-const toStderr = console.error.bind(console);
-console.error = (...args: unknown[]) => {
-	lastError = args.map(String).join(' ').split('\n')[0].replace(/^✗ /, '');
-	toStderr(...args);
-};
-if (JSON_OUT) console.log = console.info = toStderr;
-
-/** Progress lines: stdout, or stderr with --json (written at once, as the exit hook may print last). */
-const say = (line: string) => writeSync(JSON_OUT ? 2 : 1, `${line}\n`);
-let reported = false;
-/** The summary line, then (with --json) the result: always the last things written. */
-const report = (ok: boolean, summary: string) => {
-	if (reported) return;
-	reported = true;
-	Object.assign(result, { ok, summary });
-	say(summary);
-	if (JSON_OUT) writeSync(1, `${JSON.stringify(result)}\n`);
-};
-// Every way out ends with a summary (a usage error, the second signal, an exit from a library), but -h.
-process.on('exit', (code) => {
-	if (code === 0 && !reported && !result.stage) return;
-	if (!reported) {
-		report(
-			false,
-			result.stopped ? '✗ stopped before finishing; run it again to finish' : `✗ ${lastError ?? `exited (${code}) before finishing`}`
-		);
-	}
+const { say, report, onSignals, stopping } = jsonScript(result, {
+	stoppedSummary: '✗ stopped before finishing; run it again to finish',
+	stopAfter: 'the current print'
 });
 
 const { flags, stage, generation } = parseStageArgs(USAGE, { json: { type: 'boolean', default: false } });
@@ -142,25 +114,13 @@ const ROOT = join(import.meta.dirname, '..');
 
 // wrangler's platform proxy installs handlers that exit at once, so ours go on again once the stages are
 // open: the first signal stops between prints, the second quits at once.
-let stopping = false;
-const onSignals = () => {
-	for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-		process.removeAllListeners(sig);
-		process.on(sig, () => {
-			result.stopped = true;
-			if (stopping) process.exit(130); // the exit hook prints the summary
-			stopping = true;
-			say(`${sig}: stopping after the current print (again to quit now)`);
-		});
-	}
-};
 onSignals();
 const target = await openStage(stage, generation);
 // The local D1: the render queue, the copy of the blocks and the sweeps. For --stage local it is the target itself.
 const local = stage === 'local' ? target : await openStage('local', undefined);
 onSignals();
 const checkpoint = () => {
-	if (stopping) throw new Error('stopped before finishing; run it again to finish');
+	if (stopping()) throw new Error('stopped before finishing; run it again to finish');
 };
 
 const sweptStatement = (ldb: D1Database, id: string, tombAt: number) =>

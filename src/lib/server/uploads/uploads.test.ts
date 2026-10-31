@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { accountChores } from '../auth/sessions';
 import { signInAccount, deleteAccount, markDeleting, type Account } from '../auth/users';
+import { sha256Hex } from '../hash';
 import { d1FromSqlite } from '../pipeline/d1-sqlite';
 import type { GateOutcome, PurgeExtras, SourceRecord, UploadGate } from './gate';
 import { approveImage, pendingImages, rejectImage } from './images';
@@ -24,7 +25,6 @@ import {
 	PROCESSING_MAX,
 	readRecord,
 	recordKey,
-	sha256Hex,
 	siteIdOf,
 	sniffImage,
 	isUploadId,

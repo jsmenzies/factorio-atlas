@@ -7,6 +7,7 @@
  * `screenshot_removals` to 'removed', writes only the difference, then purges the page cache.
  * `bun run screenshots:remove` writes one removal at once (`removalStatements`).
  */
+import { chunks, runBatches } from './d1-batch.js';
 import { bumpPageVersion } from './page-cache.js';
 
 export type ShotRow = { state: 'copied'; v: number; ext: string; w: number; h: number } | { state: 'dead' | 'removed' };
@@ -57,8 +58,6 @@ export async function loadShotFlagState(db: D1Database, pageSize = 5000) {
 	const { results } = await db.prepare('SELECT image_id FROM screenshot_removals').all<{ image_id: string }>();
 	return { rows, removed: new Set(results.map((r) => r.image_id)) };
 }
-
-const chunks = <T>(xs: T[], n: number): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 
 const UPSERT = `ON CONFLICT (image_id) DO UPDATE SET state = excluded.state, v = excluded.v, ext = excluded.ext, w = excluded.w, h = excluded.h,
 	updated_at = excluded.updated_at`;
@@ -118,13 +117,7 @@ export async function syncScreenshotFlags(
 	const plan = planShotFlags(wanted, rows, removed);
 	let rowsWritten = 0;
 	if (!options.dryRun) {
-		const stmts = shotFlagStatements(db, plan, options.now);
-		const size = options.batchSize ?? 50;
-		for (let i = 0; i < stmts.length; i += size) {
-			const results = await db.batch(stmts.slice(i, i + size));
-			rowsWritten += results.reduce((n, r) => n + (r.meta?.rows_written ?? 0), 0);
-			options.onBatch?.(Math.min(i + size, stmts.length), stmts.length);
-		}
+		rowsWritten = await runBatches(db, shotFlagStatements(db, plan, options.now), options.batchSize ?? 50, options.onBatch);
 		// Cards change, so cached pages go (page-cache.ts).
 		if (rowsWritten > 0) await bumpPageVersion(db).run();
 	}

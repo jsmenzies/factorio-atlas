@@ -12,6 +12,7 @@ import { lostSources } from '../pipeline/identity-db';
 import { pipelineLayer } from '../pipeline/layers';
 import { ingestRecord } from '../pipeline/pipeline';
 import { fromFactorioprints, fromPipelineText, toPipelineText, type SourceRecord } from '../pipeline/source-record';
+import { sha256Hex } from '../hash';
 import { takedownPrint } from '../takedown';
 import { Effect } from 'effect';
 import { showsFavourites } from '#lib/print-id.js';
@@ -27,7 +28,6 @@ import {
 	readRecord,
 	recordKey,
 	refreshUploadNames,
-	sha256Hex,
 	siteIdOf,
 	type UploadInput
 } from './uploads';

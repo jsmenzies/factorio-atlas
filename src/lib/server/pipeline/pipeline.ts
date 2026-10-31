@@ -20,15 +20,12 @@ import {
 	type IngestState,
 	type StoredPrint
 } from './repository.js';
+import { sha256Hex } from '../hash.js';
 import { PrintSource } from './source.js';
 import { pipelineText, rawKeyOfText, sourceMetaOf, sourceMetaOfRecord, type SourceRecord } from './source-record.js';
 import { buildViewerFilesEffect, deleteViewerFiles, putViewerFiles, VIEWER_VERSION, type ViewerFiles } from './viewer-files.js';
 
-const sha256 = (text: string) =>
-	Effect.promise(async () => {
-		const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-		return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-	});
+const sha256 = (text: string) => Effect.promise(() => sha256Hex(text));
 
 /** Where a factorioprints record is archived; other sites' records go to `<site>/<siteId>.json` (source-record.ts). */
 export const rawKey = (id: string) => `factorioprints/${id}.json`;

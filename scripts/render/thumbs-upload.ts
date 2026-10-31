@@ -16,6 +16,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { chunks } from '#lib/server/d1-batch.js';
 import { renderCacheControl } from '#lib/viewer/game-render.js';
 import { THUMB_FILE, THUMBS_INDEX, thumbFile, type ThumbsIndex } from '#lib/viewer/thumbs.js';
 import { StoreError, withRetries, type RenderStore } from './store.js';
@@ -61,8 +62,6 @@ export interface ThumbUploadDb {
 	/** Due render_deletes rows of thumbnail files. */
 	dueThumbDeletes(target: string, at: number): Promise<{ key: string; print_id: string }[]>;
 }
-
-const chunks = <T>(xs: T[], n: number): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 
 export function thumbUploadDb(db: D1Database): ThumbUploadDb {
 	return {

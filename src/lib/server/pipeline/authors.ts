@@ -9,6 +9,7 @@
  * factorioprints' maintainer, so the command asks slowly, one id at a time, and an answer of no
  * name is kept too. A print whose record names its author keeps that name.
  */
+import { rowsWritten as written } from '../d1-batch.js';
 import { bumpPageVersion } from '../page-cache.js';
 import { analysisKey, withAuthorName } from './print-doc.js';
 
@@ -158,7 +159,7 @@ export async function applyNameFixes(
 				...(f.rowid === null ? [] : [db.prepare('UPDATE print_search SET author = ? WHERE rowid = ?').bind(f.name, f.rowid)])
 			])
 		);
-		rowsWritten += results.reduce((n, r) => n + (r.meta?.rows_written ?? 0), 0);
+		rowsWritten += written(results);
 		options.onChunk?.(Math.min(i + chunk, fixes.length), docsWritten);
 	}
 	// Cached pages still show the old names (lib/server/page-cache.ts).

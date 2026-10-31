@@ -171,9 +171,7 @@ describe('sourceRunRows', () => {
 		waiting: 431,
 		counts: { new: 364, joined: 66, failed: 1 },
 		gone: { purged: 0, kept: 0, failed: 0, waiting: 0, edgeNotPurged: 0 },
-		suggested: 0,
-		suggestedNew: 0,
-		suggestions: {}
+		suggestedNew: 0
 	});
 	const done = (): SyncRun => ({
 		...run('finished', 0),

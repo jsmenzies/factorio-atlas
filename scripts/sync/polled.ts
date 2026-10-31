@@ -35,6 +35,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { detail, GROUP, holdBack, holdLimit, ROW, type DetailGroup, type SourcePlan } from '#lib/sync.js';
+import { sha256Hex } from '#lib/server/hash.js';
 import type { SourceRecord } from '#lib/server/pipeline/source-record.js';
 import { dropRecord, putRecord, type StoreSite } from '../records/store';
 import type { PlanOptions, SourceAdapter } from './mirror';
@@ -323,10 +324,7 @@ export interface PollWork {
 	changed: number;
 }
 
-const digest = async (text: string) => {
-	const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
-	return Array.from(hash.slice(0, 6), (b) => b.toString(16).padStart(2, '0')).join('');
-};
+const digest = async (text: string) => (await sha256Hex(text)).slice(0, 12);
 
 const day = (ms: number) => (ms ? new Date(ms).toISOString().slice(0, 16).replace('T', ' ') : 'never');
 
@@ -696,9 +694,7 @@ interface AdmitFigures {
 	waiting: number;
 	counts: Record<string, number>;
 	gone: { purged: number; kept: number; failed: number; waiting: number; edgeNotPurged: number };
-	suggested: number;
 	suggestedNew: number;
-	suggestions: Record<string, number>;
 }
 
 /** The ingest step's rows for a polled site's admission. */

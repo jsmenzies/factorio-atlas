@@ -15,6 +15,7 @@
  */
 import { printIdFor, siteOfPrintId } from '#lib/print-id.js';
 import { deleteAccount, markDeleting, type Account } from '../auth/users.js';
+import { sha256Hex } from '../hash.js';
 import { bumpPageVersion } from '../page-cache.js';
 import { analysisKey, withAuthorName } from '../pipeline/print-doc.js';
 import { fromPipelineText, rawKeyFor, toPipelineText, type SourceRecord } from '../pipeline/source-record.js';
@@ -67,15 +68,6 @@ export const sniffImage = (b: Uint8Array): ImageExt | null => {
 	if (at(0, 0x47, 0x49, 0x46, 0x38)) return 'gif';
 	return null;
 };
-
-export const sha256Hex = async (bytes: Uint8Array | string) =>
-	[
-		...new Uint8Array(
-			await crypto.subtle.digest('SHA-256', (typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes) as BufferSource)
-		)
-	]
-		.map((x) => x.toString(16).padStart(2, '0'))
-		.join('');
 
 /** What the form sends. `image`: new bytes, none (a new upload without one), or for an edit keep or remove the current one. */
 export interface UploadInput {

@@ -8,6 +8,7 @@
  */
 
 import { isPrintId } from '#lib/print-id.js';
+import { chunks, runBatches } from './d1-batch.js';
 import { bumpPageVersion } from './page-cache.js';
 
 /** User agents that announce a crawler, preview fetcher or headless browser. */
@@ -92,8 +93,6 @@ export const loadViews = async (db: D1Database) => {
 	return new Map(results.map((r) => [r.id, r.views_30d]));
 };
 
-const chunks = <T>(xs: T[], n: number): T[][] => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
-
 /** The plan as D1 statements, each with at most 98 bound parameters. Prints not ingested here are left alone. */
 export const viewsStatements = (db: D1Database, plan: ViewsPlan): D1PreparedStatement[] => [
 	...chunks(plan.set, 49).map((c) =>
@@ -134,12 +133,7 @@ export const syncViews = async (
 	}
 	let rowsWritten = 0;
 	if (!options.dryRun) {
-		const stmts = viewsStatements(db, plan);
-		for (let i = 0; i < stmts.length; i += size) {
-			const results = await db.batch(stmts.slice(i, i + size));
-			rowsWritten += results.reduce((n, r) => n + (r.meta?.rows_written ?? 0), 0);
-			options.onBatch?.(Math.min(i + size, stmts.length), stmts.length);
-		}
+		rowsWritten = await runBatches(db, viewsStatements(db, plan), size, options.onBatch);
 		// "Popular" pages show the old order until cached pages go (lib/server/page-cache.ts).
 		if (rowsWritten > 0) await bumpPageVersion(db).run();
 	}

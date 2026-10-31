@@ -7,6 +7,7 @@
  * Beside it, a readable `atlas_signed_in=1` cookie holds no secret: it only lets the page show
  * "Account" rather than "Sign in" before it has asked `/me` who is signed in (app.html).
  */
+import { sha256Hex } from '../hash.js';
 import { randomToken } from './oauth.js';
 import { accountOf, NAME_HOLD_DAYS, type Account, type AccountRow } from './users.js';
 
@@ -20,10 +21,7 @@ export const sessionCookieName = (dev: boolean) => (dev ? 'atlas_session' : '__H
 export const HINT_COOKIE = 'atlas_signed_in';
 export const flowCookieName = (dev: boolean) => (dev ? 'atlas_oauth' : '__Host-atlas_oauth');
 
-export const hashToken = async (token: string) =>
-	[...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token)))]
-		.map((b) => b.toString(16).padStart(2, '0'))
-		.join('');
+export const hashToken = (token: string) => sha256Hex(token);
 
 /**
  * Starts a session; the token goes in the cookie and is never stored. `replacing` is the browser's

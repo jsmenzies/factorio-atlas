@@ -23,6 +23,7 @@
  * changing what goes into them needs a migration that empties print_fingerprints and an INDEX_VERSION
  * bump to fill it again, and leaves existing hash blocks behind.
  */
+import { sha256Hex as sha256 } from '../hash.js';
 import { bookEntryIndex, decodeGameVersion } from './decode.js';
 import { gameData } from './game-data.js';
 
@@ -72,11 +73,6 @@ export interface PrintFingerprint {
 	/** Null unless the print is a book with at least one fingerprinted page. */
 	readonly book: BookFingerprint | null;
 }
-
-const sha256 = async (text: string) => {
-	const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-};
 
 const KINDS = ['blueprint', 'blueprint_book', 'upgrade_planner', 'deconstruction_planner'] as const;
 const MAX_DEPTH = 32;

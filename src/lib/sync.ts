@@ -335,13 +335,11 @@ export interface SourceCursor {
 	date: number;
 }
 
-/** One source in an update: its cursor before and after the fetch, and the ids it no longer has. */
+/** One source in an update: its cursor before and after the fetch. */
 export interface SourceRun {
 	site: string;
 	from: SourceCursor | null;
 	to: SourceCursor | null;
-	/** Prints the source deleted in this fetch (kept on the site; for the removal of gone sources later). */
-	deleted?: string[];
 	/** Why the fetch held it back, if it did. */
 	blocked?: string;
 	/** How the source's records came out, for a source whose fetch handles them itself (uploads: admitted, duplicate, …, left). */

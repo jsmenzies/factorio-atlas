@@ -50,16 +50,6 @@ const LOCKED = /SQLITE_BUSY|database is locked/i;
  */
 const BUSY_TIMEOUT_MS = 100;
 
-export interface StartRequest {
-	next?: number;
-	upload?: 'none' | 'local' | 'prod';
-	force?: boolean;
-	workers?: number;
-	top?: number;
-	refreshTop?: boolean;
-	resume?: boolean;
-}
-
 /** The runner's flags for a request, or an error message. Pure: only validated numbers and fixed words get through. */
 export function startArgs(body: unknown, cloneDir: string): string[] | string {
 	if (!body || typeof body !== 'object' || Array.isArray(body)) return 'expected a JSON object';

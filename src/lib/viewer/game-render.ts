@@ -99,9 +99,6 @@ export const pageBase = (path: string) => path || 'root';
 /** A tile hash: the first 16 hex digits of a sha256. */
 export const TILE_HASH = /^[0-9a-f]{16}$/;
 
-/** A render stamp: the first 10 hex digits of the page's input key. URL-safe; a re-render with other input gets another. */
-export const STAMP = /^[0-9a-f]{10}$/;
-
 /**
  * Book paths are index numbers joined by "/"; anything else is not a render file. Every .avif is
  * named by its content (tiles by pixel hash, overviews by stamp), so it never changes. Page

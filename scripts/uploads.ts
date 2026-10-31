@@ -22,14 +22,12 @@
  *   --yes       don't ask before writing to prod
  *   --json      the result as JSON on stdout (for the one-click update)
  */
-import { writeSync } from 'node:fs';
 import { admitUpload, ingestDue } from '#lib/server/uploads/gate.js';
 import { admitProcessing, processingUploads, refreshUploadNames, uploadChores } from '#lib/server/uploads/uploads.js';
-import { confirmProd, n, openStage, parseStageArgs, requireSchema } from './stage-command';
+import { confirmProd, jsonScript, n, openStage, parseStageArgs, requireSchema } from './stage-command';
 import { uploadsDigest, type UploadsResult } from './sync/uploads';
 
 const USAGE = 'usage: bun run uploads --stage local|prod [--plan] [--dry-run] [--yes] [--json]';
-const JSON_OUT = process.argv.includes('--json');
 
 const result: UploadsResult = {
 	ok: false,
@@ -40,7 +38,6 @@ const result: UploadsResult = {
 	processing: 0,
 	digest: 'none',
 	oldest: null,
-	latest: null,
 	counts: { admitted: 0, duplicate: 0, blocked: 0, undecodable: 0, failed: 0, 'gave-up': 0 },
 	left: 0,
 	leftDigest: 'none',
@@ -49,31 +46,9 @@ const result: UploadsResult = {
 	ingestDue: null
 };
 
-let lastError: string | null = null;
-const toStderr = console.error.bind(console);
-console.error = (...args: unknown[]) => {
-	lastError = args.map(String).join(' ').split('\n')[0].replace(/^✗ /, '');
-	toStderr(...args);
-};
-if (JSON_OUT) console.log = console.info = console.warn = toStderr;
-
-const say = (line: string) => writeSync(JSON_OUT ? 2 : 1, `${line}\n`);
-let reported = false;
-const report = (ok: boolean, summary: string) => {
-	if (reported) return;
-	reported = true;
-	Object.assign(result, { ok, summary });
-	say(summary);
-	if (JSON_OUT) writeSync(1, `${JSON.stringify(result)}\n`);
-};
-process.on('exit', (code) => {
-	if (code === 0 && !reported && !result.stage) return;
-	if (!reported) {
-		report(
-			false,
-			result.stopped ? '✗ stopped before finishing; run it again to finish' : `✗ ${lastError ?? `exited (${code}) before finishing`}`
-		);
-	}
+const { say, report, onSignals, stopping } = jsonScript(result, {
+	stoppedSummary: '✗ stopped before finishing; run it again to finish',
+	stopAfter: 'the current upload'
 });
 
 const { flags, stage, generation } = parseStageArgs(USAGE, {
@@ -83,18 +58,6 @@ const { flags, stage, generation } = parseStageArgs(USAGE, {
 result.stage = stage;
 
 // wrangler's platform proxy installs handlers that exit at once, so ours go on again once the stage is open.
-let stopping = false;
-const onSignals = () => {
-	for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-		process.removeAllListeners(sig);
-		process.on(sig, () => {
-			result.stopped = true;
-			if (stopping) process.exit(130);
-			stopping = true;
-			say(`${sig}: stopping after the current upload (again to quit now)`);
-		});
-	}
-};
 onSignals();
 const target = await openStage(stage, generation);
 onSignals();
@@ -111,7 +74,6 @@ try {
 	result.ingestDue = await ingestDue(db);
 	result.digest = await uploadsDigest(waiting, chores.staleNames);
 	result.oldest = waiting.length ? Math.min(...waiting.map((w) => w.updated_at)) : null;
-	result.latest = waiting.length ? Math.max(...waiting.map((w) => w.updated_at)) : null;
 	result.left = waiting.length;
 	result.leftDigest = result.digest;
 	say(
@@ -128,12 +90,12 @@ try {
 		await confirmProd(stage, Boolean(flags.yes), `Admit ${n(waiting.length)} processing uploads into prod?`);
 		const deps = { db, raw: target.env.RAW, gate: { admit: admitUpload.bind(null, target.env) } };
 		for (const { print_id } of waiting) {
-			if (stopping) break;
+			if (stopping()) break;
 			const r = await admitProcessing(deps, print_id);
 			result.counts[r.outcome]++;
 			say(`${print_id}: ${r.outcome}${r.printId ? ` (same as ${r.printId})` : ''}${r.reason ? `: ${r.reason}` : ''}`);
 		}
-		if (!stopping && chores.staleNames) {
+		if (!stopping() && chores.staleNames) {
 			const names = await refreshUploadNames({ db, raw: target.env.RAW }, null);
 			result.names = { stale: chores.staleNames, done: names.done, left: names.left };
 			say(`names: ${n(names.done)} uploads given their account's new name, ${n(names.left)} left`);
@@ -145,7 +107,7 @@ try {
 		const line =
 			`${n(c.admitted)} admitted, ${n(c.duplicate)} refused as duplicates, ${n(c.blocked)} blocked, ${n(c.undecodable)} unreadable, ` +
 			`${n(c.failed)} failed, ${n(c['gave-up'])} given up; ${n(left.length)} still processing; ${n(result.names.done)} new names`;
-		if (stopping) {
+		if (stopping()) {
 			code = 2;
 			report(false, `✗ stopped: ${line}`);
 		} else report(true, `✓ ${line}`);

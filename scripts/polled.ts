@@ -32,12 +32,10 @@
  * Exit 0 when done (refusals and waiting deletions included), 2 on any error or when stopped (130 on the second
  * signal); the last line starts with ✓ or ✗.
  */
-import { writeSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { Effect, Layer } from 'effect';
 import { printIdFor } from '#lib/print-id.js';
 import { addRecord } from '#lib/server/pipeline/add-record.js';
-import type { Suggestion } from '#lib/server/pipeline/admit.js';
 import { lostSources } from '#lib/server/pipeline/identity-db.js';
 import { OFFLINE_MAX_INFLATED_BYTES } from '#lib/server/pipeline/decode.js';
 import { RawStoreR2 } from '#lib/server/pipeline/raw-store.js';
@@ -48,13 +46,12 @@ import { POLLED_SITES } from '#lib/sync.js';
 import { recordsDir, readStoreRecord } from './records/store';
 import { polledStoreAdapter } from './records/polled';
 import { pullSite, type PullCounts } from './records/pull';
-import { confirmProd, n, parseStageArgs, requireSchema } from './stage-command';
+import { confirmProd, jsonScript, n, parseStageArgs, requireSchema } from './stage-command';
 import { openStageGate } from './sync/gate-env';
 import { otherLiveUpdate } from './sync/local-db';
 import { admissionWork, inboxDir, readLedger, readState, writeLedger, writeState } from './sync/polled';
 
 const USAGE = 'usage: bun run polled --stage local|prod --site <site> [--dir DIR] [--dry-run] [--force] [--yes] [--json]';
-const JSON_OUT = process.argv.includes('--json');
 
 export type AdmitOutcome =
 	/** A print of its own. */
@@ -92,13 +89,8 @@ export interface PolledAdmitResult {
 	 * one), failed; waiting (the stage lacks what a purge needs); and purges whose edge purge failed.
 	 */
 	gone: { purged: number; kept: number; failed: number; waiting: number; edgeNotPurged: number };
-	/** Records whose answer carried suggestions (never joins), and the suggestions by kind. */
-	suggested: number;
 	/** Of the new prints, those with suggestions: a near match for an admin to look at, never joined. */
 	suggestedNew: number;
-	suggestions: Record<string, number>;
-	/** Joined records: site id → the print they joined. */
-	joins: Record<string, string>;
 	/** Whether the stage was written (prints admitted, changed or purged). */
 	wrote: boolean;
 	/** The record store's pull of this site afterwards (records/polled.ts), when the stage was written: what the render step draws. */
@@ -117,34 +109,14 @@ const result: PolledAdmitResult = {
 	goneWaiting: 0,
 	counts: { new: 0, joined: 0, updated: 0, unchanged: 0, blocked: 0, undecodable: 0, failed: 0, refetch: 0 },
 	gone: { purged: 0, kept: 0, failed: 0, waiting: 0, edgeNotPurged: 0 },
-	suggested: 0,
 	suggestedNew: 0,
-	suggestions: {},
-	joins: {},
 	wrote: false,
 	store: null
 };
 
-let lastError: string | null = null;
-const toStderr = console.error.bind(console);
-console.error = (...args: unknown[]) => {
-	lastError = args.map(String).join(' ').split('\n')[0].replace(/^✗ /, '');
-	toStderr(...args);
-};
-if (JSON_OUT) console.log = console.info = console.warn = toStderr;
-
-const say = (line: string) => writeSync(JSON_OUT ? 2 : 1, `${line}\n`);
-let reported = false;
-const report = (ok: boolean, summary: string) => {
-	if (reported) return;
-	reported = true;
-	Object.assign(result, { ok, summary });
-	say(summary);
-	if (JSON_OUT) writeSync(1, `${JSON.stringify(result)}\n`);
-};
-process.on('exit', (code) => {
-	if (code === 0 && !reported && !result.stage) return;
-	if (!reported) report(false, result.stopped ? '✗ stopped before finishing' : `✗ ${lastError ?? `exited (${code}) before finishing`}`);
+const { say, report, onSignals, stopping } = jsonScript(result, {
+	stoppedSummary: '✗ stopped before finishing',
+	stopAfter: 'the current record'
 });
 
 const { flags, stage, generation } = parseStageArgs(USAGE, {
@@ -170,18 +142,6 @@ if (live) {
 const storeDir = flags.dir ? resolve(flags.dir) : recordsDir();
 const inbox = inboxDir(storeDir);
 
-let stopping = false;
-const onSignals = () => {
-	for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-		process.removeAllListeners(sig);
-		process.on(sig, () => {
-			result.stopped = true;
-			if (stopping) process.exit(130);
-			stopping = true;
-			say(`${sig}: stopping after the current record (again to quit now)`);
-		});
-	}
-};
 onSignals();
 const target = await openStageGate(stage, generation).catch((e: unknown) => {
 	console.error(`✗ ${e instanceof Error ? e.message : String(e)}`);
@@ -190,12 +150,6 @@ const target = await openStageGate(stage, generation).catch((e: unknown) => {
 onSignals();
 
 const reasonOf = (e: unknown) => (e instanceof Error ? e.message || e.name : String(e)) || 'unknown error';
-const tally = (s: readonly Suggestion[], outcome: AdmitOutcome) => {
-	if (!s.length) return;
-	result.suggested++;
-	if (outcome === 'new') result.suggestedNew++;
-	for (const x of s) result.suggestions[x.kind] = (result.suggestions[x.kind] ?? 0) + 1;
-};
 /**
  * A throw here is storage (a record's own problems are outcomes), and the local D1 is one SQLite file the
  * update's runner writes too, whose busy answers can come without a message: worth a few more tries.
@@ -240,17 +194,16 @@ try {
 	};
 
 	/** One inbox record through the gate (addRecord: admitRecord, then ingestRecord); throws on storage errors. */
-	const admitOne = async (siteId: string, printId: string): Promise<{ outcome: AdmitOutcome; note: string }> => {
+	const admitOne = async (printId: string): Promise<{ outcome: AdmitOutcome; note: string }> => {
 		const record = await readStoreRecord(inbox, printId);
 		if (!record) throw new Error(NO_RECORD);
 		const r = await addRecord(env, record, { plan: result.dryRun, update: true, maxInflatedBytes: OFFLINE_MAX_INFLATED_BYTES });
 		if (r.status === 'failed') throw new Error(r.reason);
-		if (r.status === 'new' || r.status === 'joins') tally(r.suggestions, r.status === 'new' ? 'new' : 'joined');
+		if (r.status === 'new' && r.suggestions.length) result.suggestedNew++;
 		switch (r.status) {
 			case 'new':
 				return { outcome: 'new', note: '' };
 			case 'joins':
-				result.joins[siteId] = r.printId;
 				return { outcome: 'joined', note: `${r.printId}${r.shown ? ', shown: posted first' : ''}` };
 			case 'already':
 				return { outcome: r.updated ? 'updated' : 'unchanged', note: r.printId };
@@ -264,14 +217,14 @@ try {
 	};
 
 	for (const siteId of work.records) {
-		if (stopping) break;
+		if (stopping()) break;
 		const rev = state.records[siteId].rev;
 		const printId = printIdFor(site, siteId);
 		let outcome: AdmitOutcome = 'failed';
 		let note = '';
 		for (let attempt = 1; attempt <= TRIES; attempt++) {
 			try {
-				({ outcome, note } = await admitOne(siteId, printId));
+				({ outcome, note } = await admitOne(printId));
 				ledger.records[siteId] = rev;
 				break;
 			} catch (e) {
@@ -306,7 +259,7 @@ try {
 		say(`! ${n(work.gone.length)} ${site} prints gone, but purging ${stage} needs ${target.missing.join(', ')}: left for the next run`);
 	} else
 		for (const siteId of work.gone) {
-			if (stopping || result.dryRun) break;
+			if (stopping() || result.dryRun) break;
 			const key = rawKeyFor(site, siteId);
 			try {
 				const r = await gate.sourceGone(
@@ -348,8 +301,8 @@ try {
 			})
 		);
 	// The store holds the site's prints that are their own print on the stage, for the render step.
-	if (result.wrote && !stopping) {
-		result.store = await pullSite(storeDir, polledStoreAdapter(env, site), { stopping: () => stopping });
+	if (result.wrote && !stopping()) {
+		result.store = await pullSite(storeDir, polledStoreAdapter(env, site), { stopping });
 		const c = result.store;
 		say(
 			`record store: ${n(c.listed)} ${site} prints of their own, ${n(c.added)} new, ${n(c.changed)} changed, ${n(c.removed + c.vanished)} removed`
@@ -368,7 +321,7 @@ try {
 		(result.dryRun
 			? `${work.gone.length ? `; ${n(work.gone.length)} gone from the site to delete or detach` : ''} (dry run: nothing written)`
 			: '');
-	if (stopping) {
+	if (stopping()) {
 		code = 2;
 		report(false, `✗ stopped: ${line}`);
 	} else if (c.failed || result.gone.failed) {

@@ -232,7 +232,7 @@
 		</p>
 		{#if totals.deleted > 0}
 			<p class="mt-2 text-sm text-amber-200">
-				{int(totals.deleted)} print{totals.deleted === 1 ? ' was' : 's were'} deleted from factorioprints. They stay on the site: deletions aren't handled yet.
+				{int(totals.deleted)} print{totals.deleted === 1 ? ' was' : 's were'} deleted from factorioprints. They stay on the site.
 			</p>
 		{/if}
 	{/if}

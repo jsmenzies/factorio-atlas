@@ -19,9 +19,8 @@
  *   --dry-run   count what would change, fetch and write nothing
  *   --json      the result as JSON on stdout (for the one-click update)
  */
-import { writeSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { n, openStage, parseStageArgs, requireSchema } from './stage-command';
+import { jsonScript, n, openStage, parseStageArgs, requireSchema } from './stage-command';
 import { pullSite, type PullCounts, type StoreAdapter } from './records/pull';
 import { recordsDir, storePrintIds } from './records/store';
 import { factoriobinStoreAdapter } from './records/factoriobin';
@@ -30,7 +29,6 @@ import { polledStoreAdapter } from './records/polled';
 import { POLLED_SITES } from '#lib/sync.js';
 
 const USAGE = 'usage: bun run records --stage local|prod [--dir DIR] [--dry-run] [--json]';
-const JSON_OUT = process.argv.includes('--json');
 
 /** The `--json` result: the last stdout line. */
 export interface RecordsResult {
@@ -48,26 +46,9 @@ export interface RecordsResult {
 
 const result: RecordsResult = { ok: false, summary: '', stage: null, dir: '', dryRun: false, stopped: false, sites: {}, total: 0 };
 
-let lastError: string | null = null;
-const toStderr = console.error.bind(console);
-console.error = (...args: unknown[]) => {
-	lastError = args.map(String).join(' ').split('\n')[0].replace(/^✗ /, '');
-	toStderr(...args);
-};
-if (JSON_OUT) console.log = console.info = console.warn = toStderr;
-
-const say = (line: string) => writeSync(JSON_OUT ? 2 : 1, `${line}\n`);
-let reported = false;
-const report = (ok: boolean, summary: string) => {
-	if (reported) return;
-	reported = true;
-	Object.assign(result, { ok, summary });
-	say(summary);
-	if (JSON_OUT) writeSync(1, `${JSON.stringify(result)}\n`);
-};
-process.on('exit', (code) => {
-	if (code === 0 && !reported && !result.stage) return;
-	if (!reported) report(false, result.stopped ? '✗ stopped before finishing' : `✗ ${lastError ?? `exited (${code}) before finishing`}`);
+const { say, report, onSignals, stopping } = jsonScript(result, {
+	stoppedSummary: '✗ stopped before finishing',
+	stopAfter: 'the records being fetched'
 });
 
 const { flags, stage, generation } = parseStageArgs(USAGE, {
@@ -78,18 +59,6 @@ result.stage = stage;
 result.dryRun = Boolean(flags['dry-run']);
 result.dir = flags.dir ? resolve(flags.dir) : recordsDir();
 
-let stopping = false;
-const onSignals = () => {
-	for (const sig of ['SIGINT', 'SIGTERM'] as const) {
-		process.removeAllListeners(sig);
-		process.on(sig, () => {
-			result.stopped = true;
-			if (stopping) process.exit(130);
-			stopping = true;
-			say(`${sig}: stopping after the records being fetched (again to quit now)`);
-		});
-	}
-};
 onSignals();
 const target = await openStage(stage, generation);
 onSignals();
@@ -108,10 +77,10 @@ try {
 	say(`${stage} → record store ${result.dir}${result.dryRun ? ' (dry run)' : ''}`);
 	const parts: string[] = [];
 	for (const adapter of adapters) {
-		if (stopping) break;
+		if (stopping()) break;
 		const c = await pullSite(result.dir, adapter, {
 			dryRun: result.dryRun,
-			stopping: () => stopping,
+			stopping,
 			log: (line) => say(`  ${line}`)
 		});
 		result.sites[adapter.site] = c;
@@ -124,7 +93,7 @@ try {
 	result.total = (await storePrintIds(result.dir)).length;
 	const failed = Object.values(result.sites).reduce((s, c) => s + c.failed, 0);
 	const line = `${parts.join(' · ')}; ${n(result.total)} records in the store`;
-	if (stopping) {
+	if (stopping()) {
 		code = 2;
 		report(false, `✗ stopped: ${line}`);
 	} else if (failed) {

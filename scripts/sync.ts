@@ -565,7 +565,6 @@ const steps: StepDef[] = [
 				} else if (sourceMoved(plan) && !stopping()) {
 					const { counts, ...to } = await SOURCES.find((s) => s.site === plan.site)!.apply(plan, signal);
 					entry.to = to;
-					entry.deleted = plan.deleted;
 					if (counts) {
 						entry.counts = counts;
 						parts.push(
