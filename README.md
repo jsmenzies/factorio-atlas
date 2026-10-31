@@ -2,7 +2,9 @@
 
 **Find Factorio blueprints by what they actually do, and view each blueprint's high-res render.**
 Blueprint Atlas is a searchable index of the blueprints shared on
-[factorioprints.com](https://factorioprints.com). Every blueprint string is decoded and analysed,
+[factorioprints.com](https://factorioprints.com), [factoriocodex.com](https://factoriocodex.com) and
+[fprints.xyz](https://fprints.xyz), posts from [factoriobin.com](https://factoriobin.com) added by
+link, and blueprints uploaded by signed-in players. Every blueprint string is decoded and analysed,
 and the blueprints are drawn as high-resolution in-game renders you can pan and zoom, down to
 every inserter, belt and module.
 
@@ -48,16 +50,27 @@ second or per minute.
 
 ![Big Boy Space Science's overview: about 611.84 space science packs per second, what it takes in, and what it's built with: 464 assembling machines with 1,876 productivity modules, 586 speed modules and 112 beacons](docs/screenshots/rates.webp)
 
-Every print links back to its page on factorioprints.com and credits its author. Authors'
-screenshots are served from the site's own copies of their Imgur uploads, so they load where Imgur
-is blocked.
+### One list from several sites
+
+Every print credits its author and links to the site it was posted on. A blueprint posted on more
+than one site is one print, listing every place it is also on ("Also on factoriocodex.com"), and
+later exact copies of the same blueprint (50 entities or more) stay out of search. Anyone can
+upload a blueprint after signing in with Discord, GitHub or Google, and edit or delete it later.
+Screenshots are served from the site's own copies (of authors' Imgur uploads, the other sites'
+images, and uploaded screenshots once approved), so they load where Imgur is blocked.
 
 ## How it works
 
 ```
-GitHub mirror of factorioprints (motlin/factorio-blueprint-firebase-cdn, one JSON file per print)
+factorioprints   the GitHub mirror (motlin/factorio-blueprint-firebase-cdn, one JSON file per print)
+factoriocodex,   polled by each update: new and changed prints, and deletions
+fprints
+factoriobin      one post at a time, by link (/admin/add)
+uploads          signed-in players (/upload)
   → sanitize      drop fields the site doesn't use, such as `favorites` (user ids)
   → decode        exchange string: "0" + base64 + zlib, with a cap on inflated size
+  → admit         one gate for every record: removal blocks, size caps, and the same blueprint
+                  from another site joined to the print already here
   → analyse       walk books and pages: outputs, inputs, recipes, entities, rates, versions,
                   Space Age, planets, mods, circuits, trains (data/game/game-data-2.1.23.json)
   → store         D1: a slim search index, about a dozen rows per print
@@ -65,8 +78,9 @@ GitHub mirror of factorioprints (motlin/factorio-blueprint-firebase-cdn, one JSO
 ```
 
 - **Pipeline:** `src/lib/server/pipeline/`, written with [Effect](https://effect.website) as
-  services (`PrintSource`, `RawStore`, `PrintRepository`). The same code runs in the Worker, in
-  `bun run ingest` and in `bun run backfill`. Re-runs skip prints whose content hasn't changed.
+  services (`PrintSource`, `RawStore`, `PrintRepository`). The same code runs in the Worker
+  (uploads, adding by link), in `bun run ingest`, `bun run backfill` and `bun run polled`.
+  Re-runs skip prints whose content hasn't changed.
 - **Search:** one FTS5 table. Besides title, description, labels, entities, recipes and community
   nicknames ("red science", "gc"), each print has a `facets` column of keyword tokens
   (`makes_item_automation_science_pack`, `v_2_0`, `sa_yes`, `uses_entity_foundry`…), so free
@@ -122,10 +136,14 @@ GitHub mirror of factorioprints (motlin/factorio-blueprint-firebase-cdn, one JSO
 - **Admin:** `/admin/pipeline` shows backfill runs live (progress, failures, pause, resume, stop),
   and `/admin/render` shows render runs (progress, rate and ETA, latest renders, skipped and
   failed pages, uploads, pause, resume, stop); under `bun run dev` it can also start a batch or
-  resume the last run on this machine. They're open under `bun run dev`; deployed, they require
-  Cloudflare Access (see docs/deploy.md). Under `bun run dev`, `/admin` is the Overview: what the
-  site has by source, what needs a look, render coverage and past updates; `/admin/update` runs the
-  update (`bun run sync`), shows each step live and holds its settings.
+  resume the last run on this machine. `/admin/reports` holds removal requests to approve or
+  reject, `/admin/screenshots` upload screenshots waiting for approval, `/admin/add` adds a
+  factoriobin.com post by its link, and `/admin/accounts` lists every account (sign it out
+  everywhere, or delete it). They're open under `bun run dev`; deployed, they require Cloudflare
+  Access (see docs/deploy.md). Under `bun run dev`, `/admin` is the Overview: what the site has by
+  source, what needs a look, render coverage and past updates; `/admin/update` runs the update
+  (`bun run sync`), shows each step live and holds its settings. Deployed, `/admin` goes to
+  `/admin/pipeline` and `/admin/update` is a 404.
 
 Stack: SvelteKit 3 on Cloudflare Workers (`@sveltejs/adapter-cloudflare`), D1, R2, Effect 4, bun,
 Tailwind 4. Deploys use [Alchemy](https://alchemy.run).
@@ -162,7 +180,7 @@ this repository.
 | `bun run check`                                                | wrangler types check and svelte-check (app, scripts and Alchemy config); must report 0 errors                                                                                                                                                        |
 | `bun run lint`                                                 | oxlint                                                                                                                                                                                                                                               |
 | `bun run fmt` / `bun run fmt:check`                            | oxfmt (tabs, single quotes, width 140)                                                                                                                                                                                                               |
-| `bun test src/lib`                                             | unit and pipeline tests (see below)                                                                                                                                                                                                                  |
+| `bun test src/lib scripts`                                     | unit, pipeline, upload and script tests (see below)                                                                                                                                                                                                  |
 | `bun run db:migrate` / `bun run db:reset`                      | apply migrations to the local D1 database / wipe and re-create it                                                                                                                                                                                    |
 | `bun run backfill --stage local\|prod [--limit N] [--ids a,b]` | stream prints from the mirror, at its current commit, into a stage's D1 and R2; resumable; other flags are listed in `scripts/backfill.ts`                                                                                                           |
 | `bun run backfill … --from-clone <dir>`                        | read the mirror from a local clone (`git clone --depth 1`) at its checked-out commit instead of fetching each print from GitHub                                                                                                                      |
@@ -170,7 +188,7 @@ this repository.
 | `bun run ingest <id> [<id>…]`                                  | ingest specific prints into local D1 and R2 (mirror first, Firebase only for a single record not yet in the mirror)                                                                                                                                  |
 | `bun run ingest --reanalyze <id>`                              | re-run the analysis from the stored record                                                                                                                                                                                                           |
 | `bun run ingest --from-disk [dir]`                             | re-ingest records saved in `data/raw/` by earlier `ingest` runs, offline                                                                                                                                                                             |
-| `bun run render --from-clone <dir>`                            | render every 2.0+ print in a local clone of the mirror into `data/renders/` or `RENDERS_DIR` (needs `FPSR_ASSETS_DIR`); `--ids`, `--limit`, `--plan-only` and other flags are listed in `scripts/render-game.ts`                                     |
+| `bun run render --from-clone <dir>`                            | render every 2.0+ print in a mirror clone and the record store (`RECORDS_DIR`) into `data/renders/` or `RENDERS_DIR` (needs `FPSR_ASSETS_DIR`); `--ids`, `--limit`, `--plan-only` and other flags are in `scripts/render-game.ts`                    |
 | `bun run render --from-disk [dir]`                             | the same, from records saved in `data/raw/` by `bun run ingest`                                                                                                                                                                                      |
 | `bun run render … --next N`                                    | a batch: the next N prints that still have work; run it again for the next N                                                                                                                                                                         |
 | `bun run render … --top N`                                     | also the N most-favourited prints (by `numberOfFavorites` in the source), first, with their pre-2.0 pages drawn too; the list is kept in the local D1 (`render_favorites`) and every print ever in it stays in scope (`--refresh-top` recomputes it) |
@@ -186,8 +204,18 @@ this repository.
 | `bun run authors --stage local\|prod`                          | put author names on prints whose record has only the author's id: records first, then one Firebase lookup per author, at most 5/s, never repeated (`--dry-run`, `--db N`, `--yes`, `--json`; see docs/deploy.md, "Author names")                     |
 | `bun run views:sync --stage local\|prod`                       | total prod's page views over the last 30 days into that stage's D1 for the Popular sort (`--dry-run`, `--db N`, `--yes`; needs `ANALYTICS_API_TOKEN`; see docs/deploy.md, "Page views")                                                              |
 | `bun run fold --stage local\|prod`                             | rebuild which prints are exact copies from scratch (every later copy left out of search, pointing at the earliest); writes only differences (`--all`, `--dry-run`, `--db N`, `--yes`)                                                                |
-| `bun run sync [--stage prod\|local]`                           | one update with the saved settings: fetch the mirror, ingest, authors, screenshots, renders, counts (docs/deploy.md)                                                                                                                                 |
-| `bun run sync --plan`                                          | fetch the mirror and say what an update would do, changing nothing                                                                                                                                                                                   |
+| `bun run screenshots --from-clone <dir>`                       | copy the prints' screenshot originals from Imgur into `data/screenshots/` or `SCREENSHOTS_DIR` (paced, resumable; `--from-disk`, `--ids`, `--recheck-dead`, `--plan-only`)                                                                           |
+| `bun run screenshots --from-uploads\|--from-sites local\|prod` | copy a stage's approved upload screenshots, or the images other sites' records name for its prints                                                                                                                                                   |
+| `bun run screenshots --make` / `--upload local\|prod`          | make the sizes (crops, large, link preview) / upload them to the stage's screenshots bucket (see docs/deploy.md, "Screenshots")                                                                                                                      |
+| `bun run screenshots:flags --stage local\|prod`                | write the stage's `screenshots` table, which search cards and print pages read, from what is uploaded (`--dry-run`, `--db N`, `--yes`, `--json`)                                                                                                     |
+| `bun run screenshots:remove --stage local\|prod --ids=<ids>`   | take screenshots down by print or Imgur id (`--reason`, `--dry-run`, `--yes`; see docs/deploy.md, "Screenshot removal requests")                                                                                                                     |
+| `bun run uploads --stage local\|prod`                          | admit uploads waiting as processing (over the Worker's size cap) through the same gate, without its caps (`--plan`, `--dry-run`, `--yes`, `--json`)                                                                                                  |
+| `bun run add <factoriobin link> --stage local\|prod`           | add one factoriobin.com post through the gate, without the Worker's size cap, and put it in the record store (`--plan`, `--yes`, `--json`)                                                                                                           |
+| `bun run polled --stage local\|prod --site codex\|fprints`     | put the records an update fetched from a polled site through the gate, and its deletions as sources gone (`--dry-run`, `--force`, `--yes`, `--json`)                                                                                                 |
+| `bun run records --stage local\|prod`                          | bring the record store (`RECORDS_DIR`) in line with the stage's prints from uploads, factoriobin, codex and fprints, for the render runs (`--dry-run`, `--json`)                                                                                     |
+| `bun run sync [--stage prod\|local]`                           | one update with the saved settings: removals, fetch every source (the mirror, waiting uploads, factoriocodex.com, fprints.xyz), ingest, authors, screenshots, renders, counts (docs/deploy.md)                                                       |
+| `bun run sync --plan`                                          | check every source (the mirror's latest commit, the other sites' listings) and say what an update would do, changing nothing                                                                                                                         |
+| `bun run sync --accept <commit\|site>`                         | let a change the last check held back through on the next update (a mirror commit, or a site such as `codex`)                                                                                                                                        |
 | `bun run removals --stage local\|prod`                         | after approving removal requests: copy the stage's blocks into the local D1 and delete the removed prints' local renders, thumbnails, queue rows and screenshot copies (`--dry-run`, `--yes`, `--json`; see docs/deploy.md, "Removal requests")      |
 | `bun run game-data <script-output dir> <factorio data dir>`    | regenerate `data/game/game-data-*.json` from the game's `--dump-data` and `--dump-prototype-locale` output (steps in `scripts/build-game-data.ts`)                                                                                                   |
 | `bun run icons <script-output dir>`                            | WebP icons from the game's `--dump-icon-sprites` output into `data/sprites/` and the local SPRITES bucket; writes `data/game/icons.json`                                                                                                             |
@@ -201,9 +229,10 @@ their first run and cache them in `.cache/fixtures/`, so later runs work offline
 
 ## Deploying
 
-`alchemy.run.ts` provisions one stage, `prod`: a Worker, a D1 database and three R2 buckets, in
-your own Cloudflare account (local development runs on miniflare). Log in with `bun alchemy
-profile edit --add Cloudflare`, optionally set a custom domain and the `/admin` settings in `.env`
+`alchemy.run.ts` provisions one stage, `prod`: the site's Worker, a daily cron Worker, a D1
+database, three R2 buckets (raw records, renders, screenshots) and the sprites bucket every stage
+shares, in your own Cloudflare account (local development runs on miniflare). Log in with
+`bun alchemy profile edit --add Cloudflare`, optionally set a custom domain and the `/admin` settings in `.env`
 (see `.env.example`), preview with `bun run plan:prod`, then run `bun run deploy:prod`. Load
 prints with `bun run backfill --stage prod` and icons with `bun run icons --upload remote`. The
 full runbook is in [docs/deploy.md](docs/deploy.md).
@@ -211,7 +240,8 @@ full runbook is in [docs/deploy.md](docs/deploy.md).
 ## Repository layout
 
 - `src/` – the SvelteKit app, the pipeline (`src/lib/server/pipeline/`) and the viewer (`src/lib/viewer/`)
-- `scripts/` – ingest, backfill, render, icons and game-data CLIs
+- `scripts/` – the CLIs: ingest, backfill, the update (`sync`) and its steps, polled sites, uploads,
+  records, screenshots, render, icons and game-data
 - `migrations/` – D1 schema
 - `data/` – game data (see [data/README.md](data/README.md))
 - `infra/`, `alchemy.run.ts` – Cloudflare resources
@@ -219,9 +249,14 @@ full runbook is in [docs/deploy.md](docs/deploy.md).
 ## Data sources and credits
 
 - Prints: [factorioprints.com](https://factorioprints.com), read from the GitHub mirror
-  [motlin/factorio-blueprint-firebase-cdn](https://github.com/motlin/factorio-blueprint-firebase-cdn).
-  Each print belongs to its author; none are included in this repository. Every print page has a
-  "Request removal" link; an approved request deletes the print and everything made from it, and keeps
+  [motlin/factorio-blueprint-firebase-cdn](https://github.com/motlin/factorio-blueprint-firebase-cdn);
+  [factoriocodex.com](https://factoriocodex.com), through its public API, and
+  [fprints.xyz](https://fprints.xyz), through its sitemap and import API, both polled politely (a
+  User-Agent naming this project, about one request a second); single
+  [factoriobin.com](https://factoriobin.com) posts added by link; and blueprints uploaded here by
+  signed-in players. Every print credits its author and links to each site it came from. Each print
+  belongs to its author; none are included in this repository. Every print page has a "Request
+  removal" link; an approved request deletes the print and everything made from it, and keeps
   it from being copied again.
 - Game data: Factorio's own data dump (`--dump-data`, `--dump-prototype-locale`) and its rename
   migrations; the viewer's extra prototype facts (for hover details) come from
@@ -235,9 +270,9 @@ Wube Software or factorioprints.com.
 ## Contributing
 
 Issues and pull requests are welcome. Before opening a pull request, run `bun run check` (0
-errors), `bun run lint`, `bun run fmt:check` and `bun test src/lib`. Formatting and linting use
-oxfmt and oxlint only. Never commit factorioprints records, game renders, icons or other files made
-from the game's sprites: `.gitignore` keeps them out.
+errors), `bun run lint`, `bun run fmt:check` and `bun test src/lib scripts`. Formatting and linting
+use oxfmt and oxlint only. Never commit print records from any site, game renders, icons or other
+files made from the game's sprites: `.gitignore` keeps them out.
 
 ## Licence
 

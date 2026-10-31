@@ -1,7 +1,7 @@
 /**
- * `bun run sync`: one update. Fetch every print source (today the factorioprints mirror clone), then
- * bring the stage up to date with them, using the settings saved from the admin Update tab (sync_meta
- * 'settings'; defaults in #lib/sync.js):
+ * `bun run sync`: one update. Fetch every print source (the factorioprints mirror clone, uploads waiting
+ * to be admitted, and the polled sites codex and fprints), then bring the stage up to date with them,
+ * using the settings saved from the admin Update tab (sync_meta 'settings'; defaults in #lib/sync.js):
  *
  *   1. removals     `removals --stage S --yes --json`: this machine's copies of prints the stage
  *                   deleted (blocks into the local D1, render rows and files, thumbnails, screenshot
@@ -16,15 +16,17 @@
  *                   (`--accept <id>` lets one through); or when it would have no prints, or its history was
  *                   rewritten. Then `records --stage S --json`: the record store
  *                   (RECORDS_DIR, default ~/data/factorio-records) brought in line with every other
- *                   site's records on the stage (today live uploads), for the render step
+ *                   site's records on the stage (uploads, factoriobin, codex and fprints), for the
+ *                   render step
  *   3. ingest       `backfill --stage S --from-clone … --json`; skipped when neither the sources'
- *                   digest nor the analyzer, index or viewer version changed since the last update
- *                   that ran it to the end (a backfill with failures that aren't the records' own
- *                   doesn't count as the end). Then, per polled site that is on, `polled --stage S
- *                   --site X`: its inbox through the gate, and its deletions as sources gone; after the
- *                   backfill, so a blueprint new on factorioprints and on the site in one update joins
- *                   the factorioprints print (its id stays the URL). When it wrote, it pulls the site's
- *                   own prints into the record store, so the render step draws them
+ *                   digest nor the analyzer, index, viewer, identity or fold version changed since
+ *                   the last update that ran it to the end (a backfill with failures that aren't the
+ *                   records' own doesn't count as the end), and no hand-over purge left `ingest_due`.
+ *                   Then, per polled site that is on, `polled --stage S --site X`: its inbox through
+ *                   the gate, and its deletions as sources gone; after the backfill, so a blueprint
+ *                   new on factorioprints and on the site in one update joins the factorioprints print
+ *                   (its id stays the URL). When it wrote, it pulls the site's own prints into the
+ *                   record store, so the render step draws them
  *   4. authors      `authors --stage S` (Firebase, only authors never asked;
  *                   factorioprints only); needs ingest
  *   5. screenshots  `screenshots` (new ones from Imgur), `--from-uploads S`
@@ -46,7 +48,8 @@
  * refuses to start while another is live, or its processes still run, or a render run is live.
  *
  *   bun run sync [--stage prod|local] [--yes]   one update (prod asks for "prod" unless --yes)
- *   bun run sync --plan [--json]                fetch and say what an update would do (sync_meta 'plan')
+ *   bun run sync --plan [--json]                check every source (the mirror's latest commit, the other
+ *                                               sites' listings) and say what an update would do (sync_meta 'plan')
  *   bun run sync --accept <commit|site|site:id> fetch a held-back change anyway (sync_meta 'accept'): a mirror
  *                                               commit, or a source the last check held back (`codex`), or that
  *                                               held change by its id (`codex:471@…`)

@@ -1,6 +1,6 @@
 /**
  * `bun run screenshots:remove --stage local|prod --ids=<print or Imgur ids> [--reason TEXT]`: take
- * screenshots down on request (the "Remove a screenshot" issue form), at once:
+ * screenshots down on request (a removal request about the screenshot, when the print stays), at once:
  *
  * 1. the run state (state.jsonl) marks each image removed, so no later fetch or upload brings it back;
  * 2. the stage's bucket gets a 'removed' manifest and loses every file of the image, with no grace

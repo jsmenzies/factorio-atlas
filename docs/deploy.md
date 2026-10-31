@@ -13,22 +13,22 @@ resources as prod, under its own names, and links to prod's sprites bucket.
 
 The stage gets:
 
-| Resource | Name                                  | Binding                                      | Notes                                                                 |
-| -------- | ------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------- |
-| Worker   | `factorio-prints-<stage>`             |                                              | the SvelteKit app; preview URLs off                                   |
-| D1       | `factorio-prints-<stage>-db-<n>`      | `DB`                                         | migrations from `./migrations` applied on deploy                      |
-| R2       | `factorio-prints-<stage>-raw`         | `RAW`                                        | retained on destroy                                                   |
-| R2       | `factorio-prints-<stage>-renders`     | `RENDERS`                                    | game renders; optional custom domain; retained on destroy             |
-| R2       | `factorio-prints-<stage>-screenshots` | `SCREENSHOTS`                                | copies of the prints' screenshots; optional custom domain; retained   |
-| R2       | `factorio-prints-sprites`             | `SPRITES`                                    | game icons, owned by prod; optional custom domain; retained           |
-| Assets   | `.svelte-kit/cloudflare`              | `ASSETS`                                     | client files; honours the adapter's `.assetsignore`, `_headers`       |
-| Access   | `factorio-prints-<stage> admin`       |                                              | Zero Trust application on `<domain>/admin*`; see "Admin page"         |
-| Cache    | the zone's cache rules                |                                              | prod, with a sprites, renders or screenshots domain; see "Edge cache" |
-| Limits   | three Workers rate limits             | `PAGE_LIMIT`, `SEARCH_LIMIT`, `REPORT_LIMIT` | per visitor; see "Rate limits" and "Removal requests"                 |
-| Views    | `factorio_prints_<stage>_views`       | `VIEWS`                                      | Analytics Engine dataset; see "Page views"                            |
-| Worker   | `factorio-prints-<stage>-views-cron`  |                                              | daily jobs: views rollup (`ANALYTICS_API_TOKEN`), abandoned deletions |
-| WAF      | the zone's rate-limiting rules        |                                              | prod, with a site domain; see "Rate limits"                           |
-| Bots     | the zone's Bot Fight Mode             |                                              | prod, with a site domain; see "Rate limits"                           |
+| Resource | Name                                  | Binding                                                                    | Notes                                                                 |
+| -------- | ------------------------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Worker   | `factorio-prints-<stage>`             |                                                                            | the SvelteKit app; preview URLs off                                   |
+| D1       | `factorio-prints-<stage>-db-<n>`      | `DB`                                                                       | migrations from `./migrations` applied on deploy                      |
+| R2       | `factorio-prints-<stage>-raw`         | `RAW`                                                                      | retained on destroy                                                   |
+| R2       | `factorio-prints-<stage>-renders`     | `RENDERS`                                                                  | game renders; optional custom domain; retained on destroy             |
+| R2       | `factorio-prints-<stage>-screenshots` | `SCREENSHOTS`                                                              | copies of the prints' screenshots; optional custom domain; retained   |
+| R2       | `factorio-prints-sprites`             | `SPRITES`                                                                  | game icons, owned by prod; optional custom domain; retained           |
+| Assets   | `.svelte-kit/cloudflare`              | `ASSETS`                                                                   | client files; honours the adapter's `.assetsignore`, `_headers`       |
+| Access   | `factorio-prints-<stage> admin`       |                                                                            | Zero Trust application on `<domain>/admin*`; see "Admin page"         |
+| Cache    | the zone's cache rules                |                                                                            | prod, with a sprites, renders or screenshots domain; see "Edge cache" |
+| Limits   | five Workers rate limits              | `PAGE_LIMIT`, `SEARCH_LIMIT`, `AUTH_LIMIT`, `REPORT_LIMIT`, `UPLOAD_LIMIT` | per visitor; see "Rate limits"                                        |
+| Views    | `factorio_prints_<stage>_views`       | `VIEWS`                                                                    | Analytics Engine dataset; see "Page views"                            |
+| Worker   | `factorio-prints-<stage>-views-cron`  |                                                                            | daily jobs: views rollup (`ANALYTICS_API_TOKEN`), abandoned deletions |
+| WAF      | the zone's rate-limiting rules        |                                                                            | prod, with a site domain; see "Rate limits"                           |
+| Bots     | the zone's Bot Fight Mode             |                                                                            | prod, with a site domain; see "Rate limits"                           |
 
 Prod's D1 database is retained on destroy (a staging stage's would be deleted). `<n>` is the D1
 generation from `infra/databases.ts` (1 by default).
@@ -253,12 +253,14 @@ Two layers keep one visitor from running up the bill:
 
 - **In the Worker** (`src/lib/server/rate-limit.ts`, run from `hooks.server.ts`): the Workers Rate
   Limiting bindings declared in `wrangler.jsonc` (`ratelimits`). Every request counts towards
-  `PAGE_LIMIT` (150 per 60 s) and every search, the home page with a query string, towards
-  `SEARCH_LIMIT` (40 per 60 s) as well, and every sign-in step (`/auth/…`) and account change
-  towards `AUTH_LIMIT` (10 per 60 s), and every upload, edit or delete of one towards `UPLOAD_LIMIT`
-  (10 per 60 s). A visitor is the client's IPv4 address or IPv6 /64, and
+  `PAGE_LIMIT` (150 per 60 s) and every search (the home page with a query string, and a quality
+  chip's counts, `/quality-levels`) towards `SEARCH_LIMIT` (40 per 60 s) as well, every sign-in step
+  (`/auth/…`) and account change towards `AUTH_LIMIT` (10 per 60 s), every removal request sent
+  towards `REPORT_LIMIT` (5 per 60 s), and every upload, edit or delete of one towards
+  `UPLOAD_LIMIT` (10 per 60 s). A visitor is the client's IPv4 address or IPv6 /64, and
   counts are kept per Cloudflare location and are approximate. Over a limit the answer is a `429`
-  with `Retry-After: 60`. `/admin` is exempt, and `bun run dev` has no limits (`bun run preview`
+  with `Retry-After: 60`. `/admin` is exempt, and so are render files, `/sprites/…` and
+  `/screenshots/…` (a zoom fetches dozens of tiles); `bun run dev` has no limits (`bun run preview`
   does). Periods can only be 10 or 60 s; `namespace_id` must be unique in the account.
 - **At the edge**, with a site domain: one WAF rate-limiting rule (the one the Free plan allows) on
   the site's hostname, outside `/_app/`, blocks an IP for 10 s once it sends 60 requests in 10 s in
@@ -388,12 +390,15 @@ last phase.
 
 ## Screenshots
 
-Each print's screenshot was uploaded by its author to Imgur for factorioprints.com. The site keeps
-its own copy in the stage's screenshots bucket, `factorio-prints-<stage>-screenshots`, and shows
-that. Imgur's copy is shown only while an image isn't copied yet; never once it is known to be gone
-from Imgur or taken down. Files are keyed by Imgur id
-(`src/lib/screenshots.ts`): the original exactly as Imgur served it (scaled down when over
-3840 × 2160 pixels or 8,192 px on a side), 16:9 crops for search cards and the print header, a
+A factorioprints print's screenshot was uploaded by its author to Imgur for factorioprints.com; a
+print from factoriocodex.com or fprints.xyz may name an image on that site, and an upload may carry
+one its uploader sent. The site keeps its own copy in the stage's screenshots bucket,
+`factorio-prints-<stage>-screenshots`, and shows that. Imgur's copy is shown only while an image
+isn't copied yet; never once it is known to be gone from Imgur or taken down; other sites' and
+uploaded images are never linked to, so a print shows none until its copy is made. Files are keyed
+by image id (the Imgur id, `upload.<hash>` or `<site>.<hash>`; `src/lib/screenshots.ts`): the
+original exactly as its source served it (scaled down when over 3840 × 2160 pixels or 8,192 px on a
+side), 16:9 crops for search cards and the print header, a
 "large" size for the lightbox, a JPEG for link previews, and a small manifest per image that the
 print and render pages read. With `SCREENSHOTS_DOMAIN_<STAGE>` set the bucket is public on that
 hostname through the cache rule above; unset, the Worker serves the files at `/screenshots/<key>`.
@@ -403,6 +408,8 @@ for every print):
 
 ```sh
 bun run screenshots --from-disk                  # fetch originals from Imgur (paced; resumable)
+bun run screenshots --from-uploads prod          # approved upload screenshots, from the stage's RAW bucket
+bun run screenshots --from-sites prod            # images other sites' records name, for the stage's prints
 bun run screenshots --make                       # make the sizes (optional: --upload makes what's missing)
 bun run screenshots --upload prod                # files, then each image's manifest; asks nothing of Imgur
 bun run screenshots:flags --stage prod           # the `screenshots` table search cards read; purges cached pages
@@ -417,7 +424,9 @@ below, or `screenshots:remove`).
 
 ### Screenshot removal requests
 
-The site footer links to a GitHub issue form ("Remove a screenshot"). To act on one:
+A request about a screenshot comes through the print's "Request removal" form ("The screenshot is
+inappropriate or mine") into `/admin/reports`, where approving it takes the whole print down
+("Removal requests" below). To take down only a screenshot and keep the print:
 
 ```sh
 bun run screenshots:remove --stage prod --ids=<print id or Imgur id> --reason "author's request" --dry-run
@@ -442,8 +451,9 @@ contact details and free text 30 days after a decision.
 **Approve** takes the print down at once, in the site Worker (`src/lib/server/takedown.ts`), in an
 order that never lets a page be cached as live again:
 
-1. `removal_blocks` (migration 0021) gets the print's id, its factorioprints id and, when it goes,
-   its screenshot's Imgur id, and a tombstone in `print_tombstones` makes its pages answer **410 Gone**
+1. `removal_blocks` (migration 0021) gets the print's id, every site it came from
+   (`<site>:<site id>`), its content's hashes (the whole print and its pages, from 50 entities and
+   tiles up) and, when it goes, its screenshot's image id, and a tombstone in `print_tombstones` makes its pages answer **410 Gone**
    from then on, whatever R2 still holds. Every ingest checks the blocks: the backfill leaves blocked
    prints out of its listing, and the database itself refuses a blocked print's `prints` row (a
    trigger), so an ingest that was already running can't bring it back.
@@ -565,14 +575,15 @@ D1 databases are numbered per stage in `DATABASES` in `infra/databases.ts`.
    roll back, set `bound: 1` and deploy (add `--adopt` if Alchemy says the database isn't its
    own). On a staging stage, db-1 is deleted by that deploy.
 
-## Keeping up with the mirror (`bun run sync`)
+## Keeping up with the sources (`bun run sync`)
 
-One update brings a stage up to date with the print sources (today the mirror), on the machine
-that renders (it needs the mirror clone, the sprite assets and the renders folder):
+One update brings a stage up to date with the print sources (the mirror, uploads waiting to be
+admitted, factoriocodex.com and fprints.xyz), on the machine that renders (it needs the mirror
+clone, the sprite assets and the renders folder):
 
 ```sh
 bun run sync                 # prod; asks for "prod" unless --yes
-bun run sync --plan          # fetch the mirror and say what an update would do; changes nothing
+bun run sync --plan          # check every source and say what an update would do; changes nothing
 bun run sync --accept <hash> # let a held-back mirror commit through on the next update
 bun run sync --accept codex  # let the change the last check held back on codex through (or codex:<id>)
 bun run sync --stage local   # try it on the local stage
@@ -592,12 +603,15 @@ In order, each step being the command you'd otherwise run by hand:
    5% (25 at least) of 466"). Once you've looked at the source, `bun run sync --accept <commit>` for the
    mirror, `bun run sync --accept codex` (or `codex:<id>`, the id `--plan` names) for another site, or
    Accept on the Update tab lets that change through.
-3. Ingest: `backfill --from-clone`, skipped when neither the sources nor the analyzer, index or
-   viewer version changed since the last update that ran it to the end. A backfill whose failures
-   aren't the records' own (storage, the network, a worker) doesn't count as the end.
-4. `authors`, then 5. `screenshots`, `--upload` and `screenshots:flags`.
-5. Render: `render:top` and `render:check`, then `render --next … --upload … --flags`.
-6. The stage's counts.
+3. Ingest: `backfill --from-clone`, skipped when neither the sources nor the analyzer, index,
+   viewer, identity or fold version changed since the last update that ran it to the end, and no
+   print a hand-over had to purge is waiting to be admitted again (`meta.ingest_due`). A backfill
+   whose failures aren't the records' own (storage, the network, a worker) doesn't count as the
+   end. Then `polled` for each polled site that is on.
+4. Authors: `authors`.
+5. Screenshots: `screenshots`, `--from-uploads`, `--from-sites`, `--upload` and `screenshots:flags`.
+6. Render: `render:top` and `render:check`, then `render --next … --upload … --flags`.
+7. The stage's counts.
 
 A failed step is marked and the steps that don't need it still run; authors and render need ingest,
 screenshots and render need removals.
@@ -651,12 +665,15 @@ found; the seven steps above it open to one line on each and every figure it rec
 the top. `/admin` is the Overview: what the site has by source, what needs a look (open removal requests, upload
 screenshots to approve, accounts being deleted), render coverage and past updates.
 
-## Admin page (`/admin`, `/admin/pipeline`, `/admin/render`, `/admin/reports`)
+## Admin page (`/admin`)
 
 `/admin` is the only private part of the site: backfill runs (`/admin/pipeline`) and render runs
-(`/admin/render`), with pause, resume and stop, and removal requests to approve or reject
-(`/admin/reports`, "Removal requests"). Render runs and updates happen on the machine that
-renders and are recorded in its local D1, so `/admin/render` shows them under `bun run dev`, where
+(`/admin/render`), with pause, resume and stop; removal requests to approve or reject
+(`/admin/reports`, "Removal requests"); upload screenshots waiting for approval
+(`/admin/screenshots`, "Uploads"); adding a factoriobin.com post by its link (`/admin/add`, "Adding
+prints by link"); and every account, with its uploads and sessions, to sign out everywhere or
+delete (`/admin/accounts`). Render runs and updates happen on the machine that renders and are
+recorded in its local D1, so `/admin/render` shows them under `bun run dev`, where
 it can also start a batch, and `/admin` is the Overview and `/admin/update` runs updates (deployed,
 `/admin` goes to `/admin/pipeline` and the Update tab is a 404). Two locks, both
 required:
@@ -739,8 +756,7 @@ secret, and warns about each provider that's off.
   id), which needs no verification by Google. Google names are often people's real names, so a new
   account is named "Engineer" and four random digits until its owner changes it.
 
-All three get a PKCE challenge; GitHub and Discord accepting it hasn't been tried against the real
-services yet, so check a first sign-in with each after setting the apps up.
+All three get a PKCE challenge. Check a first sign-in with each after setting the apps up.
 
 Locally (`bun run dev`), `.env` is read too; register apps with
 `http://127.0.0.1:5173/auth/<provider>/callback`, or use **Test account (vite dev only)** on the
