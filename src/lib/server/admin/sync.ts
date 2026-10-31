@@ -4,7 +4,8 @@
  * one `db.batch` (see busy.ts for why one).
  */
 import { LIVE_STATES } from '#lib/server/pipeline/runs.js';
-import { RENDER_STALE_MS, type RenderRunRow } from '#lib/server/render-queue.js';
+import { parseStages } from '#lib/render-stages.js';
+import { RENDER_STALE_MS, type RenderRunPhase, type RenderRunRow } from '#lib/server/render-queue.js';
 import {
 	parseSettings,
 	parseSyncRun,
@@ -15,10 +16,37 @@ import {
 	type SyncRun,
 	type SyncRunRow
 } from '#lib/sync.js';
-import { parseRenderRun, type RenderRun } from './render.js';
+import type { RenderRun } from './render.js';
 import { parseScopes, scopeStatements, STORE_WAITING_SQL, withStoreWaiting } from './render-scope.js';
 
 export const SYNC_RUNS_SHOWN = 10;
+
+/** render_runs' columns but `options`. */
+const RENDER_COLUMNS = `id, host, source, state, control, total, done, rendered, unchanged, skipped, failed, files, bytes, rate,
+	eta_seconds, started_at, updated_at, finished_at, error, upload_target, uploaded, upload_files, upload_bytes, upload_deleted,
+	uploads_pending, upload_failed, upload_error, upload_deletes_pending, prints_total, prints_done, prints_rendered,
+	upload_rate_bytes, upload_rate_files, upload_rate_pages`;
+
+type LatestRenderRow = Omit<RenderRunRow, 'options'> & { phase: string | null; thumbs: string | null; stages: string | null };
+
+const json = <T>(v: string | null): T | null => {
+	if (v === null) return null;
+	try {
+		return JSON.parse(v) as T;
+	} catch {
+		return null;
+	}
+};
+
+/** A render run with only the options the Update tab reads. */
+const renderOf = ({ phase, thumbs, stages, ...row }: LatestRenderRow): RenderRun => ({
+	...row,
+	options: {
+		phase: (phase as RenderRunPhase | null) ?? null,
+		thumbs: json<{ done: number; of: number }>(thumbs),
+		stages: parseStages(stages)
+	}
+});
 
 export interface RenderTotals {
 	/** Rendered pages, their bytes on disk, and how many of them are in the prod bucket. */
@@ -43,22 +71,24 @@ export const syncOverview = async (db: D1Database, now = Date.now()) => {
 			(SELECT count(*) FROM render_jobs WHERE status = 'failed') AS failed
 			FROM render_jobs WHERE status = 'done'`
 		),
-		// The render run an update's render step is on, or one started by hand, for its progress.
-		db
-			.prepare(
-				`SELECT * FROM render_runs WHERE state IN (${LIVE_STATES.map(() => '?').join(', ')}) AND updated_at > ? ORDER BY started_at DESC LIMIT 1`
-			)
-			.bind(...LIVE_STATES, now - RENDER_STALE_MS),
+		// The latest render run (render_runs_started): the one an update's render step is on, or one started by
+		// hand, for its progress and stages. Only the options the page reads: a batch's picks can be thousands of ids.
+		db.prepare(
+			`SELECT ${RENDER_COLUMNS}, json_extract(options, '$.phase') AS phase, json_extract(options, '$.thumbs') AS thumbs,
+			json_extract(options, '$.stages') AS stages FROM render_runs ORDER BY started_at DESC LIMIT 1`
+		),
 		db.prepare(STORE_WAITING_SQL),
 		...scopes
 	]);
-	const [runRows, metaRows, totals, liveRender, storeWaiting, ...scopeResults] = results;
+	const [runRows, metaRows, totals, latestRender, storeWaiting, ...scopeResults] = results;
 	const store = storeWaiting.results[0] as { unseen?: number; changed?: number } | undefined;
 	const waiting = { unseen: Number(store?.unseen ?? 0), changed: Number(store?.changed ?? 0) };
 	const runs: SyncRun[] = (runRows.results as SyncRunRow[]).map(parseSyncRun);
 	const m = metaRows.results as { key: string; value: string; updated_at: number }[];
 	const stored = meta<unknown>(m, 'settings');
-	const render = (liveRender.results as RenderRunRow[])[0];
+	const latest = (latestRender.results as LatestRenderRow[])[0];
+	const render = latest ? renderOf(latest) : null;
+	const live = render && LIVE_STATES.includes(render.state) && render.updated_at > now - RENDER_STALE_MS ? render : null;
 	return {
 		runs,
 		settings: parseSettings(stored?.value).settings,
@@ -66,7 +96,10 @@ export const syncOverview = async (db: D1Database, now = Date.now()) => {
 		plan: meta<SyncPlan>(m, 'plan'),
 		figures: meta<SyncFigures>(m, 'figures'),
 		totals: totals.results[0] as unknown as RenderTotals,
-		liveRender: render ? (parseRenderRun({ ...render, options: '{}' }) as RenderRun) : null,
+		/** The render run that is live now (beating within RENDER_STALE_MS), if any. */
+		liveRender: live,
+		/** The latest render run, live or not: an update's board reads its stages until the step records them. */
+		latestRender: render,
 		/** Record-store prints never rendered (already in `scopes`' total and left) and changed since (in `updated`). */
 		storeWaiting: waiting,
 		scopes: withStoreWaiting(parseScopes(scopeResults), waiting)

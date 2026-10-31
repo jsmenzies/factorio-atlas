@@ -48,7 +48,11 @@ screenshots: codex.ad495edadaac02a8 (codex-108): failed (over 30 MB from factori
 screenshots: fprints.0f688ce08ceec6a7 (fprints-1a2b): fetched
 `);
 		expect(p.step).toBe('screenshots');
-		expect(p.shots).toEqual({ toCopy: 716, bySite: { codex: { fetched: 1, failed: 1 }, fprints: { fetched: 1, failed: 0 } } });
+		expect(p.shots).toEqual({
+			toCopy: 716,
+			bySite: { codex: { fetched: 1, failed: 1 }, fprints: { fetched: 1, failed: 0 } },
+			last: 'fprints'
+		});
 		expect(p.sites).toEqual({});
 	});
 
@@ -57,72 +61,32 @@ screenshots: fprints.0f688ce08ceec6a7 (fprints-1a2b): fetched
 			step: null,
 			sites: {},
 			toAdmit: {},
-			shots: { toCopy: null, bySite: {} },
-			render: null
+			shots: { toCopy: null, bySite: {}, last: null },
+			command: null
 		});
 	});
 });
 
-// The render step as the 2026-10-30 22:42 update wrote it (sync-2026-10-30T22-42-36-541Z.log), shortened.
-const RENDER = `== Render and upload
-$ bun scripts/render-scope.ts top 1000 --from-clone /home/james/data/factorio-mirror --json
-{"n":1000,"source":"clone@afb755bc","prints":18226,"parsed":0,"cutoff":26,"refreshed_at":1793400349931,"ms":119,"former":1}
-$ bun scripts/render-game.ts --from-clone /home/james/data/factorio-mirror --records /home/james/data/factorio-records --next 50 --top 1000 --upload prod --flags --workers 4
-renders: /home/james/data/factorio-renders
-run 2026-10-30T22:46:02Z-es1r: --from-clone /home/james/data/factorio-mirror --records /home/james/data/factorio-records --next 50 --top 1000 --upload prod --flags --workers 4
-queued 451 pages of 454 (0 unchanged, 3 skipped, 0 failed) from 52 prints in 6.9 s; 5 prints (105 pages) with no 2.0+ page and 1 with no blueprint pages (planners only) left out
-  codex-164 26      11617 ents  134×356 tiles → 670×1780@5 + 16:5×12 32:9×23 64:17×45, 36.3 MB, 719 files (14 reused, 302 empty, 297 never drawn), 56.9 s, peak 2340 MB
-  ↑ codex-164 26     719 files, 36.3 MB (0 tiles already up)
-`;
-
-describe('logProgress: the render run', () => {
-	test('none before its runner starts; drawing once it has', () => {
-		const before = RENDER.slice(0, RENDER.indexOf('renders:'));
-		expect(logProgress(before)).toMatchObject({ step: 'render', render: null });
-		expect(logProgress(RENDER).render).toEqual({ phase: 'drawing', thumbs: null, uploadsLeft: null, ended: null, flags: null });
-	});
-
-	test('thumbnails after the last page: prints done of those offered', () => {
-		const p = logProgress(
-			RENDER +
-				"rendering done; bringing 20 prints' thumbnails up to date\n" +
-				'thumbnails: 30 of 50 prints made and uploaded\n' +
-				'  ↑ codex-129 6/1/0/12 39 files, 2.5 MB (16 tiles already up)\n' +
-				'thumbnails: 37 of 50 prints made and uploaded\n'
-		);
-		expect(p.render).toMatchObject({ phase: 'thumbnails', thumbs: { done: 37, of: 50, upload: true } });
-		// The run's own summary line starts the same way but is not a progress line.
-		const end = logProgress(
-			RENDER + 'thumbnails: 170 pages made (505 files, 20.1 MB), 1 of 29 prints up to date, 0 old files deleted from disk\n'
-		);
-		expect(end.render?.thumbs).toBeNull();
-	});
-
-	test('uploads, deletions, the end line, then the flags', () => {
-		const ended =
-			RENDER +
-			'rendering done; waiting for 3 pages to upload\n' +
-			'deletions: deleting replaced files whose grace period is over\n' +
-			'finished: 454/454 pages (50/50 prints), 451 rendered, 0 unchanged, 3 skipped, 0 failed; 21814 files, 1043.2 MB in 1820 s\n' +
-			'thumbnails: 2310 pages made (6905 files, 270.1 MB), 2 of 52 prints up to date, 0 old files deleted from disk\n' +
-			'uploads: 451 pages, 21814 files, 1043.2 MB, 0 deleted; 0 deletions scheduled / 0 pending; 0 pages still to upload\n';
-		expect(logProgress(RENDER + 'rendering done; waiting for 3 pages to upload\n').render).toMatchObject({
-			phase: 'uploads',
-			uploadsLeft: 3
+describe('logProgress: the command running now', () => {
+	test("the screenshots step's last command; the render step's lines aren't read", () => {
+		const p = logProgress(`== Copy screenshots
+$ bun scripts/screenshots.ts --from-clone /x --json
+screenshots: done in 3s: fetched 0
+$ bun scripts/screenshots.ts --from-sites prod --json
+`);
+		expect(p.command).toBe('scripts/screenshots.ts --from-sites prod --json');
+		const r = logProgress(`== Render and upload
+$ bun scripts/render-game.ts --next 50 --upload prod --flags
+run 2026-10-30T22:46:02Z-es1r: --next 50
+thumbnails: 37 of 50 prints made and uploaded
+flags: render:flags --stage prod
+`);
+		expect(r).toEqual({
+			step: 'render',
+			sites: {},
+			toAdmit: {},
+			shots: { toCopy: null, bySite: {}, last: null },
+			command: 'scripts/render-game.ts --next 50 --upload prod --flags'
 		});
-		expect(logProgress(RENDER + 'deletions: deleting replaced files whose grace period is over\n').render?.phase).toBe('deletions');
-		expect(logProgress(ended).render).toMatchObject({
-			phase: 'finishing',
-			ended: { state: 'finished', prints: 50, printsOf: 50, rendered: 451, failed: 0, uploaded: 451 }
-		});
-		const flags = logProgress(ended + 'flags: render:flags --stage prod, and a page-cache bump\n5,483 prints have a render for prod\n');
-		expect(flags.render).toMatchObject({ phase: 'flags', flags: { stage: 'prod', failed: false } });
-		expect(logProgress(ended + 'flags: render:flags --stage local\n').render?.flags).toEqual({ stage: 'local', failed: false });
-		const failed = logProgress(ended + 'flags: render:flags --stage prod\nflags: failed: remote /d1: Network connection lost.\n');
-		expect(failed.render?.flags).toEqual({ stage: 'prod', failed: true });
-	});
-
-	test('only in the render step', () => {
-		expect(logProgress(`== Update the site's prints\nrun 2026-10-30T22:46:02Z-abcd: --stage prod\n`).render).toBeNull();
 	});
 });

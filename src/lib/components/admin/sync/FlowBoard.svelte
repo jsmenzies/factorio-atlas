@@ -2,17 +2,18 @@
 	import { enhance } from '$app/forms';
 	import type { SyncFigures, SyncSettings } from '#lib/sync.js';
 	import { int, when } from '../metrics.js';
-	import type { Flow, Lane, Stage } from './flow.js';
+	import { COLUMNS, type Cell, type ColumnId, type Flow, type Row } from './flow.js';
 	import Toggle from './Toggle.svelte';
-	import { shortCommit, sourceMoved } from './view.js';
+	import { shortCommit } from './view.js';
 
 	/**
-	 * The Update tab's flow board: one lane per source through Waiting → Read → Gate, merging into the shared
-	 * Screenshots (three inputs, one sizing and upload) and Render stages, then the site's totals. Dots travel
-	 * along the pipe into the stage working now (none under reduced motion). The polled sites' switches sit on
-	 * their lanes (bound settings, saved by the page on `onchange`); Accept sits on a held-back lane. Built from
-	 * `flow` (flow.ts), so every figure is the update's own; a figure not recorded per source is shown once, on
-	 * the shared stage.
+	 * The Update tab's board (flow.ts): source rows × the update's steps in order, Changes | Added | Authors |
+	 * Screenshots, then the render run's stages Plan | Draw | Upload | Thumbnails under one "Render · one run" group,
+	 * and a Shared row for what is done once. Every cell is a status icon over one fact per line; each row has one
+	 * straight line through its cells, coloured as far as its prints have got. Every step column is the same width
+	 * and every row the same height; on narrow screens the board scrolls sideways inside itself. The polled sites'
+	 * switches sit on their rows before an update (bound settings, saved by the page on `onchange`); a held-back
+	 * source gets Accept in its Changes cell.
 	 */
 	let {
 		flow,
@@ -32,185 +33,85 @@
 		timeZone: string;
 	} = $props();
 
-	const HUE: Record<string, string> = { factorioprints: '#f59e0b', codex: '#38bdf8', fprints: '#a78bfa', uploads: '#34d399' };
-	const hue = (site: string) => HUE[site] ?? '#a8a29e';
-	let accepting = $state(false);
-
-	const flowing = (s: Stage) => s.state === 'active';
-	const reached = (s: Stage) => s.state === 'active' || s.state === 'done' || s.state === 'warn' || s.state === 'bad';
-	const ICON: Partial<Record<Stage['state'], string>> = { done: '✓', warn: '!', bad: '✗', held: '‖', off: '–' };
-	/** Where a source stands, for the Waiting node's small print (and its tooltip). */
-	const position = (l: Lane) => {
-		const p = l.plan;
-		if (!p || p.error) return '';
-		if (p.position) return p.position;
-		return sourceMoved(p)
-			? `this machine ${shortCommit(p.from.id)} (${when(p.from.date, now, timeZone)}) · latest ${shortCommit(p.to.id)} (${when(p.to.date, now, timeZone)})`
-			: `at ${shortCommit(p.to.id)} · last change ${when(p.to.date, now, timeZone)}`;
+	const HUE: Record<string, string> = {
+		factorioprints: '#f59e0b',
+		codex: '#38bdf8',
+		fprints: '#a78bfa',
+		uploads: '#34d399',
+		factoriobin: '#f472b6'
 	};
-	const sitesShots = $derived(flow.shots.inputs.find((i) => i.key === 'sites'));
+	const hue = (site: string) => HUE[site] ?? '#a8a29e';
+	const HEADS: Record<ColumnId, { name: string; sub: string; tip?: string }> = {
+		changes: { name: 'Changes', sub: 'at the source', tip: 'Step 2: what each source has that this machine hasn’t, read one source after another' },
+		added: { name: 'Added', sub: 'one source at a time' },
+		authors: { name: 'Authors', sub: 'factorioprints only', tip: 'Step 4: only factorioprints records arrive without names' },
+		shots: { name: 'Screenshots', sub: 'copied, then sized once', tip: 'Step 5: each source’s images copied, then sized and uploaded together' },
+		plan: { name: 'Plan', sub: 'batch and pages' },
+		draw: { name: 'Draw', sub: 'pages' },
+		upload: { name: 'Upload', sub: 'to the renders bucket' },
+		thumbs: { name: 'Thumbnails', sub: 'per print' }
+	};
+	const GATE_TIP =
+		'Step 3: every record from every source goes through one gate (blocked or unreadable refused; a blueprint already on the site is matched), one source at a time: factorioprints through the backfill, then codex, then fprints; uploads are admitted in the fetch.';
+	const RENDER_TIP = 'Step 6: one render run for every source, under one limit. Stages overlap: each print moves on as soon as it’s drawn.';
+	const KIND_WORD: Record<Cell['kind'], string> = {
+		done: 'done',
+		run: 'running',
+		found: 'found, waiting to run',
+		part: 'part-way',
+		warn: 'done, look at it',
+		bad: 'couldn’t run',
+		wait: 'not run yet',
+		na: 'doesn’t apply'
+	};
+	const MARK: Partial<Record<Cell['kind'], string>> = { done: '✓', warn: '!', bad: '✕', na: '—' };
+	/** Grid columns: the source names, then the eight step columns, all one width. */
+	const COL = (c: ColumnId) => COLUMNS.indexOf(c) + 2;
+	/** Grid rows: the Render group's header, the column heads, then the sources and the Shared row. */
+	const R1 = 3;
+	const shared = $derived(R1 + flow.rows.length);
+	const shotsReached = $derived(flow.rows.some((r) => r.reach >= COLUMNS.indexOf('shots')));
+	let accepting = $state(false);
 </script>
 
-{#snippet bar(value: number, of: number, color: string)}
-	<div class="mt-1 h-1.5 overflow-hidden rounded-full bg-stone-800">
-		<div class="h-full rounded-full transition-[width] duration-500" style="width: {Math.min(100, (value / Math.max(1, of)) * 100)}%; background: {color}"></div>
-	</div>
-{/snippet}
-
-{#snippet node(st: Stage, label: string, color: string, extra?: string)}
-	<div class="node {st.state}" style="--c: {color}" title={extra}>
-		<p class="flex items-center gap-1.5 text-[0.68rem] font-semibold tracking-wide text-stone-500 uppercase">
-			{#if st.state === 'active'}<span class="spinner" aria-hidden="true"></span>{:else if ICON[st.state]}<span class="mark {st.state}">{ICON[st.state]}</span>{/if}
-			{label}
-		</p>
-		{#if (st.value ?? 0) > 0 || (st.of && st.state !== 'todo')}
-			<p class="text-xl leading-tight font-semibold text-stone-100 tabular-nums">
-				{int(st.value ?? 0)}{#if st.of}<small class="text-xs font-normal text-stone-500"> / {int(st.of)}</small>{/if}
-			</p>
-		{/if}
-		{#if st.outcome}
-			{@const o = st.outcome}
-			{@const total = Math.max(1, o.of)}
-			<div class="mt-1 flex h-1.5 overflow-hidden rounded-full bg-stone-800" role="img" aria-label="{o.new} new, {o.joined} joined, {o.unreadable} unreadable, {o.failed} failed">
-				<span class="bg-emerald-400" style="width: {(o.new / total) * 100}%"></span>
-				<span class="bg-sky-400" style="width: {(o.joined / total) * 100}%"></span>
-				<span class="bg-stone-400" style="width: {(o.other / total) * 100}%"></span>
-				<span class="bg-amber-500" style="width: {(o.unreadable / total) * 100}%"></span>
-				<span class="bg-rose-400" style="width: {(o.failed / total) * 100}%"></span>
-			</div>
-			<p class="mt-1 flex flex-wrap gap-x-2.5 text-xs text-stone-400">
-				<span><b class="font-semibold text-emerald-300 tabular-nums">{int(o.new)}</b> new</span>
-				<span><b class="font-semibold text-sky-300 tabular-nums">{int(o.joined)}</b> joined</span>
-				{#if o.other}<span><b class="font-semibold text-stone-200 tabular-nums">{int(o.other)}</b> updated or unchanged</span>{/if}
-				{#if o.suggest}<span><b class="font-semibold text-violet-300 tabular-nums">{int(o.suggest)}</b> with suggestions</span>{/if}
-				{#if o.unreadable}<span><b class="font-semibold text-amber-300 tabular-nums">{int(o.unreadable)}</b> unreadable</span>{/if}
-				{#if o.failed}<span><b class="font-semibold text-rose-300 tabular-nums">{int(o.failed)}</b> failed</span>{/if}
-			</p>
-		{:else if st.of && st.state === 'active'}
-			{@render bar(st.value ?? 0, st.of, color)}
-		{/if}
-		{#if st.text}<p class="mt-0.5 text-xs break-words {st.state === 'bad' ? 'text-rose-300' : st.state === 'held' ? 'text-rose-200' : 'text-stone-400'}">{st.text}</p>{/if}
-		{#if st.figs?.length}
-			<p class="mt-0.5 flex flex-wrap gap-x-2.5 text-xs text-stone-500">
-				{#each st.figs as f, i (i)}
-					<span>{f.label} <b class="font-semibold tabular-nums {f.tone === 'bad' ? 'text-rose-300' : f.tone === 'warn' ? 'text-amber-200' : 'text-stone-300'}">{typeof f.value === 'number' ? int(f.value) : f.value}</b></span>
-				{/each}
-			</p>
-		{/if}
-	</div>
-{/snippet}
-
-{#snippet pipe(down: Stage, color: string)}
-	<div class="pipe {reached(down) ? 'filled' : ''} {flowing(down) ? 'flowing' : ''}" style="--c: {color}" aria-hidden="true"><span></span></div>
-{/snippet}
-
-{#snippet who(l: Lane, ids: boolean)}
-	<div class="flex min-w-0 items-start gap-2.5">
-		{#if l.toggle && !flow.live}
-			<Toggle bind:checked={settings.polled[l.toggle].on} id={ids ? `polled-${l.toggle}-on` : undefined} label="Fetch prints from {l.host}" {onchange} />
-		{/if}
-		<div class="min-w-0">
-			<p class="font-medium text-stone-100">{l.site}</p>
-			<p class="text-xs break-words text-stone-500" title={l.kind ? `${l.host} · ${l.kind}` : l.host}>{l.host}</p>
-			<p class="mt-0.5 text-[0.68rem] text-stone-500">{l.via}</p>
-		</div>
-	</div>
-{/snippet}
-
-{#snippet held(l: Lane)}
-	{#if l.plan?.blocked && !flow.live}
-		<div class="rounded-md border border-rose-900/70 bg-rose-950/40 p-2.5 text-sm">
-			<p class="text-rose-200">⚠ Held back, not fetched until accepted: {l.plan.blocked}</p>
-			<form
-				method="POST"
-				action="?/accept"
-				class="mt-2"
-				use:enhance={() => {
-					accepting = true;
-					return async ({ result, update }) => {
-						await update({ reset: false });
-						accepting = false;
-						if (result.type === 'success') onaccepted();
-					};
-				}}
+{#snippet accept(r: Row)}
+	{#if r.held}
+		<form
+			method="POST"
+			action="?/accept"
+			class="mt-1"
+			use:enhance={() => {
+				accepting = true;
+				return async ({ result, update }) => {
+					await update({ reset: false });
+					accepting = false;
+					if (result.type === 'success') onaccepted();
+				};
+			}}
+		>
+			<input type="hidden" name="site" value={r.held.site} />
+			<input type="hidden" name="id" value={r.held.id} />
+			<button
+				disabled={accepting}
+				class="rounded border border-stone-700 bg-stone-800 px-2 py-0.5 text-[0.7rem] font-medium text-stone-100 hover:bg-stone-700 disabled:opacity-60"
+				title="Fetch this change anyway in the next update: only after looking at the source"
 			>
-				<input type="hidden" name="site" value={l.plan.site} />
-				<input type="hidden" name="id" value={l.plan.to.id} />
-				<button
-					disabled={accepting}
-					class="rounded-lg border border-stone-700 bg-stone-800 px-3 py-1 text-xs font-medium text-stone-100 hover:bg-stone-700 disabled:opacity-60"
-					title="Fetch this change anyway in the next update: only after looking at the source"
-				>
-					{accepting ? 'Accepting…' : l.plan.polled ? 'Accept: fetch it anyway' : `Accept ${shortCommit(l.plan.to.id)}`}
-				</button>
-			</form>
-		</div>
+				{accepting ? 'Accepting…' : r.held.polled ? 'Accept' : `Accept ${shortCommit(r.held.id)}`}
+			</button>
+		</form>
 	{/if}
 {/snippet}
 
-{#snippet gateCell(l: Lane)}
-	{@render node(l.gate, 'Gate', hue(l.site))}
-	{#if l.authors}
-		<div class="mt-1.5 rounded-md border border-dashed border-stone-800 px-2 py-1 text-xs">
-			<span class="text-stone-500">Authors · factorioprints only:</span>
-			<span class={l.authors.state === 'bad' ? 'text-rose-300' : l.authors.state === 'warn' ? 'text-amber-200' : 'text-stone-400'}>
-				{l.authors.state === 'active' ? 'naming…' : l.authors.text || '—'}
-			</span>
-		</div>
-	{/if}
-{/snippet}
-
-{#snippet shotsBody()}
-	<div class="node {flow.shots.stage.state} h-full" style="--c: #f59e0b">
-		<p class="flex items-center gap-1.5 text-[0.68rem] font-semibold tracking-wide text-stone-500 uppercase">
-			{#if flow.shots.stage.state === 'active'}<span class="spinner" aria-hidden="true"></span>{:else if ICON[flow.shots.stage.state]}<span class="mark {flow.shots.stage.state}">{ICON[flow.shots.stage.state]}</span>{/if}
-			Screenshots <span class="font-normal tracking-normal normal-case">· 3 inputs, one shared sizing</span>
-		</p>
-		{#if flow.shots.stage.text}<p class="mt-0.5 text-xs text-stone-400">{flow.shots.stage.text}</p>{/if}
-		<div class="mt-1.5 space-y-1.5">
-			{#each flow.shots.inputs as input (input.key)}
-				<div class="rounded-md border border-stone-800 px-2 py-1.5 {input.stage.state === 'active' ? 'live-input' : ''}">
-					<p class="flex flex-wrap items-center gap-x-1.5 text-xs">
-						{#each input.sites as s (s)}<span class="inline-block size-2 rounded-full" style="background: {hue(s)}" title={s}></span>{/each}
-						<span class="font-medium text-stone-300">{input.label}</span>
-						<span class="text-stone-500">← {input.sites.join(', ')}</span>
-					</p>
-					{#if input.stage.of}
-						<p class="text-sm text-stone-100 tabular-nums">{int(input.stage.value ?? 0)} <small class="text-xs text-stone-500">/ {int(input.stage.of)}</small></p>
-						{@render bar(input.stage.value ?? 0, input.stage.of, '#f59e0b')}
-					{/if}
-					{#if input.live?.length}
-						<p class="mt-0.5 flex flex-wrap gap-x-2.5 text-xs text-stone-400">
-							{#each input.live as s (s.site)}<span>{s.site} <b class="text-stone-200 tabular-nums">{int(s.fetched)}</b>{#if s.failed} · <b class="text-amber-200 tabular-nums">{int(s.failed)}</b> failed{/if}</span>{/each}
-						</p>
-					{/if}
-					{#if input.stage.figs?.length}
-						<p class="mt-0.5 flex flex-wrap gap-x-2.5 text-xs text-stone-500">
-							{#each input.stage.figs as f, i (i)}<span>{f.label} <b class="font-semibold tabular-nums {f.tone === 'bad' ? 'text-rose-300' : f.tone === 'warn' ? 'text-amber-200' : 'text-stone-300'}">{typeof f.value === 'number' ? int(f.value) : f.value}</b></span>{/each}
-						</p>
-					{:else if input.stage.state === 'todo' || input.stage.state === 'skip'}
-						<p class="text-xs text-stone-600">{input.stage.state === 'skip' ? 'not run' : '—'}</p>
-					{/if}
-				</div>
-			{/each}
-			<div class="rounded-md border border-amber-500/20 bg-amber-500/[0.04] px-2 py-1.5">
-				<p class="text-xs font-medium text-stone-300">Sizing and upload <span class="font-normal text-stone-500">· shared</span></p>
-				{#if flow.shots.sizing.figs?.length}
-					<p class="mt-0.5 flex flex-wrap gap-x-2.5 text-xs text-stone-500">
-						{#each flow.shots.sizing.figs as f, i (i)}<span>{f.label} <b class="font-semibold tabular-nums {f.tone === 'bad' ? 'text-rose-300' : 'text-stone-300'}">{typeof f.value === 'number' ? int(f.value) : f.value}</b></span>{/each}
-					</p>
-				{:else}
-					<p class="text-xs text-stone-600">{flow.shots.sizing.state === 'skip' ? 'not run' : '—'}</p>
-				{/if}
-			</div>
-		</div>
-	</div>
-{/snippet}
-
-{#snippet renderBody()}
-	<div class="h-full">
-		{@render node(flow.render, 'Render · shared', '#f59e0b', 'One render run for every source: it reads the mirror clone and the record store')}
-		<p class="mt-1.5 text-[0.68rem] text-stone-500">One run for every source, reading the mirror clone and the record store.</p>
+{#snippet box(c: Cell, held: Row | null = null)}
+	<div class="c7 {c.kind}" title={c.tip}>
+		<span class="sr-only">{c.label ? `${c.label}: ` : ''}{KIND_WORD[c.kind]}.</span>
+		{#if c.kind === 'run'}<span class="spin" aria-hidden="true"></span>{:else}<span class="ic {c.kind}" aria-hidden="true">{MARK[c.kind] ?? ''}</span>{/if}
+		{#if c.label}<span class="lab">{c.label}</span>{/if}
+		{#each c.facts as f, i (i)}
+			<span class="fact {f.tone ?? ''}">{#if f.n !== undefined}<b>{typeof f.n === 'number' ? int(f.n) : f.n}</b>{f.text ? ' ' : ''}{/if}{f.text}</span>
+		{/each}
+		{#if c.bar !== undefined && c.bar !== null}<i class="wbar" aria-hidden="true"><span style="width: {c.bar}%"></span></i>{/if}
+		{#if held}{@render accept(held)}{/if}
 	</div>
 {/snippet}
 
@@ -231,227 +132,348 @@
 <section aria-labelledby="flow-title" class="space-y-2">
 	<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
 		<h2 id="flow-title" class="text-xs font-semibold tracking-wide text-stone-500 uppercase">Where the prints go</h2>
-		{#if flow.caption}<p class="text-xs text-stone-500">Read, Gate, Screenshots and Render: <span class="text-stone-300">{flow.caption}</span></p>{/if}
+		<p class="text-xs text-stone-500"><span class="text-stone-300">{flow.caption.lead}</span> {flow.caption.rest}</p>
 	</div>
 
-	<!-- Wide screens: the lanes side by side, the shared stages spanning them. -->
-	<div class="board hidden lg:grid">
-		<div class="head" style="grid-column: 1">Source</div>
-		<div class="head" style="grid-column: 2">Waiting <span>now</span></div>
-		<div class="head" style="grid-column: 4">Read <span>per source</span></div>
-		<div class="head" style="grid-column: 6">Gate <span>one gate · every record ends in applyPlan</span></div>
-		<div class="head" style="grid-column: 8">Screenshots <span>shared</span></div>
-		<div class="head" style="grid-column: 10">Render <span>shared</span></div>
-		{#each flow.lanes as l, i (l.site)}
-			{@const row = i + 2}
-			<div class="lane-bg {l.plan?.blocked ? 'held' : ''}" style="grid-row: {row}; --c: {hue(l.site)}"></div>
-			<div class="cell" style="grid-row: {row}; grid-column: 1">{@render who(l, true)}</div>
-			<div class="cell" style="grid-row: {row}; grid-column: 2">{@render node(l.waiting, 'Waiting', hue(l.site), position(l))}{#if position(l)}<p class="mt-0.5 truncate font-mono text-[0.65rem] text-stone-600" title={position(l)}>{position(l)}</p>{/if}</div>
-			{#if l.plan?.blocked && !flow.live}
-				<!-- Held back: nothing goes further until it is accepted; the reason and Accept take the lane. -->
-				<div class="cell" style="grid-row: {row}; grid-column: 3 / 8">{@render held(l)}</div>
-			{:else}
-				<div class="cell pipe-cell" style="grid-row: {row}; grid-column: 3">{@render pipe(l.read, hue(l.site))}</div>
-				<div class="cell" style="grid-row: {row}; grid-column: 4">{@render node(l.read, 'Read', hue(l.site))}</div>
-				<div class="cell pipe-cell" style="grid-row: {row}; grid-column: 5">{@render pipe(l.gate, hue(l.site))}</div>
-				<div class="cell" style="grid-row: {row}; grid-column: 6">{@render gateCell(l)}</div>
-				<div class="cell pipe-cell" style="grid-row: {row}; grid-column: 7">{@render pipe(flow.shots.stage, hue(l.site))}</div>
-			{/if}
-		{/each}
-		<div class="cell" style="grid-row: 2 / span {flow.lanes.length}; grid-column: 8">{@render shotsBody()}</div>
-		<div class="cell pipe-cell" style="grid-row: 2 / span {flow.lanes.length}; grid-column: 9">{@render pipe(flow.render, '#f59e0b')}</div>
-		<div class="cell" style="grid-row: 2 / span {flow.lanes.length}; grid-column: 10">{@render renderBody()}</div>
-	</div>
-
-	<!-- Phones and narrow screens: one card per source (only the stages its prints reached), then the shared stages. -->
-	<div class="space-y-2 lg:hidden">
-		{#each flow.lanes as l (l.site)}
-			<article class="rounded-lg border border-l-[3px] bg-stone-900/50 p-3 {l.plan?.blocked ? 'border-rose-900 bg-rose-950/20' : 'border-stone-800'}" style="border-left-color: {hue(l.site)}">
-				{@render who(l, false)}
-				<div class="mt-2">{@render held(l)}</div>
-				<div class="mt-2 space-y-1.5">
-					{@render node(l.waiting, 'Waiting', hue(l.site), position(l))}
-					{#if reached(l.read) || l.read.state === 'held'}{@render pipe(l.read, hue(l.site))}{@render node(l.read, 'Read', hue(l.site))}{/if}
-					{#if reached(l.gate)}{@render pipe(l.gate, hue(l.site))}{@render gateCell(l)}{:else if l.authors && reached(l.authors)}{@render gateCell(l)}{/if}
+	<div class="scroller">
+		<div class="board" style="grid-template-rows: auto auto repeat({flow.rows.length + 1}, minmax(5.5rem, 1fr))">
+			<!-- The Render group's header, over its four stages. -->
+			<div class="head grp" style="grid-row: 1; grid-column: {COL('plan')} / span 4" title={RENDER_TIP}>
+				Render · one run{#if flow.rendering}<span class="spin head-spin" role="status" aria-label="running"></span>{/if}
+				<span class="sub">stages overlap: each print moves on as soon as it’s drawn</span>
+			</div>
+			<div class="head first" style="grid-row: 2; grid-column: 1">Source</div>
+			{#each COLUMNS as c (c)}
+				{@const h = HEADS[c]}
+				<div class="head" style="grid-row: 2; grid-column: {COL(c)}" title={c === 'added' ? GATE_TIP : (h.tip ?? RENDER_TIP)}>
+					{h.name}{#if c === 'added'}<span class="gate-n">&nbsp;· one gate</span>{/if}
+					<span class="sub">{c === 'draw' && flow.threads ? `pages, ${int(flow.threads)} threads` : h.sub}</span>
 				</div>
-			</article>
-		{/each}
-		<p class="pt-1 text-xs font-semibold tracking-wide text-stone-500 uppercase">Shared by every source</p>
-		{@render shotsBody()}
-		{@render renderBody()}
-	</div>
+			{/each}
 
-	{#if sitesShots?.stage.figs?.length && !flow.live}
-		<p class="text-[0.68rem] text-stone-600">Other sites’ screenshots and renders aren’t counted per site by the update; they show once, for every source.</p>
-	{/if}
+			{#each flow.rows as r, i (r.site)}
+				{@const row = R1 + i}
+				<div class="lane" style="grid-row: {row}; --c: {hue(r.site)}"></div>
+				<!-- One straight line through the row's cells: its colour as far as its prints have got, grey after. -->
+				{#if r.reach >= 0}
+					<div class="wire" style="grid-row: {row}; grid-column: {COL('changes')} / {r.reach + 3}; --c: {hue(r.site)}"></div>
+				{/if}
+				{#if r.reach < COLUMNS.length - 1}
+					<div class="wire grey" style="grid-row: {row}; grid-column: {Math.max(COL('changes'), r.reach + 2)} / {COLUMNS.length + 2}"></div>
+				{/if}
+				<div class="cell first" style="grid-row: {row}; grid-column: 1">
+					<div class="who">
+						{#if r.toggle}
+							<Toggle bind:checked={settings.polled[r.toggle].on} id="polled-{r.toggle}-on" label="Fetch prints from {r.site}" {onchange} />
+						{/if}
+						<p class="name" title={r.tip}>{r.site}</p>
+					</div>
+				</div>
+				{#each COLUMNS as c (c)}
+					<div class="cell" style="grid-row: {row}; grid-column: {COL(c)}">{@render box(r.cells[c], c === 'changes' ? r : null)}</div>
+				{/each}
+			{/each}
+
+			<!-- The Shared row: what is done once for every source. -->
+			<div class="vwire {shotsReached ? '' : 'grey'}" style="grid-row: {R1} / {shared}; grid-column: {COL('shots')}"></div>
+			<div class="lane shared-lane" style="grid-row: {shared}; --c: #57534e"></div>
+			<div class="cell first" style="grid-row: {shared}; grid-column: 1">
+				<div>
+					<p class="name">Shared</p>
+					<p class="text-[0.7rem] leading-tight text-stone-500">done once for every source</p>
+				</div>
+			</div>
+			<div class="cell" style="grid-row: {shared}; grid-column: {COL('shots')}">{@render box(flow.shared.sizing)}</div>
+			<div class="cell" style="grid-row: {shared}; grid-column: {COL('plan')} / span 2">
+				<div class="c7 sum">
+					<span class="lab">{flow.shared.summary.title}</span>
+					{#each flow.shared.summary.lines as line, i (i)}<span class="fact text-stone-400">{line}</span>{/each}
+				</div>
+			</div>
+			<div class="cell" style="grid-row: {shared}; grid-column: {COL('upload')}">{@render box(flow.shared.cleanup)}</div>
+			<div class="cell" style="grid-row: {shared}; grid-column: {COL('thumbs')}">{@render box(flow.shared.flags)}</div>
+
+			<!-- Outlines: the one gate, and the render run's group. -->
+			<div class="outline-box" style="grid-row: 2 / span {flow.rows.length + 1}; grid-column: {COL('added')}"></div>
+			<div class="outline-box grp" style="grid-row: 1 / span {flow.rows.length + 3}; grid-column: {COL('plan')} / span 4"></div>
+		</div>
+	</div>
 	{@render sink()}
 </section>
 
 <style>
+	.scroller {
+		/* The board's own sideways scroll on narrow screens; the page never scrolls sideways. */
+		overflow-x: auto;
+		max-width: 100%;
+		padding-bottom: 2px;
+	}
 	.board {
-		grid-template-columns: 11rem minmax(0, 1fr) 1.25rem minmax(0, 1fr) 1.25rem minmax(0, 1.35fr) 1.25rem minmax(0, 1.45fr) 1.25rem minmax(0, 1.1fr);
-		column-gap: 0;
+		display: grid;
+		grid-template-columns: 9.5rem repeat(8, minmax(0, 1fr));
 		row-gap: 0.5rem;
+		min-width: 72rem;
 		position: relative;
 	}
 	.head {
-		grid-row: 1;
-		padding: 0 0.25rem 0.1rem;
+		position: relative;
+		z-index: 3;
+		padding: 0 0.4rem 0.25rem;
 		font-size: 0.68rem;
 		font-weight: 600;
 		letter-spacing: 0.06em;
 		text-transform: uppercase;
-		color: #78716c;
+		color: #a8a29e;
+		cursor: help;
 	}
-	.head span {
+	.head.first {
+		color: #78716c;
+		padding-left: 0.75rem;
+		cursor: default;
+	}
+	.head .sub {
 		display: block;
 		font-weight: 400;
 		letter-spacing: 0;
 		text-transform: none;
-		color: #57534e;
+		color: #78716c;
 	}
-	.lane-bg {
-		grid-column: 1 / 8;
+	.head .gate-n {
+		font-weight: 400;
+		letter-spacing: 0;
+		text-transform: none;
+		color: #a8a29e;
+	}
+	.head-spin {
+		margin: 0 0 0 0.45rem;
+		vertical-align: -2px;
+	}
+	.head.grp {
+		padding: 0.4rem 0.6rem 0.15rem;
+		color: #d6d3d1;
+	}
+	.lane {
+		grid-column: 1 / -1;
 		border: 1px solid #292524;
 		border-left: 3px solid var(--c);
 		border-radius: 0.6rem;
 		background: color-mix(in srgb, #1c1917 50%, transparent);
 	}
-	.lane-bg.held {
-		border-color: #881337;
-		border-left-color: #fb7185;
-		background: color-mix(in srgb, #4c0519 35%, transparent);
+	.shared-lane {
+		background: color-mix(in srgb, #1c1917 30%, transparent);
+	}
+	.wire {
+		position: relative;
+		z-index: 1;
+		align-self: center;
+		height: 2px;
+		margin: 0 3rem;
+		background: color-mix(in srgb, var(--c) 70%, transparent);
+		pointer-events: none;
+	}
+	.wire.grey {
+		background: #44403c;
+	}
+	.vwire {
+		position: relative;
+		z-index: 1;
+		justify-self: center;
+		width: 2px;
+		margin: 2.75rem 0 -1rem;
+		background: #f59e0b55;
+		pointer-events: none;
+	}
+	.vwire.grey {
+		background: repeating-linear-gradient(#44403c 0 4px, transparent 4px 8px);
 	}
 	.cell {
 		position: relative;
-		padding: 0.55rem 0.4rem;
+		z-index: 2;
+		display: flex;
+		align-items: stretch;
+		padding: 0.4rem 0.3rem;
 		min-width: 0;
 	}
-	.cell:first-of-type {
-		padding-left: 0.7rem;
+	.cell.first {
+		position: sticky;
+		left: 0;
+		z-index: 4;
+		align-items: center;
+		/* Inside the lane's borders, so a background on narrow screens doesn't hide them. */
+		margin: 1px 0 1px 3px;
+		padding-left: calc(0.75rem - 3px);
 	}
-	.pipe-cell {
+	.who {
 		display: flex;
 		align-items: center;
-		padding: 0;
+		gap: 0.5rem;
+		min-width: 0;
 	}
-	.node {
+	.name {
+		color: #f5f5f4;
+		font-size: 0.95rem;
+		white-space: nowrap;
+	}
+	.name[title] {
+		cursor: help;
+	}
+	.c7 {
+		position: relative;
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 1px;
 		border: 1px solid #292524;
 		border-radius: 0.5rem;
 		background: #0c0a09;
-		padding: 0.4rem 0.55rem;
+		padding: 0.35rem 0.5rem;
+		font-size: 0.75rem;
+		line-height: 1.35;
+		color: #d6d3d1;
 		min-width: 0;
-		transition:
-			box-shadow 0.3s,
-			border-color 0.3s;
+		cursor: help;
 	}
-	.node.todo {
-		border-style: dashed;
-		opacity: 0.55;
+	.c7 .fact {
+		max-width: 100%;
+		overflow-wrap: anywhere;
 	}
-	.node.skip,
-	.node.off {
-		opacity: 0.6;
+	.c7 .fact b {
+		color: #f5f5f4;
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
 	}
-	.node.warn {
-		border-color: color-mix(in srgb, #b45309 70%, transparent);
-	}
-	.node.bad,
-	.node.held {
-		border-color: #9f1239;
-	}
-	.node.active {
-		border-color: var(--c);
-		box-shadow:
-			0 0 0 1px var(--c),
-			0 0 22px -6px var(--c);
-		animation: glow 2s ease-in-out infinite;
-	}
-	.mark {
-		font-weight: 700;
-	}
-	.mark.done {
-		color: #34d399;
-	}
-	.mark.warn {
+	.c7 .fact.warn,
+	.c7 .fact.warn b {
 		color: #fcd34d;
 	}
-	.mark.bad,
-	.mark.held {
+	.c7 .fact.bad,
+	.c7 .fact.bad b {
+		color: #fda4af;
+	}
+	.c7 .lab {
+		color: #d6d3d1;
+		font-weight: 500;
+	}
+	.c7.found,
+	.c7.warn {
+		border-color: #b4530999;
+	}
+	.c7.run {
+		border-color: #f59e0b99;
+		box-shadow: 0 0 16px -8px #f59e0b;
+	}
+	.c7.bad {
+		border-color: #9f1239;
+	}
+	.c7.wait,
+	.c7.na {
+		border-style: dashed;
+		border-color: #44403c;
+	}
+	.c7.wait .lab {
+		color: #78716c;
+	}
+	.c7.sum {
+		cursor: default;
+	}
+	.ic {
+		display: inline-grid;
+		place-items: center;
+		width: 0.95rem;
+		height: 0.95rem;
+		margin-bottom: 1px;
+		font-size: 0.75rem;
+		font-weight: 700;
+		line-height: 1;
+	}
+	.ic.done {
+		color: #34d399;
+	}
+	.ic.warn {
+		color: #fcd34d;
+	}
+	.ic.bad {
 		color: #fb7185;
 	}
-	.spinner {
+	.ic.na {
+		color: #78716c;
+		font-weight: 400;
+	}
+	.ic.found::before {
+		content: '';
+		width: 0.5rem;
+		height: 0.5rem;
+		border-radius: 50%;
+		background: #f59e0b;
+	}
+	.ic.wait::before {
+		content: '';
+		width: 0.55rem;
+		height: 0.55rem;
+		border-radius: 50%;
+		border: 1.5px solid #57534e;
+	}
+	.ic.part::before {
+		content: '';
 		width: 0.7rem;
 		height: 0.7rem;
+		border-radius: 50%;
+		background: conic-gradient(#f59e0b 0 65%, #44403c 65% 100%);
+	}
+	.spin {
+		display: inline-block;
+		width: 0.75rem;
+		height: 0.75rem;
+		margin: 0.1rem 0 0.15rem;
 		border-radius: 999px;
 		border: 2px solid color-mix(in srgb, #f59e0b 30%, transparent);
 		border-top-color: #fbbf24;
 		animation: spin 0.9s linear infinite;
 	}
-	.pipe {
-		position: relative;
+	.wbar {
+		display: block;
 		width: 100%;
-		height: 2px;
-		background: #44403c;
+		height: 3px;
+		margin-top: 3px;
+		border-radius: 99px;
+		background: #292524;
+		overflow: hidden;
 	}
-	.pipe.filled {
-		background: color-mix(in srgb, var(--c) 60%, transparent);
+	.wbar span {
+		display: block;
+		height: 100%;
+		background: #f59e0b;
+		transition: width 0.5s;
 	}
-	.pipe.flowing span {
-		position: absolute;
-		inset: -3px 0;
-		background: radial-gradient(circle, var(--c) 0 2.5px, transparent 3px) 0 50% / 10px 8px repeat-x;
-		animation: travel 0.6s linear infinite;
+	/* Not `.ring`: Tailwind has a utility of that name. */
+	.outline-box {
+		position: relative;
+		z-index: 2;
+		pointer-events: none;
+		margin: -0.25rem 0 0;
+		border: 1px solid #a8a29e55;
+		border-radius: 0.65rem;
 	}
-	.live-input {
-		border-color: color-mix(in srgb, #f59e0b 60%, transparent);
-		box-shadow: 0 0 16px -8px #f59e0b;
-	}
-	@media (max-width: 1023px) {
-		.pipe {
-			width: 2px;
-			height: 0.8rem;
-			margin-left: 1rem;
-		}
-		.pipe.flowing span {
-			inset: 0 -3px;
-			background: radial-gradient(circle, var(--c) 0 2.5px, transparent 3px) 50% 0 / 8px 10px repeat-y;
-			animation-name: travel-down;
-		}
-	}
-	@keyframes travel {
-		to {
-			background-position: 10px 50%;
-		}
-	}
-	@keyframes travel-down {
-		to {
-			background-position: 50% 10px;
-		}
-	}
-	@keyframes glow {
-		50% {
-			box-shadow:
-				0 0 0 1px var(--c),
-				0 0 30px -4px var(--c);
-		}
+	.outline-box.grp {
+		border-color: #f59e0b55;
+		margin: 0 1px;
 	}
 	@keyframes spin {
 		to {
 			transform: rotate(360deg);
 		}
 	}
-	/* Reduced motion: a still board, no travelling dots or glow. */
+	/* Reduced motion: a still ring with a lit quarter. */
 	@media (prefers-reduced-motion: reduce) {
-		.node.active,
-		.spinner {
+		.spin {
 			animation: none;
 		}
-		.pipe.flowing span {
-			display: none;
-		}
-		.pipe.flowing {
-			background: var(--c);
+	}
+	/* Narrow screens: the sources' names stay in view while the board scrolls under them. */
+	@media (max-width: 1279px) {
+		.cell.first {
+			background: linear-gradient(to right, #161412 80%, transparent);
 		}
 	}
 </style>

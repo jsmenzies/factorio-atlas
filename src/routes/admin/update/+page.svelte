@@ -2,7 +2,7 @@
 	import { deserialize } from '$app/forms';
 	import { invalidate } from '$app/navigation';
 	import { PIPELINE_DEP, poll, serverClock, syncTimeZone } from '#lib/components/admin/live.svelte.js';
-	import { clock as clockText, int, percent } from '#lib/components/admin/metrics.js';
+	import { clock as clockText } from '#lib/components/admin/metrics.js';
 	import FlowBoard from '#lib/components/admin/sync/FlowBoard.svelte';
 	import FlowSettings from '#lib/components/admin/sync/FlowSettings.svelte';
 	import FlowStrip from '#lib/components/admin/sync/FlowStrip.svelte';
@@ -10,7 +10,7 @@
 	import { buildFlow, nowSentence } from '#lib/components/admin/sync/flow.js';
 	import { previewSteps, updateState } from '#lib/components/admin/sync/view.js';
 	import type { LogProgress } from '#lib/sync-progress.js';
-	import type { SyncSettings, SyncStepId } from '#lib/sync.js';
+	import type { SyncSettings } from '#lib/sync.js';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -103,15 +103,15 @@
 					plan,
 					run,
 					phase,
-					liveRender: view.liveRender,
+					latestRender: view.latestRender,
 					progress,
+					settings: draft,
 					now: clock.now,
-					timeZone: data.timeZone,
 					clock: (at) => clockText(at, clock.now, data.timeZone)
 				})
 			: null
 	);
-	const sentence = $derived(flow ? nowSentence(flow, { plan, run, phase, liveRender: view?.liveRender ?? null }) : '');
+	const sentence = $derived(flow ? nowSentence(flow, { plan, phase }) : '');
 	const preview = $derived(view && draft ? previewSteps(plan, view.scopes.union, draft) : []);
 
 	let box = $state<UpdateBox | null>(null);
@@ -126,19 +126,6 @@
 
 <svelte:head><title>Update · Admin · Blueprint Atlas</title></svelte:head>
 
-{#snippet renderProgress(id: SyncStepId)}
-	{@const r = flow?.renderNow}
-	{#if id === 'render' && r && r.phase !== 'picking'}
-		{#if r.of !== null}
-			<div class="mt-1.5 h-2 overflow-hidden rounded-full bg-stone-800">
-				<div class="h-full bg-amber-500" style="width: {percent(r.value ?? 0, r.of)}"></div>
-			</div>
-		{/if}
-		<p class="mt-1 text-xs tabular-nums {r.warn ? 'text-amber-300' : 'text-stone-400'}">
-			<span class="text-stone-200">{r.label}</span>{r.of !== null ? `: ${int(r.value ?? 0)} of ${int(r.of)}${r.unit ? ` ${r.unit}` : ''}` : ''}{#each r.figs as f, i (i)}{` · ${typeof f.value === 'number' ? int(f.value) : f.value} ${f.label}`}{/each}
-		</p>
-	{/if}
-{/snippet}
 
 <div class="space-y-4">
 	<div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -171,7 +158,7 @@
 			</p>
 		{/if}
 		<UpdateBox bind:this={box} {run} {plan} settings={draft} union={view.scopes.union} {sentence} {logTail} now={clock.now} timeZone={data.timeZone} {message} />
-		<FlowStrip {run} live={live || phase === 'crashed'} {preview} now={clock.now} extra={renderProgress} />
+		<FlowStrip {run} live={live || phase === 'crashed'} {preview} now={clock.now} {flow} {sentence} />
 		<FlowBoard {flow} bind:settings={draft} onchange={saveSettings} onaccepted={() => void box?.check()} figures={view.figures?.value ?? null} now={clock.now} timeZone={data.timeZone} />
 		<FlowSettings bind:settings={draft} {live} union={view.scopes.union} modern={view.scopes.modern.total} errors={save.errors} onchange={saveSettings} />
 		<p class="text-xs text-stone-500">

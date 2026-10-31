@@ -1,28 +1,30 @@
 <script lang="ts">
-	import type { Snippet } from 'svelte';
 	import { stepLabel, SYNC_STEPS, type SyncRun, type SyncStepId } from '#lib/sync.js';
 	import { duration } from '../metrics.js';
+	import { stepLine, type Flow } from './flow.js';
 	import StepList from './StepList.svelte';
 	import { STEP_MARK, type PreviewStep } from './view.js';
 
 	/**
-	 * The update's seven steps in a row, the running one pulsing. A step opens its figures below (every
-	 * DetailGroup row it recorded, its summary, its render run link), or with no update to show, what it would
-	 * do now. Opens by itself on the running step, else on the first that failed or needs a look.
+	 * The update's seven steps in a row, the running one pulsing. A step opens its detail bar below: one slim bar
+	 * while it has a count and one sentence (what it does now, or how it ended; the board shows the figures per
+	 * source), its time and render run link, and its recorded figures folded away; or with no update to show,
+	 * what it would do now. Opens by itself on the running step, else on the first that failed or needs a look.
 	 */
 	let {
 		run,
 		live,
 		preview,
 		now,
-		extra
-	}: { run: SyncRun | null; live: boolean; preview: PreviewStep[]; now: number; extra?: Snippet<[SyncStepId]> } = $props();
+		flow,
+		sentence
+	}: { run: SyncRun | null; live: boolean; preview: PreviewStep[]; now: number; flow: Flow; sentence: string } = $props();
 
 	let picked = $state<SyncStepId | null | undefined>(undefined);
-	// Live: the running step once it has something to show (its figures, or the render run's progress).
+	// Live: the running step; else the first that failed or needs a look.
 	const auto = $derived(
 		live
-			? (run?.steps.find((s) => s.status === 'running' && (s.id === 'render' || s.details?.length))?.id ?? null)
+			? (run?.steps.find((s) => s.status === 'running')?.id ?? null)
 			: (run?.steps.find((s) => s.status === 'failed' || s.status === 'warning')?.id ?? null)
 	);
 	const open = $derived(picked === undefined ? auto : picked);
@@ -55,17 +57,45 @@
 		{/each}
 	</ol>
 	{#if openStep}
-		<div class="rounded-lg border border-stone-800 bg-stone-900/50 px-3 pt-1 pb-2">
+		<div class="rounded-lg border border-stone-800 bg-stone-900/50 px-3 py-2">
 			{#if openStep.step}
-				<StepList steps={[{ ...openStep.step, text: openStep.step.summary }]} {now} {extra} />
-				<!-- StepList shows the summary of a step without figures, or that failed or warned; the rest get it here. -->
-				{#if openStep.step.summary && openStep.step.details?.length && openStep.step.status !== 'failed' && openStep.step.status !== 'warning'}
-					<p class="text-xs break-words text-stone-500">{openStep.step.summary}</p>
-				{/if}
+				{@const s = openStep.step}
+				{@const mark = STEP_MARK[s.status]}
+				{@const line = stepLine(flow, s, sentence)}
+				<div class="flex items-start gap-3">
+					<span class="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md text-xs font-bold {s.status === 'running' ? 'bg-amber-500/15' : mark.class}" title={mark.label}>
+						{#if s.status === 'running'}<span class="spinner" aria-label="Running"></span>{:else}{mark.mark}{/if}
+					</span>
+					<div class="min-w-0 flex-1">
+						<p class="flex flex-wrap items-baseline justify-between gap-x-3">
+							<span class="text-sm font-medium text-stone-100">{stepLabel(s.id)}</span>
+							<span class="text-xs whitespace-nowrap text-stone-500 tabular-nums">
+								{#if s.startedAt && (s.finishedAt || s.status === 'running')}{duration((s.finishedAt ?? now) - s.startedAt)}{/if}
+								{#if s.id === 'render' && s.runId}
+									· <a href="/admin/render/{s.runId}" class="text-stone-400 underline decoration-stone-600 hover:text-amber-300">render run</a>
+								{/if}
+							</span>
+						</p>
+						{#if line.bar !== null}
+							<div class="mt-1.5 h-[5px] overflow-hidden rounded-full bg-stone-800" aria-hidden="true">
+								<div class="h-full bg-amber-500 transition-[width] duration-500" style="width: {line.bar}%"></div>
+							</div>
+						{/if}
+						<p class="mt-1 text-xs break-words tabular-nums {line.tone === 'bad' ? 'text-rose-300' : line.tone === 'warn' ? 'text-amber-200' : 'text-stone-400'}">
+							<b class="font-semibold text-stone-200">{line.lead}</b>{line.rest ? `: ${line.rest}` : ''}
+						</p>
+						{#if s.details?.length && s.status !== 'running'}
+							<details class="mt-1 text-xs text-stone-500">
+								<summary class="cursor-pointer select-none hover:text-stone-300">All its figures</summary>
+								<StepList steps={[s]} {now} bare />
+							</details>
+						{/if}
+					</div>
+				</div>
 			{/if}
 			{#if !live && openStep.plan}
 				<!-- What this step would do in an update started now (the last check and the settings on the page). -->
-				<p class="border-t border-stone-800 py-1.5 text-sm text-stone-400">
+				<p class="text-sm text-stone-400 {openStep.step ? 'mt-2 border-t border-stone-800 pt-1.5' : ''}">
 					<span class="text-stone-200">{openStep.step ? 'Next update' : stepLabel(openStep.id)}:</span>
 					{openStep.plan.text}
 				</p>

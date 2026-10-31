@@ -1,546 +1,842 @@
 /**
- * The Update tab's flow: one lane per source (factorioprints, codex, fprints, uploads) through Waiting → Read →
- * Gate, then the shared Screenshots and Render stages, built only from what the page has: the sources' plan
- * (sync_meta 'plan'), the update running now or the last one (its `sources` and its steps' DetailGroups), the
- * render run in progress, and the log's live counts (#lib/sync-progress.js). A figure the update doesn't record
- * per source is shown once, on the shared stage, never split. Pure and browser-safe.
+ * The Update tab's board: one row per source (factorioprints, codex, fprints, uploads; any other site the render
+ * run drew) across the update's steps in order: Changes (at the source), Added (one gate, one source at a time),
+ * Authors, Screenshots, then the render run's stages Plan | Draw | Upload | Thumbnails; and a Shared row for what
+ * is done once (screenshots' sizing and upload; the run's summary, Clean up and Search flags).
+ *
+ * Every cell has one pattern: a status (`CellKind`) and, only when something happened, one fact per line (zeros
+ * left out; a bare ✓ means nothing happened). At most one cell is running outside the Render group, whose stages
+ * overlap (a print moves on as soon as it's drawn), so its cells are part-way instead and the group carries the
+ * spinner.
+ *
+ * Built only from what the page has: the sources' plan (sync_meta 'plan'), the update running now or the last one
+ * (its `sources`, its steps' DetailGroups and the render step's `render` stages), the latest render run's row
+ * (its `options.stages` while the step runs) and the log's live counts (#lib/sync-progress.js). Pure and
+ * browser-safe.
  */
 import type { RenderRun } from '#lib/server/admin/render.js';
-import type { LogProgress, RenderLog, RenderLogPhase } from '#lib/sync-progress.js';
+import { stageTotals, type RenderStages, type SiteStages } from '#lib/render-stages.js';
+import type { LogProgress } from '#lib/sync-progress.js';
 import { recordsSeen } from '#lib/sync-progress.js';
 import { SOURCE_SITES } from '#lib/sources.js';
 import type { Site } from '#lib/print-id.js';
 import {
 	POLLED_READS_PER_UPDATE,
 	POLLED_SITES,
+	SITE_SHOTS_GROUP,
 	sourceMoved,
+	stepLabel,
 	SYNC_STEPS,
 	type DetailGroup,
-	type DetailRow,
 	type PolledSiteId,
 	type SourcePlan,
 	type SyncPlan,
 	type SyncRun,
+	type SyncSettings,
 	type SyncStep,
 	type SyncStepId
 } from '#lib/sync.js';
 import { duration, int } from '../metrics.js';
 import { shortCommit, type UpdateState } from './view.js';
 
-export type StageState = 'todo' | 'active' | 'done' | 'warn' | 'bad' | 'held' | 'skip' | 'off';
+/**
+ * ✓ done; running (a spinner); found, waiting to run (an amber dot); part: this source part-way through a stage
+ * (a part-filled circle); warn: done, with something to look at (!); bad: couldn't run (✕); wait: not run yet (a
+ * grey ring); na: doesn't apply (—).
+ */
+export type CellKind = 'done' | 'run' | 'found' | 'part' | 'warn' | 'bad' | 'wait' | 'na';
 
-/** One figure on a stage; `tone` colours it (an outcome, or something to look at). */
-export interface Fig {
-	label: string;
-	value: number | string;
+/** One line in a cell: its number in bold, then a few words ("4 new"). */
+export interface Fact {
+	n?: number | string;
+	text: string;
 	tone?: 'warn' | 'bad';
 }
 
-/** How a site's records came through the gate (the polled admission's counts, or the log's while it runs). */
-export interface Outcome {
-	of: number;
-	new: number;
-	joined: number;
-	other: number;
-	suggest: number;
-	unreadable: number;
-	failed: number;
+export interface Cell {
+	kind: CellKind;
+	facts: Fact[];
+	/** The one-sentence tooltip: what the cell's figures are, or why it is empty. */
+	tip: string;
+	/** A running cell's progress, 0–100. */
+	bar?: number | null;
+	/** Shared cells name their part ("Clean up"). */
+	label?: string;
 }
 
-export interface Stage {
-	state: StageState;
-	/** The stage's main number, and what it is out of when it has a total. */
-	value?: number | null;
-	of?: number | null;
-	text?: string;
-	figs?: Fig[];
-	outcome?: Outcome | null;
-}
+export const COLUMNS = ['changes', 'added', 'authors', 'shots', 'plan', 'draw', 'upload', 'thumbs'] as const;
+export type ColumnId = (typeof COLUMNS)[number];
 
-export interface Lane {
+export interface Row {
+	/** The source's name on the board: factorioprints, codex, fprints, uploads (or a site only the render drew). */
 	site: string;
-	/** What the site is called ("factoriocodex.com"), and the source's kind from the plan ("factoriocodex.com API"). */
-	host: string;
-	kind: string;
-	/** A polled site's switch. */
+	/** What it is, in one sentence (the name's tooltip). */
+	tip: string;
+	/** A polled site's switch (shown before an update). */
 	toggle: PolledSiteId | null;
-	/** How its records reach the gate. */
-	via: string;
 	plan: SourcePlan | null;
-	waiting: Stage;
-	read: Stage;
-	gate: Stage;
-	/** factorioprints only: the authors step. */
-	authors: Stage | null;
+	/** Held back by the last check: Accept fetches it anyway. */
+	held: { reason: string; site: string; id: string; polled: boolean } | null;
+	cells: Record<ColumnId, Cell>;
+	/** The last column (index into COLUMNS) this row's prints have got to, for its line; -1 for none. */
+	reach: number;
+	/** Prints the gate made new on the site. */
+	newPrints: number;
 }
 
-export interface ShotInput {
-	key: 'imgur' | 'uploads' | 'sites';
-	label: string;
-	/** The lanes it takes its images from. */
-	sites: string[];
-	stage: Stage;
-	/** Other sites' images copied so far, per site, while the step runs (the log's lines). */
-	live?: { site: string; fetched: number; failed: number }[];
+export interface Shared {
+	sizing: Cell;
+	/** Under Plan and Draw: the run's settings, then (once it runs) its time and prints. */
+	summary: { title: string; lines: string[] };
+	cleanup: Cell;
+	flags: Cell;
 }
+
+export type BoardMode = 'before' | 'live' | 'last';
 
 export interface Flow {
+	/** before: what the last check found, nothing to the right has run; live: this update; last: the last update's results. */
+	mode: BoardMode;
 	live: boolean;
 	/** The step running now (live), else null. */
 	current: SyncStepId | null;
-	/** "This update" while one runs, else "Last update · finished 01:14", or null with no update yet. */
-	caption: string | null;
-	lanes: Lane[];
-	shots: { stage: Stage; inputs: ShotInput[]; sizing: Stage };
-	render: Stage;
-	/** While the render step runs: its run's phase and progress, for the board, the step's row and the sentence. */
+	/** The words above the board's right edge. */
+	caption: { lead: string; rest: string };
+	rows: Row[];
+	shared: Shared;
+	/** The render step runs: the Render group's header spins. */
+	rendering: boolean;
+	/** Render workers the update asks for (null: the runner's default). */
+	threads: number | null;
+	/** While the render step runs: its run's phase and progress, for the step's line and the sentence. */
 	renderNow: RenderNow | null;
 	/** Prints the gate made new on the site in this (or the last) update, as far as recorded. */
 	newPrints: number;
 }
 
-const LANES: { site: string; plan: (p: SourcePlan) => boolean }[] = [
+const RENDER_TIP = 'One render run for every source, under one limit: a source can get none because the batch was full.';
+const MATCH_TIP = 'matched = the same blueprint already on the site: added to it as “Also on …”.';
+const AUTHORS_NA: Record<string, string> = {
+	codex: 'Not this source: names come with the record (the post’s username, unless anonymous).',
+	fprints: 'Not this source: fprints gives no author names yet, so its prints show as unknown author.',
+	uploads: 'Not this source: an upload shows its uploader’s account name.'
+};
+
+const ROWS: { site: string; plan: (p: SourcePlan) => boolean }[] = [
 	{ site: 'factorioprints', plan: (p) => !p.polled && !p.ingestsItself },
 	...POLLED_SITES.map(({ site }) => ({ site, plan: (p: SourcePlan) => p.site === site })),
 	{ site: 'uploads', plan: (p) => !!p.ingestsItself }
 ];
+/** A board row's key in the render stages (the uploads row is the `upload` site). */
+const stageKey = (site: string) => (site === 'uploads' ? 'upload' : site) as keyof RenderStages['sites'];
+
+// --- cells
+
+const fact = (n: number | string | null | undefined, text: string, tone?: Fact['tone']): Fact[] =>
+	n === null || n === undefined || n === 0 || n === '0' ? [] : [{ n, text, ...(tone ? { tone } : {}) }];
+const cell = (kind: CellKind, facts: Fact[] = [], tip = '', extra: Partial<Cell> = {}): Cell => ({ kind, facts, tip, ...extra });
+/** Done, or done with something to look at when a fact carries a tone. */
+const settled = (facts: Fact[], tip: string): Cell => cell(facts.some((f) => f.tone) ? 'warn' : 'done', facts, tip);
+const pct = (value: number, of: number) => (of > 0 ? Math.min(100, Math.round((value / of) * 100)) : 0);
 
 const stepOf = (run: SyncRun | null, id: SyncStepId) => run?.steps.find((s) => s.id === id);
+const stepNo = (id: SyncStepId) => SYNC_STEPS.findIndex((s) => s.id === id) + 1;
 const groupOf = (step: SyncStep | undefined, match: (title: string) => boolean): DetailGroup | undefined =>
 	step?.details?.find((g) => g.title !== undefined && match(g.title));
 const valueOf = (g: DetailGroup | undefined, label: string): number | undefined => {
 	const v = g?.rows.find((r) => r.label === label)?.value;
 	return typeof v === 'number' ? v : undefined;
 };
-const figs = (g: DetailGroup | undefined, skip: string[] = []): Fig[] =>
+/** A group's rows as facts (zeros and muted rows left out). */
+const factsOf = (g: DetailGroup | undefined, skip: string[] = [], rename: Record<string, string> = {}): Fact[] =>
+	(g?.rows ?? []).filter((r) => !r.muted && !skip.includes(r.label)).flatMap((r) => fact(r.value, rename[r.label] ?? r.label, r.tone));
+/** A group's rows as "label 12 · label 3", for a tooltip. */
+const rowsText = (g: DetailGroup | undefined, only?: string[]) =>
 	(g?.rows ?? [])
-		.filter((r: DetailRow) => !r.muted && !skip.includes(r.label))
-		.map((r) => ({ label: r.label, value: r.value, ...(r.tone ? { tone: r.tone } : {}) }));
-const some = (...f: Fig[][]) => f.flat().filter((x) => x.value !== 0 && x.value !== '0');
-const fig = (label: string, value: number | undefined | null, tone?: Fig['tone']): Fig[] =>
-	value ? [{ label, value, ...(tone ? { tone } : {}) }] : [];
+		.filter((r) => !r.muted && (!only || only.includes(r.label)))
+		.map((r) => `${r.label} ${typeof r.value === 'number' ? int(r.value) : r.value}`)
+		.join(' · ');
 
-/** A step that didn't run, said in a few words: its summary ("turned off in the settings", "needs …"). */
-const skipped = (step: SyncStep | undefined): Stage => ({ state: step?.status === 'failed' ? 'bad' : 'skip', text: step?.summary ?? '' });
+const notYet = (id: SyncStepId) => cell('wait', [], `Not run yet: step ${stepNo(id)}, ${stepLabel(id)}.`);
+/** A step that ended without running for this cell: skipped (its reason), stopped, or failed. */
+const notRun = (step: SyncStep): Cell =>
+	step.status === 'failed'
+		? cell('bad', [], `${stepLabel(step.id)} failed: ${step.summary ?? `exit ${step.code ?? '?'}`}`)
+		: cell('wait', [], step.status === 'stopped' ? 'Not run: the update stopped.' : `Not run: ${step.summary ?? 'skipped'}.`);
+/** The step hasn't reached this cell: before an update, or still pending. */
+const waiting = (mode: BoardMode, step: SyncStep | undefined): step is undefined => mode === 'before' || !step || step.status === 'pending';
 
 /** What a polled site would read now: its new, changed and gone prints, up to the built-in cap. */
 const toRead = (p: SourcePlan) => Math.min(p.added + p.edited + p.deleted.length, POLLED_READS_PER_UPDATE);
 
-function waitingStage(p: SourcePlan | null, site: string): Stage {
-	if (!p) return { state: 'todo', text: 'not checked yet' };
-	if (p.off) return { state: 'off', text: 'off' };
-	if (p.error) return { state: 'bad', text: `couldn’t check: ${p.error}` };
-	if (p.blocked) return { state: 'held', text: 'held back', value: p.polled ? p.deleted.length : null };
+function changesBefore(p: SourcePlan | null, site: string, ago: string): Cell {
+	if (!p) return cell('wait', [], 'Not checked yet: Check again reads every source.');
+	if (p.off) return cell('na', [], 'Turned off in the settings: not fetched.');
+	if (p.error) return cell('bad', [{ text: 'couldn’t check' }], `The last check couldn’t reach it: ${p.error}`);
+	if (p.blocked) return cell('warn', [{ text: 'held back' }], `Held back, not fetched until accepted: ${p.blocked}`);
 	if (!sourceMoved(p))
-		return {
-			state: 'skip',
-			text: p.polled
-				? `up to date · ${int(p.prints)} on the site`
+		return cell(
+			'done',
+			[],
+			p.polled
+				? `${int(p.prints)} prints on the site; nothing new since the last update (checked ${ago}).`
 				: site === 'uploads'
-					? 'none waiting'
-					: `up to date · ${shortCommit(p.to.id)}`
-		};
-	if (p.ingestsItself) return { state: 'done', value: p.added, text: p.position ?? 'waiting' };
+					? 'No uploads waiting: they are admitted on the site as they’re posted.'
+					: `GitHub mirror at ${shortCommit(p.to.id)}: nothing new since the last update (checked ${ago}).`
+		);
+	if (p.ingestsItself) return cell('found', fact(p.added, 'waiting'), p.position ?? 'Uploads waiting to be admitted.');
 	if (p.polled)
-		return {
-			state: 'done',
-			value: toRead(p),
-			text: [`${int(p.added)} new`, `${int(p.edited)} changed`, ...(p.deleted.length ? [`${int(p.deleted.length)} gone?`] : [])].join(
-				' · '
-			),
-			figs: fig('of them left from the last update', p.left)
-		};
-	return {
-		state: 'done',
-		value: p.added + p.edited,
-		text: `${int(p.added)} new · ${int(p.edited)} edited`,
-		figs: [...fig('favourite counts', p.favourites), ...fig('deleted', p.deleted.length, 'warn'), ...fig('commits', p.behind)]
-	};
+		return cell(
+			'found',
+			[...fact(p.added, 'new'), ...fact(p.edited, 'changed'), ...fact(p.deleted.length, 'gone?')],
+			`Found by the last check, ${ago}: ${int(p.prints)} prints on the site; ${int(toRead(p))} to read, one a second` +
+				(p.left ? ` (${int(p.left)} left from the last update)` : '') +
+				'.'
+		);
+	return cell(
+		'found',
+		[...fact(p.added, 'new'), ...fact(p.edited, 'edited'), ...fact(p.deleted.length, 'deleted', 'warn')],
+		`Found by the last check, ${ago}: ${p.behind ? `${int(p.behind)} commits behind` : 'behind'}` +
+			(p.favourites ? `, ${int(p.favourites)} only favourite counts changed` : '') +
+			'.'
+	);
 }
 
-/** What the run's fetch did for a site (or is doing: the log's count while it reads). */
-function readStage(run: SyncRun | null, site: string, plan: SourcePlan | null, progress: LogProgress | null, live: boolean): Stage {
+/** What the update's fetch did for a site (or is doing: the log's count while it reads). */
+function changesCell(
+	mode: BoardMode,
+	run: SyncRun | null,
+	site: string,
+	plan: SourcePlan | null,
+	progress: LogProgress | null,
+	ago: string
+): Cell {
+	if (mode === 'before') return changesBefore(plan, site, ago);
 	const fetch = stepOf(run, 'fetch');
-	if (!run || !fetch) return { state: 'todo' };
+	if (!run || waiting(mode, fetch)) return notYet('fetch');
 	const entry = run.sources.find((s) => s.site === site);
-	if (entry?.blocked) return { state: 'held', text: `held back: ${entry.blocked}` };
-	if (fetch.status === 'pending') return { state: 'todo', text: live ? 'next' : '' };
+	if (entry?.blocked) return cell('warn', [{ text: 'held back' }], `Held back, not fetched: ${entry.blocked}`);
+	const running = fetch.status === 'running';
 	if (entry?.polled) {
 		const c = entry.counts;
 		if (!c) {
-			if (fetch.status !== 'running') return { state: 'skip', text: plan?.off ? 'off' : 'nothing new' };
-			const of = plan && !plan.off && sourceMoved(plan) ? toRead(plan) : null;
-			if (!of) return { state: 'skip', text: 'nothing new' };
-			// Reading now, or waiting for the sites before it (one request a second each).
+			if (!running)
+				return plan?.off ? cell('na', [], 'Turned off in the settings: not fetched.') : cell('done', [], 'Nothing new to read.');
+			const of = plan && !plan.off && sourceMoved(plan) ? toRead(plan) : 0;
+			if (!of) return cell('done', [], 'Nothing new to read.');
 			const seen = progress?.step === 'fetch' ? recordsSeen(progress, site) : 0;
-			const s = progress?.sites[site] ?? {};
+			// Reading now, or waiting for the sites before it (one request a second each).
 			return seen
-				? { state: 'active', value: seen, of, figs: some(fig('new', s.new), fig('changed', s.changed), fig('failed', s.failed, 'bad')) }
-				: { state: 'todo', of, text: 'waiting its turn' };
+				? cell('run', [{ n: `${int(seen)} of ${int(of)}`, text: 'read' }], 'Reading its new and changed prints, about one a second.', {
+						bar: pct(seen, of)
+					})
+				: cell('wait', [], `Waiting its turn: the sources are read one after another (${int(of)} to read).`);
 		}
-		const failed = c.failed ?? 0;
-		return {
-			state: failed ? 'warn' : 'done',
-			value: c['records read'],
-			figs: some(
-				fig('new', c.new),
-				fig('changed', c.changed),
-				fig('gone from the site', c['gone from the site'], 'warn'),
-				fig('failed', failed, 'bad'),
-				fig('left for the next update', c.left, 'warn')
-			)
-		};
+		const onSite = valueOf(
+			groupOf(fetch, (t) => t === site),
+			'prints on the site'
+		);
+		return settled(
+			[
+				...fact(c['records read'], 'read'),
+				...fact(c.changed, 'changed'),
+				...fact(c['gone from the site'], 'gone', 'warn'),
+				...fact(c.failed, 'failed', 'bad'),
+				...fact(c.left, 'left over', 'warn')
+			],
+			`${onSite !== undefined ? `${int(onSite)} prints on the site; ` : ''}read in this update: ${int(c.new ?? 0)} new, ${int(c.changed ?? 0)} changed.`
+		);
 	}
 	const g = groupOf(fetch, (t) => t === site);
-	if (fetch.status === 'running' && !g) {
+	if (running && !g) {
 		// Its entry is written before its fetch; the plan (saved before the update) says whether it has anything.
-		if (!entry) return { state: 'todo', text: 'next' };
+		if (!entry) return cell('wait', [], 'Waiting its turn: the sources are read one after another.');
 		const working =
 			plan && !plan.off && !plan.error && sourceMoved(plan) && (entry.ingestsItself ? !entry.counts : entry.from?.id === entry.to?.id);
-		if (working) return { state: 'active', text: entry.ingestsItself ? 'admitting the waiting uploads' : 'fetching' };
-		return { state: 'skip', text: entry.ingestsItself ? 'none waiting' : `already at its latest (${shortCommit(entry.to?.id)})` };
+		if (working)
+			return cell('run', [], entry.ingestsItself ? 'Admitting the waiting uploads through the gate.' : 'Fetching the mirror (git fetch).');
+		return cell('done', [], entry.ingestsItself ? 'No uploads waiting.' : `Already at its latest (${shortCommit(entry.to?.id)}).`);
 	}
-	if (!entry && fetch.status !== 'running')
-		return plan?.error ? { state: 'bad', text: `couldn’t check: ${plan.error}` } : { state: 'skip' };
-	if (entry?.ingestsItself) {
-		const f = some(figs(g, ['waiting', 'oldest waiting']));
-		const admitted = valueOf(g, 'admitted');
-		return admitted || f.length
-			? { state: f.some((x) => x.tone === 'bad') ? 'warn' : 'done', value: admitted ?? null, figs: f }
-			: { state: 'skip', text: 'none waiting' };
+	if (!entry) {
+		if (plan?.error) return cell('bad', [], `Couldn’t check: ${plan.error}`);
+		return fetch.status === 'done' || fetch.status === 'warning' ? cell('done', [], 'Nothing to fetch.') : notRun(fetch);
 	}
+	if (entry.ingestsItself)
+		return settled(
+			factsOf(g, ['waiting', 'oldest waiting'], { 'failed, tried again next update': 'failed', 'still processing': 'processing' }),
+			'Uploads are admitted on the site as they’re posted; the fetch admits any left waiting.'
+		);
 	// The mirror: a git fetch, then the backfill reads the clone.
-	if (entry && entry.to && entry.from?.id === entry.to.id)
-		return { state: 'skip', text: `already at its latest (${shortCommit(entry.to.id)})` };
-	return { state: 'done', value: valueOf(g, 'new prints') ?? null, text: 'new prints', figs: some(figs(g, ['position', 'new prints'])) };
+	if (entry.to && entry.from?.id === entry.to.id)
+		return cell('done', [], `GitHub mirror already at its latest (${shortCommit(entry.to.id)}): nothing new.`);
+	return settled(factsOf(g, ['position']), `GitHub mirror ${shortCommit(entry.from?.id)} → ${shortCommit(entry.to?.id)}.`);
 }
 
-const outcomeOf = (g: DetailGroup | undefined): Outcome | null =>
-	g
-		? {
-				of: valueOf(g, 'records to admit') ?? 0,
-				new: valueOf(g, 'new prints') ?? 0,
-				joined: valueOf(g, 'joined an existing print') ?? 0,
-				other: (valueOf(g, 'updated') ?? 0) + (valueOf(g, 'unchanged') ?? 0) + (valueOf(g, 'blocked') ?? 0),
-				suggest: valueOf(g, 'new, with suggestions to look at') ?? 0,
-				unreadable: valueOf(g, 'unreadable') ?? 0,
-				failed: valueOf(g, 'failed, tried again next update') ?? 0
-			}
-		: null;
-
-/** How a site's records went through the gate: the backfill's figures (factorioprints), or the polled admission's. */
-function gateStage(run: SyncRun | null, lane: string, progress: LogProgress | null, live: boolean): Stage {
+/** How a site's records went through the one gate: the backfill (factorioprints), or the polled admission's outcome. */
+function addedCell(mode: BoardMode, run: SyncRun | null, site: string, progress: LogProgress | null): Cell {
 	const ingest = stepOf(run, 'ingest');
-	if (!run || !ingest || ingest.status === 'pending') return { state: 'todo', text: live && run ? 'next' : '' };
-	if (lane === 'uploads') {
-		const read = run.sources.find((s) => s.ingestsItself);
-		return { state: 'skip', text: read?.counts && Object.values(read.counts).some(Boolean) ? 'admitted in the fetch' : '' };
-	}
-	if (lane === 'factorioprints') {
-		const g = groupOf(ingest, (t) => !t.includes(':') && t.split(', ').includes(lane));
-		if (g) {
-			const failed = valueOf(g, 'failed') ?? 0;
-			return {
-				state: failed ? 'warn' : 'done',
-				text: `${int(valueOf(g, 'analysed') ?? 0)} analysed`,
-				figs: some(
-					figs(g, ['analysed']).filter((f) => f.label !== 'failed'),
-					fig('failed', failed, 'bad')
-				)
-			};
-		}
+	if (!run || waiting(mode, ingest)) return notYet('ingest');
+	if (site === 'uploads')
+		return cell('done', [], 'Admitted on the site as they’re posted (the fetch admits any left waiting): nothing for this step.');
+	if (site === 'factorioprints') {
+		const g = groupOf(ingest, (t) => !t.includes(':') && t.split(', ').includes(site));
+		if (g)
+			return settled(
+				[
+					...fact(valueOf(g, 'analysed'), 'analysed'),
+					...fact(valueOf(g, 're-indexed'), 're-indexed'),
+					...fact(valueOf(g, 'copies folded'), 'folded'),
+					...fact(valueOf(g, 'failed'), 'failed', 'bad')
+				],
+				`The backfill over the mirror clone: ${rowsText(g) || 'nothing to do'}.`
+			);
 		const why = /^backfill skipped: ([^·]+)/.exec(ingest.summary ?? '')?.[1]?.trim();
-		if (why || ingest.status === 'skipped') return { state: 'skip', text: `skipped: ${why ?? ingest.summary ?? ''}` };
+		if (why) return cell('done', [], `Backfill skipped: ${why}.`);
 		if (ingest.status === 'running')
-			return Object.keys(progress?.toAdmit ?? {}).length
-				? { state: 'done', text: 'the backfill ran; its figures come at the step’s end' }
-				: { state: 'active', text: 'the backfill is reading the clone' };
-		return { state: ingest.status === 'failed' ? 'bad' : 'skip', text: ingest.summary ?? '' };
+			return Object.keys(progress?.step === 'ingest' ? progress.toAdmit : {}).length
+				? cell('done', [], 'The backfill ran; its figures come at the step’s end.')
+				: cell('run', [{ text: 'analysing' }], 'The backfill reads the mirror clone and puts new and edited prints through the gate.');
+		return notRun(ingest);
 	}
-	const g = groupOf(ingest, (t) => t === `${lane}: through the gate`);
-	const outcome = outcomeOf(g);
-	if (outcome) {
-		const bad = outcome.failed + outcome.unreadable;
-		return {
-			state: bad ? 'warn' : 'done',
-			value: outcome.new + outcome.joined + outcome.other + outcome.unreadable + outcome.failed,
-			of: outcome.of,
-			outcome
-		};
+	const g = groupOf(ingest, (t) => t === `${site}: through the gate`);
+	if (g) {
+		const of = valueOf(g, 'records to admit') ?? 0;
+		if (!of) return cell('done', [], 'Nothing to add.');
+		const updated = (valueOf(g, 'updated') ?? 0) + (valueOf(g, 'unchanged') ?? 0);
+		const suggest = valueOf(g, 'new, with suggestions to look at');
+		return settled(
+			[
+				...fact(valueOf(g, 'new prints'), 'new'),
+				...fact(valueOf(g, 'joined an existing print'), 'matched'),
+				...fact(updated, 'updated'),
+				...fact(valueOf(g, 'blocked'), 'blocked', 'warn'),
+				...fact(valueOf(g, 'unreadable'), 'unreadable', 'warn'),
+				...fact(valueOf(g, 'failed, tried again next update'), 'failed', 'bad')
+			],
+			`${int(of)} records through the gate${suggest ? `, ${int(suggest)} new with suggestions` : ''}. ${MATCH_TIP}`
+		);
 	}
-	if (ingest.status === 'running' && progress?.step === 'ingest') {
-		const of = progress.toAdmit[lane];
-		if (of === undefined) {
-			const entry = run.sources.find((s) => s.site === lane);
-			return entry?.counts?.['records read'] ? { state: 'todo', text: 'waiting its turn' } : { state: 'skip' };
+	if (ingest.status === 'running') {
+		const of = progress?.step === 'ingest' ? progress.toAdmit[site] : undefined;
+		if (!progress || of === undefined) {
+			const entry = run.sources.find((s) => s.site === site);
+			return entry?.counts?.['records read']
+				? cell('wait', [], 'Waiting its turn: one source at a time, factorioprints (the backfill) first.')
+				: cell('done', [], 'Nothing to add.');
 		}
-		const s = progress.sites[lane] ?? {};
-		const o: Outcome = {
-			of,
-			new: s.new ?? 0,
-			joined: s.joined ?? 0,
-			other: (s.updated ?? 0) + (s.unchanged ?? 0) + (s.blocked ?? 0),
-			suggest: 0,
-			unreadable: s.undecodable ?? 0,
-			failed: s.failed ?? 0
-		};
+		const s = progress.sites[site] ?? {};
+		const seen = recordsSeen(progress, site);
 		// Sites are admitted one after another: only the last one the log started is still going.
-		const admitting = Object.keys(progress.toAdmit).at(-1) === lane;
-		const settled = admitting ? 'active' : o.failed + o.unreadable ? 'warn' : 'done';
-		return { state: settled, value: recordsSeen(progress, lane), of, outcome: o };
+		if (Object.keys(progress.toAdmit).at(-1) === site)
+			return cell(
+				'run',
+				[{ n: `${int(seen)} of ${int(of)}`, text: 'added' }],
+				'Through the gate now: checked, matched, analysed, indexed and saved one at a time.',
+				{ bar: pct(seen, of) }
+			);
+		return settled(
+			[
+				...fact(s.new, 'new'),
+				...fact(s.joined, 'matched'),
+				...fact((s.updated ?? 0) + (s.unchanged ?? 0), 'updated'),
+				...fact(s.undecodable, 'unreadable', 'warn'),
+				...fact(s.failed, 'failed', 'bad')
+			],
+			`${int(seen)} of ${int(of)} records through the gate; the full figures come at the step’s end. ${MATCH_TIP}`
+		);
 	}
-	return ingest.status === 'running' ? { state: 'todo', text: 'after the backfill' } : { state: 'skip' };
+	return ingest.status === 'done' || ingest.status === 'warning' ? cell('done', [], 'Nothing to add.') : notRun(ingest);
 }
 
-function authorsStage(run: SyncRun | null): Stage {
+function authorsCell(mode: BoardMode, run: SyncRun | null, site: string): Cell {
+	if (site !== 'factorioprints') return cell('na', [], AUTHORS_NA[site] ?? 'Not this source: names come with its records.');
 	const a = stepOf(run, 'authors');
-	if (!run || !a || a.status === 'pending') return { state: 'todo', text: 'factorioprints authors' };
-	if (a.status === 'running') return { state: 'active', text: 'naming new authors' };
-	if (a.status === 'skipped' || a.status === 'stopped') return skipped(a);
-	return { state: a.status === 'failed' ? 'bad' : a.status === 'warning' ? 'warn' : 'done', text: a.summary ?? '' };
+	if (waiting(mode, a)) return notYet('authors');
+	const tip = 'Names looked up on Firebase for new author ids, at most the settings’ limit an update; each answer kept.';
+	if (a.status === 'running') return cell('run', [], tip);
+	if (a.status === 'skipped' || a.status === 'stopped') return notRun(a);
+	const named = /([\d,]+) (?:prints?|authors?) (?:named|to name)/.exec(a.summary ?? '')?.[1];
+	return cell(
+		a.status === 'failed' ? 'bad' : a.status === 'warning' ? 'warn' : 'done',
+		fact(named, 'named'),
+		`${tip} ${a.summary ?? ''}`.trim()
+	);
 }
 
-function shotsStages(run: SyncRun | null, progress: LogProgress | null): Flow['shots'] {
+/** Which part of the screenshots step runs now, from its last command: Imgur, uploads, other sites, then sizing and upload. */
+const SHOT_PARTS = ['imgur', 'uploads', 'sites', 'sizing'] as const;
+type ShotPart = (typeof SHOT_PARTS)[number];
+const shotPart = (command: string | null): ShotPart =>
+	!command
+		? 'imgur'
+		: command.includes('--from-uploads')
+			? 'uploads'
+			: command.includes('--from-sites')
+				? 'sites'
+				: command.includes('--upload') || command.includes('screenshots-flags')
+					? 'sizing'
+					: 'imgur';
+const partOf = (site: string): ShotPart | null =>
+	site === 'factorioprints' ? 'imgur' : site === 'uploads' ? 'uploads' : POLLED_SITES.some((p) => p.site === site) ? 'sites' : null;
+
+function shotsCell(mode: BoardMode, run: SyncRun | null, site: string, progress: LogProgress | null): Cell {
 	const step = stepOf(run, 'screenshots');
-	const live = step?.status === 'running';
-	const input = (title: string, skip: string[] = []): Stage => {
-		const g = groupOf(step, (t) => t === title);
-		if (g) {
-			const f = some(figs(g, skip));
-			return { state: f.some((x) => x.tone === 'bad' || x.tone === 'warn') ? 'warn' : 'done', figs: f };
+	if (waiting(mode, step)) return notYet('screenshots');
+	const part = partOf(site);
+	if (!part) return cell('na', [], 'This source’s prints bring no screenshot to copy.');
+	if (step.status === 'running') {
+		const at = SHOT_PARTS.indexOf(shotPart(progress?.step === 'screenshots' ? progress.command : null));
+		const mine = SHOT_PARTS.indexOf(part);
+		if (part === 'sites' && at >= mine) {
+			const c = progress?.shots.bySite[site];
+			const facts = [...fact(c?.fetched, 'copied'), ...fact(c?.failed, 'failed', 'bad')];
+			if (at > mine) return settled(facts, 'Copied from the site; the full figures come at the step’s end.');
+			if (progress?.shots.last === site) return cell('run', facts, 'Copying this site’s images now, one a second.');
+			return c
+				? cell('part', facts, 'Part-way: its images are copied in turn with the other sites’.')
+				: cell('wait', [], 'Waiting its turn.');
 		}
-		return { state: live ? 'active' : !step || step.status === 'pending' ? 'todo' : 'skip' };
-	};
-	const imgur = input('On this machine');
-	const uploads = input('From uploads');
-	const sites = input('From other sites');
-	let liveSites: ShotInput['live'];
-	if (live && progress?.step === 'screenshots' && progress.shots.toCopy !== null) {
-		liveSites = Object.entries(progress.shots.bySite).map(([site, c]) => ({ site, ...c }));
-		const done = liveSites.reduce((n, s) => n + s.fetched + s.failed, 0);
-		sites.state = 'active';
-		sites.value = done;
-		sites.of = progress.shots.toCopy;
+		if (at > mine) return cell('done', [], 'Copied; the figures come at the step’s end.');
+		if (at === mine)
+			return cell('run', [], part === 'imgur' ? 'Copying new screenshots from Imgur.' : 'Copying approved upload screenshots.');
+		return cell('wait', [], 'Waiting its turn: Imgur, then uploads, then other sites’ images.');
 	}
+	if (part === 'imgur') {
+		const g = groupOf(step, (t) => t === 'On this machine');
+		if (g)
+			return settled(
+				[
+					...fact(valueOf(g, 'fetched'), 'copied'),
+					...fact(valueOf(g, 'newly dead'), 'dead on Imgur', 'warn'),
+					...fact(valueOf(g, 'failed'), 'failed', 'bad')
+				],
+				`Imgur: ${rowsText(g, ['already copied', 'dead on Imgur', 'to fetch'])}.`
+			);
+	} else if (part === 'uploads') {
+		const g = groupOf(step, (t) => t === 'From uploads');
+		if (g)
+			return settled(
+				[...fact(valueOf(g, 'copied from RAW'), 'copied'), ...fact(valueOf(g, 'failed'), 'failed', 'bad')],
+				`Approved upload screenshots: ${rowsText(g, ['approved', 'already up', 'sized'])}.`
+			);
+	} else {
+		const g = groupOf(step, (t) => t === `${SITE_SHOTS_GROUP}${site}`);
+		if (g)
+			return settled(
+				[
+					...fact(valueOf(g, 'copied now'), 'copied'),
+					...fact(valueOf(g, 'gone at the source'), 'gone', 'warn'),
+					...fact(valueOf(g, 'failed, tried again next update'), 'failed', 'bad')
+				],
+				`${site}’s own images for its prints: ${rowsText(g, ['images shown', 'already copied', 'answered 404 once (asked again next update)'])}.`
+			);
+		if (groupOf(step, (t) => t === 'From other sites'))
+			return cell('done', [], 'This update counted other sites’ images together: see the step’s figures.');
+	}
+	if (step.status === 'skipped' || step.status === 'stopped' || step.status === 'failed') return notRun(step);
+	return cell('done', [], 'Nothing to copy.');
+}
+
+function sizingCell(mode: BoardMode, run: SyncRun | null, progress: LogProgress | null): Cell {
+	const label = 'Sizing and upload';
+	const step = stepOf(run, 'screenshots');
+	const tip = 'Every new image sized once (c320/c640/c960, l, og) and put in the screenshots bucket, then the search cards’ rows.';
+	if (waiting(mode, step)) return cell('wait', [], `Not run yet: step ${stepNo('screenshots')}. ${tip}`, { label });
+	if (step.status === 'running')
+		return shotPart(progress?.step === 'screenshots' ? progress.command : null) === 'sizing'
+			? cell('run', [], tip, { label })
+			: cell('wait', [], `After the copies. ${tip}`, { label });
 	const bucket = groupOf(step, (t) => t.endsWith(' bucket'));
+	if (!bucket) return { ...notRun(step), label };
+	const put = bucket.rows.find((r) => r.label === 'files put')?.value;
+	const m = typeof put === 'string' ? /^([\d,]+) \((.+)\)$/.exec(put) : null;
 	const cards = groupOf(step, (t) => t === 'Search cards');
-	const sizing: Stage = bucket
-		? { state: 'done', figs: some(figs(bucket), figs(cards)) }
-		: { state: live ? (step?.details?.length ? 'active' : 'todo') : !step || step.status === 'pending' ? 'todo' : 'skip' };
-	const stage: Stage =
-		!step || step.status === 'pending'
-			? { state: 'todo' }
-			: step.status === 'skipped' || step.status === 'stopped'
-				? skipped(step)
-				: { state: step.status === 'running' ? 'active' : step.status === 'warning' ? 'warn' : step.status === 'failed' ? 'bad' : 'done' };
 	return {
-		stage,
-		sizing,
-		inputs: [
-			{ key: 'imgur', label: 'Imgur', sites: ['factorioprints'], stage: imgur },
-			{ key: 'uploads', label: 'Uploads', sites: ['uploads'], stage: uploads },
-			{ key: 'sites', label: 'Other sites’ images', sites: POLLED_SITES.map((p) => p.site), stage: sites, live: liveSites }
-		]
+		...settled(
+			[
+				...(m
+					? [
+							{ n: m[1], text: 'files' },
+							{ n: m[2], text: '' }
+						]
+					: fact(typeof put === 'number' ? put : null, 'files')),
+				...fact(valueOf(bucket, 'failed'), 'failed', 'bad')
+			],
+			`${tip} ${rowsText(bucket, ['already up', 'sizes made', 'deleted'])}${cards ? ` · cards: ${rowsText(cards)}` : ''}.`
+		),
+		label
 	};
 }
 
-/** What the render step is doing now, and how far it is. */
+// --- render
+
+/** The render run's stages for this update: the step's own once it ended, else the latest run's while the step runs. */
+function stagesFor(run: SyncRun | null, latest: RenderRun | null): { stages: RenderStages | null; row: RenderRun | null } {
+	const step = stepOf(run, 'render');
+	if (!step || step.status === 'pending') return { stages: null, row: null };
+	const row =
+		latest && (latest.id === step.runId || (step.startedAt !== undefined && latest.started_at >= step.startedAt - 1000)) ? latest : null;
+	return { stages: step.render ?? row?.options.stages ?? null, row };
+}
+
+function renderCells(mode: BoardMode, run: SyncRun | null, site: string, stages: RenderStages | null, row: RenderRun | null): Cell[] {
+	const step = stepOf(run, 'render');
+	const four = (c: Cell) => [c, c, c, c];
+	if (waiting(mode, step)) return four(notYet('render'));
+	const live = step.status === 'running';
+	if (!stages) {
+		if (live) return four(cell('wait', [], 'Picking the prints with work: the top list, then records changed since they were drawn.'));
+		if (step.status === 'skipped' || step.status === 'stopped' || step.status === 'failed') return four(notRun(step));
+		return four(cell('done', [], 'This run wasn’t counted per source (it ran before the stages were recorded): see the step’s figures.'));
+	}
+	const s: SiteStages | undefined = stages.sites[stageKey(site)];
+	const queueing = live && row?.state === 'starting';
+	if (!s)
+		return four(queueing ? cell('wait', [], 'Queueing the prints with work.') : cell('done', [], `None in this batch. ${RENDER_TIP}`));
+	const { plan, draw, upload, thumbs } = s;
+	const planCell = cell(
+		queueing ? 'part' : plan.failed ? 'warn' : 'done',
+		[
+			...fact(plan.prints, 'prints'),
+			...fact(plan.queued, 'to draw'),
+			...fact(plan.skipped, 'skipped'),
+			...fact(plan.failed, 'failed before', 'warn')
+		],
+		`${int(plan.pages)} pages looked at, ${int(plan.unchanged)} unchanged (drawn before from the same input); skipped = pre-2.0, empty, ` +
+			`modded or undecodable${plan.failed ? '; failed before = failed every attempt in an earlier run, or no record' : ''}. ${RENDER_TIP}`
+	);
+	const drawTip = 'Biggest pages first; a page that fails three times is left for the next update.';
+	const drawCell = !plan.queued
+		? queueing
+			? cell('wait', [], 'Queueing.')
+			: cell('done', [], 'Nothing to draw: every page unchanged or skipped.')
+		: cell(
+				live && draw.left ? 'part' : draw.failed || draw.left ? 'warn' : 'done',
+				[
+					...fact(draw.drawn, 'drawn'),
+					...fact(draw.failed, 'failed', 'bad'),
+					...fact(draw.left, live ? 'to draw' : 'left', live ? undefined : 'warn')
+				],
+				draw.left && !live ? `${drawTip} The run stopped with pages left: the next update draws them.` : drawTip
+			);
+	const uploadCell = !upload
+		? cell('na', [], 'This run doesn’t upload.')
+		: cell(
+				live && (upload.waiting || (plan.queued && draw.left)) ? 'part' : upload.waiting || upload.failing ? 'warn' : 'done',
+				[
+					...fact(upload.pages, 'uploaded'),
+					...fact(upload.waiting, 'waiting', live ? undefined : 'warn'),
+					...fact(upload.failing, 'failing', 'bad'),
+					...(live && draw.left ? [{ text: `up to ${int(draw.left)} more` }] : [])
+				],
+				`Each page’s files go to the renders bucket as soon as it’s drawn (pages drawn earlier and not up yet go too): ` +
+					`${int(upload.files)} files so far.${upload.waiting && !live ? ' Waiting pages go up in the next update.' : ''}`
+			);
+	const more = live && (draw.left > 0 || draw.printsDone < plan.prints);
+	const thumbsCell = !thumbs
+		? cell('na', [], 'Thumbnails are off for this run.')
+		: thumbs.of
+			? cell(
+					live && (thumbs.done < thumbs.of || more) ? 'part' : 'done',
+					[{ n: `${int(thumbs.done)} of ${int(thumbs.of)}`, text: 'prints' }],
+					'Made (and uploaded) per print once its pages are final.'
+				)
+			: more
+				? cell('wait', [], 'Made per print once its pages are final.')
+				: cell('done', [], 'No thumbnails to make.');
+	return [planCell, drawCell, uploadCell, thumbsCell];
+}
+
+function sharedRender(
+	mode: BoardMode,
+	run: SyncRun | null,
+	settings: SyncSettings | null,
+	stages: RenderStages | null,
+	row: RenderRun | null,
+	now: number
+): Pick<Shared, 'summary' | 'cleanup' | 'flags'> {
+	const step = stepOf(run, 'render');
+	const lines = settings
+		? settings.render
+			? [
+					[
+						settings.workers ? `${int(settings.workers)} threads` : 'default threads',
+						settings.perUpdate === null ? 'every print with work' : `≤ ${int(settings.perUpdate)} prints`,
+						settings.top ? `top ${int(settings.top)}` : ''
+					]
+						.filter(Boolean)
+						.join(' · ')
+				]
+			: ['render is off in the settings']
+		: [];
+	const started = mode !== 'before' && step && step.status !== 'pending' ? step.startedAt : undefined;
+	const took = started !== undefined ? (step!.finishedAt ?? now) - started : 0;
+	const t = stages ? stageTotals(stages) : null;
+	if (t) lines.push(`${int(t.prints)} prints · ${int(t.drawn)} pages drawn${t.failed ? ` · ${int(t.failed)} failed` : ''}`);
+	const summary = {
+		title:
+			started !== undefined && (stages || row)
+				? `One run · ${duration(took)}${step!.status === 'running' ? ' so far' : ''}`
+				: 'This run’s settings',
+		lines
+	};
+	const cleanupLabel = 'Clean up';
+	const flagsLabel = 'Search flags';
+	const cleanupTip = 'Replaced files whose 15 min grace is over, deleted after the last upload.';
+	const flagsTip = 'render:flags on the stage (“has a render” and covers), then a page-cache bump.';
+	if (waiting(mode, step))
+		return {
+			summary,
+			cleanup: cell('wait', [], `Not run yet: step ${stepNo('render')}. ${cleanupTip}`, { label: cleanupLabel }),
+			flags: cell('wait', [], `Not run yet: step ${stepNo('render')}, last. ${flagsTip}`, { label: flagsLabel })
+		};
+	if (!stages) {
+		const c =
+			step.status === 'running'
+				? cell('wait', [], 'Not run yet.')
+				: step.status === 'done' || step.status === 'warning'
+					? cell('done', [], 'Not counted for this run: see the step’s figures.')
+					: notRun(step);
+		return { summary, cleanup: { ...c, label: cleanupLabel }, flags: { ...c, label: flagsLabel } };
+	}
+	const c = stages.cleanup;
+	const cleanup: Cell = !c
+		? cell('na', [], 'This run doesn’t upload.')
+		: c.state === 'waiting'
+			? cell('wait', [], cleanupTip)
+			: c.state === 'running'
+				? cell('run', [], cleanupTip)
+				: c.state === 'skipped'
+					? cell('wait', [], 'Not run: the run stopped; what’s due is deleted next run.')
+					: settled(
+							[...fact(c.deleted + c.thumbsDeleted, 'deleted'), ...fact(c.pending, 'in grace'), ...fact(c.failed, 'failed', 'bad')],
+							`Replaced files deleted after their 15 min grace (${int(c.thumbsDeleted)} of them thumbnails); ${int(c.kept)} kept, used ` +
+								`again; ${int(c.pending)} wait out their grace for a later run.`
+						);
+	const f = stages.flags;
+	const flags: Cell = !f
+		? cell('na', [], 'This run doesn’t set search flags (no --flags).')
+		: f.state === 'waiting'
+			? cell('wait', [], `Last, on ${f.stage}. ${flagsTip}`)
+			: f.state === 'running'
+				? cell('run', [], `On ${f.stage} now. ${flagsTip}`)
+				: f.state === 'failed'
+					? cell('bad', [{ text: 'failed' }], `${f.error ?? 'Failed'}: run bun run render:flags --stage ${f.stage} by hand.`)
+					: cell(
+							'done',
+							[...fact(f.rowsWritten, 'rows written'), ...(f.bumped ? [{ text: 'cache bumped' }] : [])],
+							f.rowsWritten || f.bumped
+								? `render:flags on ${f.stage}: flags and covers set${f.bumped ? ', page cache bumped' : ''}.`
+								: `Already in step on ${f.stage}: nothing written.`
+						);
+	return { summary, cleanup: { ...cleanup, label: cleanupLabel }, flags: { ...flags, label: flagsLabel } };
+}
+
+/** What the render step is doing now, and how far it is: the step's line and the sentence. */
 export interface RenderNow {
-	phase: RenderLogPhase | 'picking';
-	/** "Drawing prints", "Making thumbnails", … (the step row's lead). */
+	phase: 'picking' | 'queueing' | 'drawing' | 'thumbnails' | 'uploads' | 'deletions' | 'flags';
+	/** "Drawing prints", "Making thumbnails", … */
 	label: string;
-	/** The board's few words under the count. */
-	text: string;
 	/** Its count, when it has one ("37 of 50 prints"). */
 	value: number | null;
 	of: number | null;
 	unit: string;
-	/** The pages so far: drawn, uploaded, failed (the live run's, else its end line's). */
-	figs: Fig[];
+	/** The pages so far: "451 pages drawn", "451 uploaded", "2 failed". */
+	figures: string[];
 	/** The sentence at the top. */
 	sentence: string;
 	/** `--flags` failed: the step goes on to end with a warning. */
 	warn: boolean;
 }
 
-/**
- * The render step's phase: the render run's row while it draws (prints finished of its picks), then the log's
- * phase lines (#lib/sync-progress.js) for what comes after the last page, when every count reads "done" but the
- * run still makes and uploads thumbnails, deletes replaced files and sets the stage's search flags.
- */
-export function renderNow(liveRender: RenderRun | null, log: RenderLog | null): RenderNow {
-	const r = liveRender;
-	const ended = log?.ended ?? null;
-	const figs = r
-		? some(fig('pages drawn', r.rendered), fig('uploaded', r.uploaded), fig('failed', r.failed, 'bad'))
-		: ended
-			? some(fig('pages drawn', ended.rendered), fig('uploaded', ended.uploaded), fig('failed', ended.failed, 'bad'))
-			: [];
-	const base = { value: null, of: null, unit: '', figs, warn: false };
+/** The render step's phase, from its render run's row (options.phase, thumbs and stages), or picking before it starts. */
+export function renderNow(r: RenderRun | null): RenderNow {
+	const base = { value: null, of: null, unit: '', warn: false };
+	if (!r)
+		return { ...base, phase: 'picking', label: 'Picking the prints with work', figures: [], sentence: 'Picking the prints to render.' };
+	const figures = [
+		...(r.rendered ? [`${int(r.rendered)} pages drawn`] : []),
+		...(r.uploaded ? [`${int(r.uploaded)} uploaded`] : []),
+		...(r.failed ? [`${int(r.failed)} failed`] : [])
+	];
 	const words = (phase: RenderNow['phase'], label: string, sentence = `${label}.`): RenderNow => ({
 		...base,
 		phase,
 		label,
-		text: label.toLowerCase(),
+		figures,
 		sentence
 	});
-	const picking = words('picking', 'Picking the prints with work', 'Picking the prints to render.');
-	switch (log?.phase ?? 'drawing') {
-		case 'drawing':
-			if (!r?.prints_total) return picking;
-			return {
-				...base,
-				phase: 'drawing',
-				label: 'Drawing prints',
-				text: 'prints drawn',
-				value: r.prints_done,
-				of: r.prints_total,
-				figs: [...figs, ...(r.eta_seconds ? [{ label: 'left', value: `≈ ${duration(r.eta_seconds * 1000)}` }] : [])],
-				sentence: `Drawing prints: ${int(r.prints_done)} of ${int(r.prints_total)}.`
-			};
+	if (r.state === 'starting') return words('queueing', 'Queueing the prints with work', 'Queueing the prints to render.');
+	switch (r.options.phase ?? null) {
 		case 'thumbnails': {
-			const t = log?.thumbs;
-			const label = t?.upload === false ? 'Making thumbnails' : 'Making and uploading thumbnails';
+			const t = r.options.thumbs;
+			const label = r.upload_target ? 'Making and uploading thumbnails' : 'Making thumbnails';
 			if (!t) return words('thumbnails', label);
-			return {
-				...base,
-				phase: 'thumbnails',
-				label,
-				text: t.upload ? 'prints’ thumbnails made and uploaded' : 'prints’ thumbnails made',
-				value: t.done,
-				of: t.of,
-				unit: 'prints',
-				sentence: `${label}: ${int(t.done)} of ${int(t.of)} prints.`
-			};
+			return { ...words('thumbnails', label, `${label}: ${int(t.done)} of ${int(t.of)} prints.`), value: t.done, of: t.of, unit: 'prints' };
 		}
 		case 'uploads': {
-			const left = r?.uploads_pending ?? log?.uploadsLeft ?? null;
-			return {
-				...words('uploads', 'Uploading the last pages', left ? `Uploading the last ${int(left)} page${left === 1 ? '' : 's'}.` : undefined),
-				figs: [...figs, ...fig('to go', left)]
-			};
+			const left = r.uploads_pending;
+			return words(
+				'uploads',
+				'Uploading the last pages',
+				left ? `Uploading the last ${int(left)} page${left === 1 ? '' : 's'}.` : undefined
+			);
 		}
 		case 'deletions':
 			return words('deletions', 'Removing replaced files', 'Removing replaced files from the bucket.');
-		case 'finishing':
-			return words('finishing', 'Saving the render run');
 		case 'flags': {
-			const stage = log?.flags?.stage ?? 'the stage';
-			if (!log?.flags?.failed) return words('flags', `Updating search flags on ${stage}`);
+			const f = r.options.stages?.flags;
+			const stage = f?.stage ?? r.upload_target ?? 'the stage';
+			if (f?.state !== 'failed') return words('flags', `Setting the search flags on ${stage}`);
 			return {
 				...words('flags', `Search flags on ${stage} failed`, `Setting the search flags on ${stage} failed: run render:flags by hand.`),
-				text: `search flags on ${stage} failed: run render:flags by hand`,
 				warn: true
 			};
 		}
+		default:
+			if (!r.prints_total) return words('picking', 'Picking the prints with work', 'Picking the prints to render.');
+			return {
+				...words('drawing', 'Drawing prints', `Drawing prints: ${int(r.prints_done)} of ${int(r.prints_total)}.`),
+				value: r.prints_done,
+				of: r.prints_total,
+				unit: 'prints',
+				figures: [...figures, ...(r.eta_seconds ? [`≈ ${duration(r.eta_seconds * 1000)} left`] : [])]
+			};
 	}
 }
 
-function renderStage(run: SyncRun | null, now: RenderNow | null): Stage {
-	const step = stepOf(run, 'render');
-	if (!run || !step || step.status === 'pending') return { state: 'todo' };
-	if (step.status === 'running') {
-		if (!now || now.phase === 'picking') return { state: 'active', text: 'picking the prints with work' };
-		return {
-			state: now.warn ? 'warn' : 'active',
-			...(now.of !== null ? { value: now.value, of: now.of } : {}),
-			text: now.text,
-			...(now.figs.length ? { figs: now.figs } : {})
-		};
-	}
-	if (step.status === 'skipped' || step.status === 'stopped') return skipped(step);
-	const thisRun = groupOf(step, (t) => t === 'This run');
-	const other = (step.details ?? []).filter((g) => g !== thisRun);
-	return {
-		state: step.status === 'failed' ? 'bad' : step.status === 'warning' ? 'warn' : 'done',
-		value: valueOf(thisRun, 'prints drawn') ?? 0,
-		text: 'prints drawn',
-		figs: some(
-			figs(thisRun, ['prints drawn']),
-			other.flatMap((g) =>
-				figs(g).map((f) => ({ ...f, label: g.title?.startsWith('Top') ? `${g.title.toLowerCase()}: ${f.label}` : f.label }))
-			)
-		)
-	};
-}
+// --- the board
+
+const reachOf = (cells: Cell[]) => {
+	let reach = -1;
+	cells.forEach((c, i) => {
+		if (c.kind !== 'wait' && c.kind !== 'na') reach = i;
+	});
+	return reach;
+};
+const byColumn = (cells: Cell[]) => Object.fromEntries(COLUMNS.map((c, i) => [c, cells[i]])) as Record<ColumnId, Cell>;
 
 /**
- * The flow for the page: the live update when one runs (or stopped responding), else the last update's
- * results beside the plan's Waiting column.
+ * The board for the page: the live update when one runs (or stopped responding); before an update, when the last
+ * check found something, what it found (nothing to the right has run); else the last update's results.
  */
 export function buildFlow(o: {
 	plan: SyncPlan | null;
 	run: SyncRun | null;
 	phase: UpdateState;
-	liveRender: RenderRun | null;
+	/** The latest render run (live or not); an update's render step reads its stages until it records its own. */
+	latestRender: RenderRun | null;
 	progress: LogProgress | null;
+	/** The settings on the page, for the run's summary before an update (a run keeps its own). */
+	settings?: SyncSettings | null;
 	now: number;
-	timeZone: string;
 	clock: (at: number) => string;
 }): Flow {
 	const live = o.phase === 'running' || o.phase === 'crashed';
-	const run = o.run;
+	const mode: BoardMode = live ? 'live' : o.phase === 'waiting' || o.phase === 'blocked' || !o.run ? 'before' : 'last';
+	const run = mode === 'before' ? null : o.run;
 	const current = live ? (run?.steps.find((s) => s.status === 'running')?.id ?? null) : null;
 	const progress = live ? o.progress : null;
-	const lanes: Lane[] = LANES.map(({ site, plan: match }) => {
+	const ago = o.plan ? o.clock(o.plan.checkedAt) : '';
+	const { stages, row } = stagesFor(run, o.latestRender);
+	const settings = mode === 'before' ? (o.settings ?? null) : (run?.options.settings ?? o.settings ?? null);
+	const rows: Row[] = ROWS.map(({ site, plan: match }) => {
 		const plan = o.plan?.sources.find(match) ?? null;
 		const name = plan?.site ?? site;
 		const info = SOURCE_SITES[(name === 'uploads' ? 'upload' : name) as Site];
 		const polled = POLLED_SITES.find((p) => p.site === name);
+		const cells = [
+			changesCell(mode, run, name, plan, progress, ago),
+			addedCell(mode, run, name, progress),
+			authorsCell(mode, run, name),
+			shotsCell(mode, run, name, progress),
+			...renderCells(mode, run, name, stages, row)
+		];
+		const gate = groupOf(stepOf(run, 'ingest'), (t) => t === `${name}: through the gate`);
 		return {
 			site: name,
-			host: info?.name ?? name,
-			kind: plan?.kind ?? '',
-			toggle: polled ? polled.site : null,
-			via: name === 'factorioprints' ? 'via the backfill' : name === 'uploads' ? 'admitted in the fetch' : 'via the polled admission',
+			tip:
+				name === 'factorioprints'
+					? 'factorioprints.com, read from its GitHub mirror; new and edited prints go through the backfill.'
+					: name === 'uploads'
+						? 'Prints uploaded on this site, admitted as they’re posted.'
+						: `${info?.name ?? name}, polled for new and changed prints (about one request a second).`,
+			toggle: polled && mode === 'before' ? polled.site : null,
 			plan,
-			waiting: waitingStage(plan, name),
-			read: readStage(run, name, plan, progress, live),
-			gate: gateStage(run, name, progress, live),
-			authors: name === 'factorioprints' ? authorsStage(run) : null
+			held: mode === 'before' && plan?.blocked ? { reason: plan.blocked, site: plan.site, id: plan.to.id, polled: !!plan.polled } : null,
+			cells: byColumn(cells),
+			reach: reachOf(cells),
+			newPrints: valueOf(gate, 'new prints') ?? (live && progress?.step === 'ingest' ? (progress.sites[name]?.new ?? 0) : 0)
 		};
 	});
-	const newPrints = lanes.reduce((n, l) => n + (l.gate.outcome?.new ?? 0), 0);
-	const rendering = current === 'render' ? renderNow(o.liveRender, progress?.step === 'render' ? progress.render : null) : null;
+	// A site only the render run drew (factoriobin: added by hand) gets a row of its own, render cells only.
+	for (const key of Object.keys(stages?.sites ?? {})) {
+		if (ROWS.some((r) => stageKey(r.site) === key)) continue;
+		const na = cell('na', [], 'Added by hand on the Add page: not part of the update’s fetch.');
+		const cells = [na, na, na, cell('na', [], 'No screenshot to copy.'), ...renderCells(mode, run, key, stages, row)];
+		rows.push({
+			site: key,
+			tip: `${SOURCE_SITES[key as Site]?.name ?? key}: prints added by hand, rendered with the rest.`,
+			toggle: null,
+			plan: null,
+			held: null,
+			cells: byColumn(cells),
+			reach: reachOf(cells),
+			newPrints: 0
+		});
+	}
+	const at = current ? stepNo(current) : 0;
+	const caption =
+		mode === 'before'
+			? { lead: 'Before an update:', rest: 'what the last check found; nothing to the right has run yet' }
+			: live
+				? { lead: 'This update', rest: at ? `· step ${at} of ${SYNC_STEPS.length}` : '' }
+				: { lead: 'Last update', rest: `· ${run!.state} ${o.clock(run!.finished_at ?? run!.updated_at)}` };
 	return {
+		mode,
 		live,
 		current,
-		caption: !run ? null : live ? 'This update' : `Last update · ${run.state} ${o.clock(run.finished_at ?? run.updated_at)}`,
-		lanes,
-		shots: shotsStages(run, progress),
-		render: renderStage(run, rendering),
-		renderNow: rendering,
-		newPrints
+		caption,
+		rows,
+		shared: {
+			sizing: sizingCell(mode, run, progress),
+			...sharedRender(mode, run, settings, stages, row, o.now)
+		},
+		rendering: current === 'render',
+		threads: settings?.workers ?? null,
+		renderNow: current === 'render' ? renderNow(row) : null,
+		newPrints: rows.reduce((n, r) => n + r.newPrints, 0)
 	};
 }
 
+/** The cell running now in a column outside the Render group, if any (at most one). */
+const runningIn = (flow: Flow, col: ColumnId) => flow.rows.find((r) => r.cells[col].kind === 'run');
+
 /** The calm sentence at the top: what is happening now, or what an update would do. */
-export function nowSentence(
-	flow: Flow,
-	o: { plan: SyncPlan | null; run: SyncRun | null; phase: UpdateState; liveRender: RenderRun | null }
-): string {
+export function nowSentence(flow: Flow, o: { plan: SyncPlan | null; phase: UpdateState }): string {
 	if (o.phase === 'crashed') return 'The update stopped responding.';
 	if (flow.live) {
 		switch (flow.current) {
 			case 'removals':
 				return 'Sweeping this machine’s copies of removed prints.';
 			case 'fetch': {
-				const reading = flow.lanes.find((l) => l.read.state === 'active');
-				if (reading?.read.value !== undefined && reading.read.of)
-					return `Reading ${reading.host}: ${int(reading.read.value ?? 0)} of ${int(reading.read.of)}, about one a second.`;
-				return reading ? `Fetching ${reading.host}.` : 'Fetching the sources.';
+				const r = runningIn(flow, 'changes');
+				const n = r?.cells.changes.facts[0]?.n;
+				if (r && n !== undefined) return `Reading ${r.site}: ${n}, about one a second.`;
+				return r ? `Fetching ${r.site}.` : 'Fetching the sources.';
 			}
 			case 'ingest': {
-				const admitting = flow.lanes.find((l) => l.gate.state === 'active' && l.gate.of);
-				if (admitting)
-					return `Putting ${admitting.host} prints through the gate: ${int(admitting.gate.value ?? 0)} of ${int(admitting.gate.of ?? 0)}.`;
+				const r = runningIn(flow, 'added');
+				const n = r?.cells.added.facts[0]?.n;
+				if (r && r.site !== 'factorioprints' && n !== undefined) return `Adding ${r.site} prints through the gate: ${n}.`;
 				return 'Analysing factorioprints’ new and edited prints (the backfill).';
 			}
 			case 'authors':
 				return 'Naming new factorioprints authors.';
 			case 'screenshots': {
-				const s = flow.shots.inputs.find((i) => i.key === 'sites')?.stage;
-				return s?.of ? `Copying other sites’ screenshots: ${int(s.value ?? 0)} of ${int(s.of)}.` : 'Copying screenshots.';
+				if (flow.shared.sizing.kind === 'run') return 'Sizing the new screenshots and putting them in the bucket.';
+				const r = runningIn(flow, 'shots');
+				return r ? `Copying screenshots: ${r.site}.` : 'Copying screenshots.';
 			}
 			case 'render':
 				return flow.renderNow?.sentence ?? 'Picking the prints to render.';
@@ -554,15 +850,77 @@ export function nowSentence(
 	if (held.length)
 		return `${held.map((p) => p.site).join(' and ')} ${held.length === 1 ? 'is' : 'are'} held back: too much changed at once.`;
 	const parts: string[] = [];
-	for (const l of flow.lanes) {
-		const p = l.plan;
+	for (const r of flow.rows) {
+		const p = r.plan;
 		if (!p || p.off || p.error || !sourceMoved(p)) continue;
 		if (p.ingestsItself) parts.push(`${int(p.added)} upload${p.added === 1 ? '' : 's'} waiting`);
-		else if (p.polled) parts.push(`${int(toRead(p))} to read from ${l.site}`);
-		else parts.push(`${int(p.added)} new on ${l.site}`);
+		else if (p.polled) parts.push(`${int(toRead(p))} to read from ${r.site}`);
+		else parts.push(`${int(p.added)} new on ${r.site}`);
 	}
 	if (parts.length) return `Ready: ${parts.join(', ')}.`;
 	return 'Up to date: nothing new on any source.';
+}
+
+const STATUS_WORD: Record<SyncStep['status'], string> = {
+	pending: 'Not run yet',
+	running: 'Running',
+	done: 'Done',
+	warning: 'Finished with a warning',
+	failed: 'Failed',
+	skipped: 'Skipped',
+	stopped: 'Stopped'
+};
+
+export interface StepLine {
+	/** Bold, then `rest` after a colon. */
+	lead: string;
+	rest: string;
+	/** A slim bar while the step has a count (0–100), else null. */
+	bar: number | null;
+	tone: 'warn' | 'bad' | null;
+}
+
+/**
+ * The detail bar above the board for one step: a slim bar while it has a count, and one sentence (its lead in
+ * bold): what it does now, or how it ended.
+ */
+export function stepLine(flow: Flow, step: SyncStep, sentence: string): StepLine {
+	const tone = step.status === 'failed' ? 'bad' : step.status === 'warning' ? 'warn' : null;
+	if (step.status === 'running') {
+		if (step.id === 'render' && flow.renderNow) {
+			const r = flow.renderNow;
+			return {
+				lead: r.label,
+				rest: [...(r.of !== null ? [`${int(r.value ?? 0)} of ${int(r.of)} ${r.unit}`.trim()] : []), ...r.figures].join(' · '),
+				bar: r.of ? pct(r.value ?? 0, r.of) : null,
+				tone: r.warn ? 'warn' : null
+			};
+		}
+		const col: ColumnId | null =
+			step.id === 'fetch' ? 'changes' : step.id === 'ingest' ? 'added' : step.id === 'screenshots' ? 'shots' : null;
+		const bar = col ? (runningIn(flow, col)?.cells[col].bar ?? null) : null;
+		const at = sentence.indexOf(': ');
+		return at > 0
+			? { lead: sentence.slice(0, at), rest: sentence.slice(at + 2), bar, tone: null }
+			: { lead: sentence.replace(/\.$/, ''), rest: '', bar, tone: null };
+	}
+	if (step.id === 'render' && step.render) {
+		const t = stageTotals(step.render);
+		const c = step.render.cleanup;
+		const f = step.render.flags;
+		const rest = [
+			`${int(t.prints)} prints`,
+			`${int(t.drawn)} pages drawn`,
+			...(t.uploaded ? [`${int(t.uploaded)} uploaded`] : []),
+			...(t.failed ? [`${int(t.failed)} failed`] : []),
+			...(t.waiting ? [`${int(t.waiting)} left to upload`] : []),
+			...(t.thumbsOf ? [`${int(t.thumbsDone)} prints’ thumbnails`] : []),
+			...(c?.state === 'done' && c.deleted + c.thumbsDeleted ? [`${int(c.deleted + c.thumbsDeleted)} replaced files deleted`] : []),
+			...(f?.state === 'failed' ? [`search flags on ${f.stage} failed`] : f?.state === 'done' ? [`search flags set on ${f.stage}`] : [])
+		];
+		return { lead: STATUS_WORD[step.status], rest: rest.join(' · '), bar: null, tone };
+	}
+	return { lead: STATUS_WORD[step.status], rest: step.summary ?? '', bar: null, tone };
 }
 
 export const STEP_IDS = SYNC_STEPS.map((s) => s.id);
