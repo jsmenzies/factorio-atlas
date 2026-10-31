@@ -27,6 +27,9 @@ const RENDER_COLUMNS = `id, host, source, state, control, total, done, rendered,
 	uploads_pending, upload_failed, upload_error, upload_deletes_pending, prints_total, prints_done, prints_rendered,
 	upload_rate_bytes, upload_rate_files, upload_rate_pages`;
 
+const RENDER_SELECT = `SELECT ${RENDER_COLUMNS}, json_extract(options, '$.phase') AS phase, json_extract(options, '$.thumbs') AS thumbs,
+	json_extract(options, '$.stages') AS stages FROM render_runs`;
+
 type LatestRenderRow = Omit<RenderRunRow, 'options'> & { phase: string | null; thumbs: string | null; stages: string | null };
 
 const json = <T>(v: string | null): T | null => {
@@ -71,24 +74,28 @@ export const syncOverview = async (db: D1Database, now = Date.now()) => {
 			(SELECT count(*) FROM render_jobs WHERE status = 'failed') AS failed
 			FROM render_jobs WHERE status = 'done'`
 		),
-		// The latest render run (render_runs_started): the one an update's render step is on, or one started by
-		// hand, for its progress and stages. Only the options the page reads: a batch's picks can be thousands of ids.
-		db.prepare(
-			`SELECT ${RENDER_COLUMNS}, json_extract(options, '$.phase') AS phase, json_extract(options, '$.thumbs') AS thumbs,
-			json_extract(options, '$.stages') AS stages FROM render_runs ORDER BY started_at DESC LIMIT 1`
-		),
+		// The live render run, if any (an update's render step, or one started by hand), and the latest one, live or
+		// not (render_runs_started): a newer row can be a second start that failed at once while the first still runs.
+		// Only the options the page reads: a batch's picks can be thousands of ids.
+		db
+			.prepare(
+				`${RENDER_SELECT} WHERE state IN (${LIVE_STATES.map(() => '?').join(', ')}) AND updated_at > ? ORDER BY started_at DESC LIMIT 1`
+			)
+			.bind(...LIVE_STATES, now - RENDER_STALE_MS),
+		db.prepare(`${RENDER_SELECT} ORDER BY started_at DESC LIMIT 1`),
 		db.prepare(STORE_WAITING_SQL),
 		...scopes
 	]);
-	const [runRows, metaRows, totals, latestRender, storeWaiting, ...scopeResults] = results;
+	const [runRows, metaRows, totals, liveRender, latestRender, storeWaiting, ...scopeResults] = results;
 	const store = storeWaiting.results[0] as { unseen?: number; changed?: number } | undefined;
 	const waiting = { unseen: Number(store?.unseen ?? 0), changed: Number(store?.changed ?? 0) };
 	const runs: SyncRun[] = (runRows.results as SyncRunRow[]).map(parseSyncRun);
 	const m = metaRows.results as { key: string; value: string; updated_at: number }[];
 	const stored = meta<unknown>(m, 'settings');
-	const latest = (latestRender.results as LatestRenderRow[])[0];
-	const render = latest ? renderOf(latest) : null;
-	const live = render && LIVE_STATES.includes(render.state) && render.updated_at > now - RENDER_STALE_MS ? render : null;
+	const latestRow = (latestRender.results as LatestRenderRow[])[0];
+	const liveRow = (liveRender.results as LatestRenderRow[])[0];
+	const render = latestRow ? renderOf(latestRow) : null;
+	const live = liveRow ? renderOf(liveRow) : null;
 	return {
 		runs,
 		settings: parseSettings(stored?.value).settings,

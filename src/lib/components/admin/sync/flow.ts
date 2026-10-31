@@ -469,13 +469,24 @@ function sizingCell(mode: BoardMode, run: SyncRun | null, progress: LogProgress 
 
 // --- render
 
-/** The render run's stages for this update: the step's own once it ended, else the latest run's while the step runs. */
-function stagesFor(run: SyncRun | null, latest: RenderRun | null): { stages: RenderStages | null; row: RenderRun | null } {
+/**
+ * The render run's stages for this update. Once the step ended: its own (`step.render`), else the row it names
+ * (`step.runId`), never another run's (one started by hand later). While it runs: the live run, if it started
+ * after the step did.
+ */
+function stagesFor(
+	run: SyncRun | null,
+	latest: RenderRun | null,
+	live: RenderRun | null
+): { stages: RenderStages | null; row: RenderRun | null } {
 	const step = stepOf(run, 'render');
 	if (!step || step.status === 'pending') return { stages: null, row: null };
-	const row =
-		latest && (latest.id === step.runId || (step.startedAt !== undefined && latest.started_at >= step.startedAt - 1000)) ? latest : null;
-	return { stages: step.render ?? row?.options.stages ?? null, row };
+	if (step.status !== 'running') {
+		const row = [latest, live].find((r) => r && step.runId !== undefined && r.id === step.runId) ?? null;
+		return { stages: step.render ?? row?.options.stages ?? null, row };
+	}
+	const row = live && step.startedAt !== undefined && live.started_at >= step.startedAt - 1000 ? live : null;
+	return { stages: row?.options.stages ?? null, row };
 }
 
 function renderCells(mode: BoardMode, run: SyncRun | null, site: string, stages: RenderStages | null, row: RenderRun | null): Cell[] {
@@ -723,8 +734,10 @@ export function buildFlow(o: {
 	plan: SyncPlan | null;
 	run: SyncRun | null;
 	phase: UpdateState;
-	/** The latest render run (live or not); an update's render step reads its stages until it records its own. */
+	/** The latest render run (live or not): a finished render step's figures when it names this run. */
 	latestRender: RenderRun | null;
+	/** The live render run, if any: a running render step's figures. */
+	liveRender?: RenderRun | null;
 	progress: LogProgress | null;
 	/** The settings on the page, for the run's summary before an update (a run keeps its own). */
 	settings?: SyncSettings | null;
@@ -737,7 +750,7 @@ export function buildFlow(o: {
 	const current = live ? (run?.steps.find((s) => s.status === 'running')?.id ?? null) : null;
 	const progress = live ? o.progress : null;
 	const ago = o.plan ? o.clock(o.plan.checkedAt) : '';
-	const { stages, row } = stagesFor(run, o.latestRender);
+	const { stages, row } = stagesFor(run, o.latestRender, o.liveRender ?? null);
 	const settings = mode === 'before' ? (o.settings ?? null) : (run?.options.settings ?? o.settings ?? null);
 	const rows: Row[] = ROWS.map(({ site, plan: match }) => {
 		const plan = o.plan?.sources.find(match) ?? null;

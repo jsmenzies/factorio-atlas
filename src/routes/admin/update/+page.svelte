@@ -104,6 +104,7 @@
 					run,
 					phase,
 					latestRender: view.latestRender,
+					liveRender: view.liveRender,
 					progress,
 					settings: draft,
 					now: clock.now,

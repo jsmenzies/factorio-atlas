@@ -326,7 +326,7 @@ describe('render per source', () => {
 	};
 
 	test('while drawing: each source part-way where its prints still move; uploads said honestly', () => {
-		const f = flowOf({ run: inRender(), phase: 'running', latestRender: renderRow() });
+		const f = flowOf({ run: inRender(), phase: 'running', liveRender: renderRow() });
 		expect(f.rendering).toBe(true);
 		expect(said(cellOf(f, 'factorioprints', 'plan'))).toBe('done · 4 prints · 212 to draw · 12 skipped');
 		expect(said(cellOf(f, 'factorioprints', 'upload'))).toBe('done · 212 uploaded');
@@ -351,7 +351,7 @@ describe('render per source', () => {
 	});
 
 	test('a render run from before this step isn’t this update’s', () => {
-		const f = flowOf({ run: inRender(), phase: 'running', latestRender: renderRow({ started_at: 900_000 }) });
+		const f = flowOf({ run: inRender(), phase: 'running', liveRender: renderRow({ started_at: 900_000 }) });
 		expect(cellOf(f, 'codex', 'plan').kind).toBe('wait');
 		expect(f.renderNow?.phase).toBe('picking');
 	});
@@ -360,13 +360,13 @@ describe('render per source', () => {
 		const thumbs = flowOf({
 			run: inRender(),
 			phase: 'running',
-			latestRender: renderRow({ options: { phase: 'thumbnails', thumbs: { done: 80, of: 103 } } })
+			liveRender: renderRow({ options: { phase: 'thumbnails', thumbs: { done: 80, of: 103 } } })
 		});
 		expect(thumbs.renderNow).toMatchObject({ label: 'Making and uploading thumbnails', value: 80, of: 103 });
 		// The top box's bar: prints finished (thumbnails done) of those picked.
 		expect(heroBar(thumbs, null)).toBe(78);
 		expect(
-			heroBar(flowOf({ run: inRender(), phase: 'running', latestRender: renderRow({ options: { phase: 'deletions' } }) }), null)
+			heroBar(flowOf({ run: inRender(), phase: 'running', liveRender: renderRow({ options: { phase: 'deletions' } }) }), null)
 		).toBeNull();
 		expect(renderNow(renderRow({ options: { phase: 'deletions' } })).sentence).toBe('Removing replaced files from the bucket.');
 		expect(
@@ -382,7 +382,7 @@ describe('render per source', () => {
 		const flagsNow = flowOf({
 			run: inRender(),
 			phase: 'running',
-			latestRender: renderRow(
+			liveRender: renderRow(
 				{},
 				stages({
 					cleanup: { state: 'done', deleted: 186, kept: 0, failed: 0, pending: 41, nextDue: null, thumbsDeleted: 0 },
@@ -434,10 +434,28 @@ describe('render per source', () => {
 		expect(heroBar(f, null)).toBeNull();
 	});
 
+	test('an ended step shows only its own stages, or the run it names: never a run started by hand later', () => {
+		const r = inRender();
+		r.state = 'finished';
+		const failed: SyncStep = { id: 'render', status: 'failed', startedAt: 1_000_000, finishedAt: 1_005_000, summary: 'exit 1: no clone' };
+		r.steps = r.steps.map((s) => (s.id === 'render' ? failed : s));
+		const byHand = renderRow({ id: 'by-hand', started_at: 2_000_000, state: 'finished' });
+		const f = flowOf({ run: r, phase: 'current', latestRender: byHand, liveRender: null });
+		expect(cellOf(f, 'codex', 'plan')).toMatchObject({ kind: 'bad', facts: [] });
+		expect(f.shared.cleanup.kind).toBe('bad');
+		// A step from before `render` was recorded, naming its run: that run's stages.
+		r.steps = r.steps.map((s) => (s.id === 'render' ? { ...failed, status: 'done', runId: 'r1' } : s));
+		const old = flowOf({ run: r, phase: 'current', latestRender: renderRow({ state: 'finished' }), liveRender: null });
+		expect(said(cellOf(old, 'codex', 'plan'))).toBe('done · 58 prints · 2,117 to draw · 140 skipped');
+		// While the step runs, a run that isn't live (stopped responding, or a finished one) isn't read.
+		const g = flowOf({ run: inRender(), phase: 'running', latestRender: renderRow(), liveRender: null });
+		expect(cellOf(g, 'codex', 'plan').kind).toBe('wait');
+	});
+
 	test('a site only the render drew gets a row of its own', () => {
 		const s = stages();
 		s.sites.factoriobin = { ...s.sites.fprints!, plan: { ...s.sites.fprints!.plan, prints: 1 } };
-		const f = flowOf({ run: inRender(), phase: 'running', latestRender: renderRow({}, s) });
+		const f = flowOf({ run: inRender(), phase: 'running', liveRender: renderRow({}, s) });
 		expect(f.rows.map((r) => r.site)).toEqual(['factorioprints', 'codex', 'fprints', 'uploads', 'factoriobin']);
 		expect(cellOf(f, 'factoriobin', 'changes').kind).toBe('na');
 		expect(said(cellOf(f, 'factoriobin', 'plan'))).toBe('done · 1 prints · 1,310 to draw · 60 skipped');

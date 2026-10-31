@@ -71,7 +71,8 @@
 	const R1 = 3;
 	const shared = $derived(R1 + flow.rows.length);
 	const shotsReached = $derived(flow.rows.some((r) => r.reach >= COLUMNS.indexOf('shots')));
-	let accepting = $state(false);
+	/** The sources whose Accept is being sent, by name. */
+	let accepting = $state<Record<string, boolean>>({});
 </script>
 
 {#snippet accept(r: Row)}
@@ -81,10 +82,11 @@
 			action="?/accept"
 			class="mt-1"
 			use:enhance={() => {
-				accepting = true;
+				const site = r.held!.site;
+				accepting[site] = true;
 				return async ({ result, update }) => {
 					await update({ reset: false });
-					accepting = false;
+					accepting[site] = false;
 					if (result.type === 'success') onaccepted();
 				};
 			}}
@@ -92,11 +94,11 @@
 			<input type="hidden" name="site" value={r.held.site} />
 			<input type="hidden" name="id" value={r.held.id} />
 			<button
-				disabled={accepting}
+				disabled={accepting[r.held.site]}
 				class="rounded border border-stone-700 bg-stone-800 px-2 py-0.5 text-[0.7rem] font-medium text-stone-100 hover:bg-stone-700 disabled:opacity-60"
 				title="Fetch this change anyway in the next update: only after looking at the source"
 			>
-				{accepting ? 'Accepting…' : r.held.polled ? 'Accept' : `Accept ${shortCommit(r.held.id)}`}
+				{accepting[r.held.site] ? 'Accepting…' : r.held.polled ? 'Accept' : `Accept ${shortCommit(r.held.id)}`}
 			</button>
 		</form>
 	{/if}
