@@ -5,10 +5,10 @@
 	import { pageInfra, setupCounts, type IconCount } from '#lib/describe.js';
 	import { signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
-	import type { NodeAnalysis } from '#lib/server/pipeline/analyze.js';
+	import type { PageNode } from '#lib/server/pipeline/print-doc.js';
 
 	/** One blueprint page's facts: rates, what it takes from outside, how it's built, its size, the description saved in it. */
-	let { page, icons }: { page: NodeAnalysis; icons: IconSet } = $props();
+	let { page, icons }: { page: PageNode; icons: IconSet } = $props();
 
 	const setup = $derived(setupCounts(page));
 	const infra = $derived(pageInfra(page));

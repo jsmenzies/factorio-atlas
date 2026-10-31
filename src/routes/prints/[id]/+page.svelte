@@ -21,7 +21,8 @@
 	import { groupPages } from '#lib/book-groups.js';
 	import { signalName } from '#lib/format.js';
 	import { plainText } from '#lib/richtext.js';
-	import type { NodeAnalysis, Role } from '#lib/server/pipeline/analyze.js';
+	import type { Role } from '#lib/server/pipeline/analyze.js';
+	import type { PageNode } from '#lib/server/pipeline/print-doc.js';
 	import { usefulTags } from '#lib/tags.js';
 	import type { PageProps } from './$types';
 
@@ -36,7 +37,7 @@
 	const countOf = (ps: typeof products) => ps.main.length + ps.groups.reduce((n, g) => n + g.items.length, 0);
 	const produced = $derived(countOf(products));
 	// Made and used up inside the print: shown after what it makes, never as a product.
-	const insideOf = (ps: typeof products, from: NodeAnalysis[], inputs: string[]) => {
+	const insideOf = (ps: typeof products, from: PageNode[], inputs: string[]) => {
 		const out = new Set([...ps.main, ...ps.groups.flatMap((g) => g.items)].map((m) => m.signal));
 		return [...new Set(from.flatMap((n) => n.intermediates))].filter((s) => !out.has(s) && !inputs.includes(s));
 	};

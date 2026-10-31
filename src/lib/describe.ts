@@ -2,7 +2,8 @@
  * One-line, human summaries of what a page or print does, built from analyzer output.
  * Production pages lead with what they make; infra pages with what they're made of.
  */
-import type { Category, NodeAnalysis, PrintAnalysis, Role } from './server/pipeline/analyze.js';
+import type { Category, Role } from './server/pipeline/analyze.js';
+import type { PageAnalysis, PageNode } from './server/pipeline/print-doc.js';
 import { formatRate, signalName } from './format.js';
 import { plainText } from './richtext.js';
 
@@ -77,7 +78,7 @@ interface CategoryContext {
 }
 
 /** One page's context; `beltThroughput` is passed in, since page rows leave it out. */
-const nodeContext = (n: NodeAnalysis, beltThroughput: number | null): CategoryContext => ({
+const nodeContext = (n: PageNode, beltThroughput: number | null): CategoryContext => ({
 	beltThroughput,
 	trainStops: n.trainStops.flatMap((s) => (s.name ? [s.name] : [])),
 	wires: n.wires,
@@ -134,7 +135,7 @@ export const describeCategory = (cat: Category, c: Partial<Record<Category, Coun
 };
 
 /** What one page does. `withRate` adds the estimate, for places with no separate rate column. */
-export const describeNode = (n: NodeAnalysis, { withRate = false } = {}): string => {
+export const describeNode = (n: PageNode, { withRate = false } = {}): string => {
 	// Belt speed repeats on every row of a belt book, so rows leave it to the Belts card.
 	const ctx = nodeContext(n, withRate ? n.beltThroughput : null);
 	switch (n.role) {
@@ -164,7 +165,7 @@ export const describeNode = (n: NodeAnalysis, { withRate = false } = {}): string
 };
 
 /** What a whole print is, for the header. */
-export const describePrint = (a: PrintAnalysis): string => {
+export const describePrint = (a: PageAnalysis): string => {
 	const pages = a.nodes.filter((n) => n.kind === 'blueprint');
 	if (pages.length === 1) return describeNode(pages[0], { withRate: true });
 	// Lead with what most pages make; items before fluids when tied.
@@ -201,7 +202,7 @@ const midSentence = (signal: string) => {
  * What a book is about in a few words, at most `k` things: what it crafts (`ranked`, in the page's order; science
  * packs counted together, "6 science packs"), else the roles of its pages ("rail, belts and fluids").
  */
-const bookTopics = (a: PrintAnalysis, ranked: string[], k: number): string => {
+const bookTopics = (a: PageAnalysis, ranked: string[], k: number): string => {
 	// Only what a recipe in it crafts: an item that is only a page's icon (a train station's cargo wagon) isn't made.
 	const makes = ranked.filter((s) => a.products.includes(s));
 	const science = makes.filter((s) => s.endsWith('-science-pack'));
@@ -225,9 +226,9 @@ const bookTopics = (a: PrintAnalysis, ranked: string[], k: number): string => {
  * too long is cut at a word, never the sentences after it.
  */
 export const metaDescription = (
-	a: PrintAnalysis,
+	a: PageAnalysis,
 	author: string | null,
-	{ page, rendered = false, makes = [] }: { page?: { node: NodeAnalysis; index: number }; rendered?: boolean; makes?: string[] } = {}
+	{ page, rendered = false, makes = [] }: { page?: { node: PageNode; index: number }; rendered?: boolean; makes?: string[] } = {}
 ): string => {
 	const version = /^\d+\.\d+/.exec(a.gameVersion ?? '')?.[0];
 	const total = a.nodes.filter((n) => n.kind === 'blueprint').length;
@@ -254,7 +255,7 @@ export const metaDescription = (
 };
 
 /** Infra categories worth a card for this print, in display order, with their headline. */
-export const infraCards = (a: PrintAnalysis): { cat: Category; title: string; headline: string }[] => {
+export const infraCards = (a: PageAnalysis): { cat: Category; title: string; headline: string }[] => {
 	const c = a.byCategory;
 	const cards: { cat: Category; title: string; show: boolean }[] = [
 		{ cat: 'belts', title: 'Belts', show: !!c.belts },
@@ -296,18 +297,18 @@ export const CATEGORY_TITLE: [Category, string][] = [
 ];
 
 /** A category's headline over a whole print, as its infra card would say it ("3,303 belts · 43 splitters"). */
-export const printCategoryHeadline = (a: PrintAnalysis, cat: Category): string =>
+export const printCategoryHeadline = (a: PageAnalysis, cat: Category): string =>
 	describeCategory(cat, a.byCategory, { beltThroughput: a.beltThroughput, trainStops: a.trainStops, wires: a.wires, signs: a.signs });
 
 /** The same for one page. */
-export const pageCategoryHeadline = (n: NodeAnalysis, cat: Category): string =>
+export const pageCategoryHeadline = (n: PageNode, cat: Category): string =>
 	describeCategory(cat, n.byCategory, nodeContext(n, n.beltThroughput));
 
 /**
  * A page's name: its label, or for untitled pages its own icons ("#1 · Assembling machine 2 ·
  * Electronic circuit"), which is how players tell such pages apart in game.
  */
-export const pageTitle = (n: Pick<NodeAnalysis, 'label' | 'icons'>): { text: string; derived: boolean } => {
+export const pageTitle = (n: Pick<PageNode, 'label' | 'icons'>): { text: string; derived: boolean } => {
 	if (n.label) return { text: n.label, derived: false };
 	const numbers = n.icons.flatMap((s) => {
 		const m = /^virtual:signal-([0-9A-Z])$/.exec(s);
@@ -319,7 +320,7 @@ export const pageTitle = (n: Pick<NodeAnalysis, 'label' | 'icons'>): { text: str
 };
 
 /** Machines, modules and beacons on a production page or a whole print: "20 assembling machine 2s · 40 productivity module 3s". */
-export const describeSetup = (n: Pick<NodeAnalysis, 'modules' | 'entities' | 'byCategory'>): string => {
+export const describeSetup = (n: Pick<PageNode, 'modules' | 'entities' | 'byCategory'>): string => {
 	const modules: Counts = {};
 	for (const [m, x] of Object.entries(n.modules)) modules[m.split('@')[0]] = (modules[m.split('@')[0]] ?? 0) + x;
 	const beacons = sum(n.entities, (x) => /beacon/.test(x));
@@ -345,7 +346,7 @@ export interface ProductGroup {
 const MALL_LABEL = /\b(mall|shop)s?\b/i;
 
 /** Pages that make many different things for building with: malls and "shops". */
-export const isMall = (n: NodeAnalysis) => n.role === 'production' && (n.products.length >= 4 || MALL_LABEL.test(n.label ?? ''));
+export const isMall = (n: PageNode) => n.role === 'production' && (n.products.length >= 4 || MALL_LABEL.test(n.label ?? ''));
 
 export const GROUP_ORDER = ['Science', 'Intermediates', 'Mall & shops', 'Logistics', 'Production', 'Combat', 'Space', 'Fluids', 'Other'];
 
@@ -359,7 +360,7 @@ export const GROUP_ORDER = ['Science', 'Intermediates', 'Mall & shops', 'Logisti
  * products count too.
  */
 export const bookProducts = (
-	pages: NodeAnalysis[],
+	pages: PageNode[],
 	sectionOf: (signal: string) => string,
 	maxMain = 8,
 	inBook = pages.length > 1
@@ -409,7 +410,7 @@ const STAGE = /^\s*(\d+)\s*[.)]\s*(.+)$/;
  * A book in one line: its build stages when the labels are numbered ("1. Gears", "2. Steam
  * Power"), else its page count, then the mix of roles.
  */
-export const describeBook = (a: PrintAnalysis): string => {
+export const describeBook = (a: PageAnalysis): string => {
 	const pages = a.nodes.filter((n) => n.kind === 'blueprint');
 	const roles = Object.entries(a.roles) as [Role, number][];
 	const mix =
@@ -455,7 +456,7 @@ const entityCounts = (c: Counts | undefined, keep: (name: string) => boolean = (
 		.map(([name, n]) => ({ kind: 'entity', name, n, label: plural(n, name) }));
 
 /** `describeSetup` as icons: machines, modules (by quality) and beacons. */
-export const setupCounts = (n: Pick<NodeAnalysis, 'modules' | 'entities' | 'byCategory'>): IconCount[] => {
+export const setupCounts = (n: Pick<PageNode, 'modules' | 'entities' | 'byCategory'>): IconCount[] => {
 	const modules = Object.entries(n.modules)
 		.sort((x, y) => y[1] - x[1])
 		.slice(0, 4)
@@ -471,7 +472,7 @@ export const setupCounts = (n: Pick<NodeAnalysis, 'modules' | 'entities' | 'byCa
 };
 
 /** One page's infra as lines of icons ("Belts: [belt] 75 [splitter] 12"), for the selected-page panel. */
-export const pageInfra = (n: NodeAnalysis): FactLine[] => {
+export const pageInfra = (n: PageNode): FactLine[] => {
 	const c = n.byCategory;
 	const lines: FactLine[] = [];
 	if (c.belts) {

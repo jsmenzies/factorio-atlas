@@ -3,8 +3,7 @@
 	import ShotLightbox from '#lib/components/ShotLightbox.svelte';
 	import { formatDate } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
-	import type { NodeAnalysis, PrintAnalysis } from '#lib/server/pipeline/analyze.js';
-	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
+	import type { PageAnalysis, PageNode, PagePrint } from '#lib/server/pipeline/print-doc.js';
 	import { showsFavourites } from '#lib/print-id.js';
 	import { plainText } from '#lib/richtext.js';
 	import { NO_SHOT, type ShotView } from '#lib/screenshots.js';
@@ -23,7 +22,7 @@
 		root,
 		shot: view,
 		icons
-	}: { print: PagePrint; analysis: PrintAnalysis; root: NodeAnalysis | undefined; shot: ShotView; icons: IconSet } = $props();
+	}: { print: PagePrint; analysis: PageAnalysis; root: PageNode | undefined; shot: ShotView; icons: IconSet } = $props();
 
 	const shot = $derived(view.inline);
 	// Every live source, credited first (#lib/sources.ts): the first is the one the title and author are from.

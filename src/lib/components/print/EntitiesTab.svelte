@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { CATEGORY_TITLE, pageCategoryHeadline, printCategoryHeadline } from '#lib/describe.js';
 	import type { IconSet } from '#lib/icons.js';
-	import type { Category, NodeAnalysis, PrintAnalysis } from '#lib/server/pipeline/analyze.js';
+	import type { Category } from '#lib/server/pipeline/analyze.js';
+	import type { PageAnalysis, PageNode } from '#lib/server/pipeline/print-doc.js';
 	import CountSection, { countRows, QUALITIES } from './CountSection.svelte';
 	import QualityChips from './QualityChips.svelte';
 
@@ -16,9 +17,9 @@
 		inBook = false,
 		icons
 	}: {
-		analysis: PrintAnalysis;
+		analysis: PageAnalysis;
 		/** One page to count, else the whole print. */
-		page?: NodeAnalysis | null;
+		page?: PageNode | null;
 		inBook?: boolean;
 		icons: IconSet;
 	} = $props();

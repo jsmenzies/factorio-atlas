@@ -3,7 +3,7 @@
 	import Rate from '#lib/components/Rate.svelte';
 	import { signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
-	import type { NodeAnalysis } from '#lib/server/pipeline/analyze.js';
+	import type { PageNode } from '#lib/server/pipeline/print-doc.js';
 
 	/**
 	 * What a print takes from outside: one row per item. A single blueprint shows each one's
@@ -18,9 +18,9 @@
 		icons
 	}: {
 		inputs: string[];
-		pages: NodeAnalysis[];
+		pages: PageNode[];
 		/** The one page of a single blueprint, whose rates apply. */
-		single: NodeAnalysis | null;
+		single: PageNode | null;
 		onpick?: (signal: string) => void;
 		icons: IconSet;
 	} = $props();

@@ -4,7 +4,7 @@
 	import { pageTitle } from '#lib/describe.js';
 	import type { IconSet } from '#lib/icons.js';
 	import { plainClick } from '#lib/links.js';
-	import type { NodeAnalysis } from '#lib/server/pipeline/analyze.js';
+	import type { PageNode } from '#lib/server/pipeline/print-doc.js';
 	import PageDetail from './PageDetail.svelte';
 
 	/**
@@ -27,7 +27,7 @@
 		oncopy,
 		icons
 	}: {
-		page: NodeAnalysis;
+		page: PageNode;
 		index: number;
 		total: number;
 		/** Its own ‹ ›; off when a page bar above steps through the book. */

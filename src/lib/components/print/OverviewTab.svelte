@@ -6,8 +6,8 @@
 	import { describeBook, describeSetup, infraCards, pageTitle, type MadeItem } from '#lib/describe.js';
 	import { signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
-	import type { NodeAnalysis, PrintAnalysis, Role } from '#lib/server/pipeline/analyze.js';
-	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
+	import type { Role } from '#lib/server/pipeline/analyze.js';
+	import type { PageAnalysis, PageNode, PagePrint } from '#lib/server/pipeline/print-doc.js';
 	import { plainText } from '#lib/richtext.js';
 	import type { ShotView } from '#lib/screenshots.js';
 	import type { AuthorTag } from '#lib/tags.js';
@@ -41,10 +41,10 @@
 		icons
 	}: {
 		print: PagePrint;
-		analysis: PrintAnalysis;
+		analysis: PageAnalysis;
 		/** The author's screenshot (shotView in #lib/screenshots.ts): ours, Imgur's while unknown, or none. */
 		shot: ShotView;
-		single: NodeAnalysis | null;
+		single: PageNode | null;
 		/** A line saying what a blueprint that makes nothing is for. */
 		summary: string | null;
 		main: MadeItem[];
@@ -52,7 +52,7 @@
 		more: number;
 		tags: AuthorTag[];
 		/** A rendered page's overview image: the selected page's, else the biggest one's. */
-		preview: { url: string; thumb: PageThumb | undefined; page: NodeAnalysis; index: number; total: number; fullScreen: string } | null;
+		preview: { url: string; thumb: PageThumb | undefined; page: PageNode; index: number; total: number; fullScreen: string } | null;
 		descriptionHtml: string;
 		descriptionLong: boolean;
 		activeRole: Role | null;

@@ -13,7 +13,7 @@
 	import { signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
 	import { plainText } from '#lib/richtext.js';
-	import type { NodeAnalysis } from '#lib/server/pipeline/analyze.js';
+	import type { PageNode } from '#lib/server/pipeline/print-doc.js';
 	import type { PageThumb } from '#lib/viewer/thumbs.js';
 	import PrintChips from './PrintChips.svelte';
 
@@ -38,8 +38,8 @@
 		icons,
 		children
 	}: {
-		pages: NodeAnalysis[];
-		books: NodeAnalysis[];
+		pages: PageNode[];
+		books: PageNode[];
 		/** The print's own book, first in the sub-book trail. */
 		rootTitle: string;
 		selected: string;

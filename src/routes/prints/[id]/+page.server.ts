@@ -4,6 +4,7 @@ import { iconSet } from '#lib/server/icon-set.js';
 import { landingLinks } from '#lib/server/picker-items.js';
 import { renderDescription } from '#lib/server/markdown.js';
 import { gameData } from '#lib/server/pipeline/game-data.js';
+import { pageAnalysis } from '#lib/server/pipeline/print-doc.js';
 import { loadPrintDoc, loadRelated, printTexts } from '#lib/server/print-pages.js';
 import { pageThumbs, renderBase, renderOverviews } from '#lib/server/renders.js';
 import { loadShotView } from '#lib/server/screenshots.js';
@@ -83,6 +84,8 @@ export const load: PageServerLoad = async ({ params }) => {
 	return {
 		...found,
 		print,
+		// Only what the page shows: the document's search tokens and working figures stay here.
+		analysis: pageAnalysis(a),
 		icons,
 		sections,
 		menuOrder,

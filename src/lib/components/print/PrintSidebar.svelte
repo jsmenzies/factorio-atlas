@@ -2,9 +2,8 @@
 	import Icon from '#lib/components/Icon.svelte';
 	import { formatDate } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
-	import type { PrintAnalysis } from '#lib/server/pipeline/analyze.js';
 	import type { LandingLink } from '#lib/server/picker-items.js';
-	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
+	import type { PageAnalysis, PagePrint } from '#lib/server/pipeline/print-doc.js';
 	import { searchRel } from '#lib/search-seo.js';
 	import { QUALITIES } from './CountSection.svelte';
 
@@ -22,7 +21,7 @@
 		icons
 	}: {
 		print: PagePrint;
-		analysis: PrintAnalysis;
+		analysis: PageAnalysis;
 		size: string | null;
 		landings: { makes: LandingLink[]; uses: LandingLink[] };
 		icons: IconSet;

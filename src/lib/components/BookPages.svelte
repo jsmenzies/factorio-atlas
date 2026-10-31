@@ -8,7 +8,7 @@
 	import type { IconSet } from '#lib/icons.js';
 	import { plainClick } from '#lib/links.js';
 	import { plainText } from '#lib/richtext.js';
-	import type { NodeAnalysis } from '#lib/server/pipeline/analyze.js';
+	import type { PageNode } from '#lib/server/pipeline/print-doc.js';
 	import type { PageThumb } from '#lib/viewer/thumbs.js';
 
 	/**
@@ -27,8 +27,8 @@
 		thumbs = {},
 		icons
 	}: {
-		pages: NodeAnalysis[];
-		books: NodeAnalysis[];
+		pages: PageNode[];
+		books: PageNode[];
 		selected: string;
 		/** A page's URL: cards are links, so search engines find every page and they open in new tabs. */
 		href: (path: string) => string;
@@ -50,7 +50,7 @@
 	interface Group {
 		/** Path of the book the pages are directly in ('' for the print's own book). */
 		parent: string;
-		pages: NodeAnalysis[];
+		pages: PageNode[];
 		/** Its chip: as few of its books (from the bottom) as tell it apart, numbered when still alike. */
 		label: string[];
 		number: number | null;
@@ -59,7 +59,7 @@
 	// One group per book that holds pages, in order of its first page (a book that comes back after
 	// a sub-book stays one group).
 	const groups = $derived.by((): Group[] => {
-		const byParent = new Map<string, NodeAnalysis[]>();
+		const byParent = new Map<string, PageNode[]>();
 		for (const n of pages) {
 			const parent = parentOf(n.path);
 			byParent.set(parent, [...(byParent.get(parent) ?? []), n]);
@@ -93,9 +93,9 @@
 
 	/** Pages whose thumbnail failed to load, which show their icons instead. */
 	let failed = $state<string[]>([]);
-	const rateOf = (n: NodeAnalysis) => n.claimedRate ?? n.estimatedRate;
+	const rateOf = (n: PageNode) => n.claimedRate ?? n.estimatedRate;
 	/** The card's second line: its rate, else what it makes, else what it is. */
-	const note = (n: NodeAnalysis) => {
+	const note = (n: PageNode) => {
 		const rate = rateOf(n);
 		if (rate) return { text: n.claimedRate ? '' : '≈ ', rate };
 		if (n.outputs.length) return { text: n.outputs.slice(0, 3).map((s) => signalName(s).toLowerCase()).join(' · '), rate: null };

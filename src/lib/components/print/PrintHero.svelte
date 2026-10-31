@@ -3,8 +3,7 @@
 	import RichText from '#lib/components/RichText.svelte';
 	import ShotLightbox from '#lib/components/ShotLightbox.svelte';
 	import type { IconSet } from '#lib/icons.js';
-	import type { NodeAnalysis, PrintAnalysis } from '#lib/server/pipeline/analyze.js';
-	import type { PagePrint } from '#lib/server/pipeline/print-doc.js';
+	import type { PageAnalysis, PageNode, PagePrint } from '#lib/server/pipeline/print-doc.js';
 	import { showsFavourites } from '#lib/print-id.js';
 	import { plainText } from '#lib/richtext.js';
 	import { NO_SHOT, type ShotView } from '#lib/screenshots.js';
@@ -31,9 +30,9 @@
 		icons
 	}: {
 		print: PagePrint;
-		analysis: PrintAnalysis;
+		analysis: PageAnalysis;
 		title: string;
-		root: NodeAnalysis | undefined;
+		root: PageNode | undefined;
 		/** Our copy of the author's screenshot (#lib/screenshots.ts shotView). */
 		shot: ShotView;
 		/** The biggest rendered page's overview, for prints without a screenshot. */

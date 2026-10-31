@@ -14,7 +14,7 @@
 	import { GROUP_ORDER } from '#lib/describe.js';
 	import { signalName } from '#lib/format.js';
 	import type { IconSet } from '#lib/icons.js';
-	import type { NodeAnalysis } from '#lib/server/pipeline/analyze.js';
+	import type { PageNode } from '#lib/server/pipeline/print-doc.js';
 
 	/**
 	 * The recipes set in a print's machines, by crafting-menu section: each with what it takes and
@@ -31,8 +31,8 @@
 		/** Machines per recipe. */
 		recipes: Record<string, number>;
 		info: Record<string, RecipeInfo>;
-		pages: NodeAnalysis[];
-		single: NodeAnalysis | null;
+		pages: PageNode[];
+		single: PageNode | null;
 		icons: IconSet;
 	} = $props();
 

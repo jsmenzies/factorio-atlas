@@ -4,7 +4,7 @@
  */
 import type { Site } from '#lib/print-id.js';
 import type { PrintSource } from '#lib/sources.js';
-import type { PrintAnalysis } from './analyze.js';
+import type { NodeAnalysis, PrintAnalysis } from './analyze.js';
 import type { FoldState } from './fold.js';
 import type { FirebaseRecord } from './record.js';
 import { toEpochMs } from './record.js';
@@ -46,6 +46,25 @@ export interface PrintDoc {
 
 /** The print as its page gets it: the description arrives as sanitised HTML, so the Markdown stays on the server. */
 export type PagePrint = Omit<PrintDoc['print'], 'description_md'>;
+
+/** Node fields the print page never shows (search tokens and analyzer working figures): left out of its data. */
+const UNSHOWN_NODE_FIELDS = ['signItems', 'signals', 'richText', 'combinators', 'schedules', 'furnacesWithoutRecipe', 'qualities'] as const;
+
+/** A page as the print page gets it. */
+export type PageNode = Omit<NodeAnalysis, (typeof UNSHOWN_NODE_FIELDS)[number]>;
+
+/** The analysis as the print page gets it: every page without the fields it never shows, and no print-level `labels`. */
+export type PageAnalysis = Omit<PrintAnalysis, 'labels' | 'nodes'> & { nodes: PageNode[] };
+
+/** The analysis trimmed to what the print page reads (its HTML and `__data.json` carry it twice). */
+export const pageAnalysis = ({ labels: _labels, nodes, ...rest }: PrintAnalysis): PageAnalysis => ({
+	...rest,
+	nodes: nodes.map((n) => {
+		const out: Partial<NodeAnalysis> = { ...n };
+		for (const k of UNSHOWN_NODE_FIELDS) delete out[k];
+		return out as PageNode;
+	})
+});
 
 export const toPrintDoc = (id: string, sourceUrl: string, r: FirebaseRecord, analysis: PrintAnalysis): PrintDoc => ({
 	v: PRINT_DOC_VERSION,
