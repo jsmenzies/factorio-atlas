@@ -4,19 +4,26 @@
  * reads that bucket.
  *
  * The unit of work is a print: syncing one brings the bucket in line with its render_jobs rows.
- * Per page, in this order: its tiles not in the bucket yet, `<page>.<stamp>.avif`, `<page>.page.json`,
- * `<page>.json` (the sidecar), then the print's `index.json` rebuilt from the pages whose files are
- * up, then (scheduling a re-rendered page's previous overview for deletion) its render_uploads row. Every object
+ * Per page: its tiles not in the bucket yet, `<page>.<stamp>.avif` and `<page>.page.json`, all at
+ * once, then `<page>.json` (the sidecar) once they are all up. Then the print's `index.json`,
+ * rebuilt from the pages whose files are up, then (scheduling a re-rendered page's previous
+ * overview for deletion) the render_uploads rows of the pages it newly lists. The index goes up
+ * once the print's pages are done, and in between at most every `indexEveryMs` (a big book shows
+ * its progress, and a crash costs at most that much work). Every object
  * gets the Cache-Control of renderCacheControl (#lib/viewer/game-render.js): images for good,
  * index.json a minute, sidecars and page data five minutes. So:
- * - The remote index never lists a page whose files aren't all there. A page being re-rendered
- *   stays listed at the version that is up until its new files are.
- * - A run killed at any point repeats at most the page that was going up: its row is written
- *   last, and tiles are checked against the bucket's own listing (one LIST per print, cached), so
- *   tiles that made it up are not sent again.
- * - Pages of one print go up one at a time (their tiles in parallel); prints in parallel. At most
- *   `concurrency` requests are in flight. Pause holds new requests; stop finishes the page each
- *   print is on; abort cancels the requests in flight (those pages go up next time).
+ * - The remote index never lists a page whose files aren't all there, and a row never says a page
+ *   is up that the remote index doesn't list. A page being re-rendered stays listed at the version
+ *   that is up until its new files are.
+ * - A run killed at any point repeats at most the pages up since the last index: their rows are
+ *   written last, and tiles are checked against the bucket's own listing (one LIST per print,
+ *   cached), so tiles that made it up are not sent again.
+ * - Up to `pageConcurrency` pages of one print go up at once, prints in parallel. A tile two of
+ *   them use is sent once, by the earlier page in book order (as one at a time would), and the
+ *   other page's sidecar waits for it. At most `concurrency` requests are in flight, and a file is
+ *   read only once its request has a slot. Pause holds new requests; stop finishes the pages each
+ *   print has in flight (and their index); abort cancels the requests in flight (those pages go up
+ *   next time).
  *
  * Deleting: pages whose row is gone, failed or skipped are dropped from the index, then their files
  * are scheduled for deletion. Objects no uploaded page uses (tiles of an older version) are
@@ -59,6 +66,11 @@ export const UPLOAD_TARGETS = ['local', 'prod'] as const;
 
 /** How long a replaced file stays in the bucket: well past the viewer's 300 s sidecar cache plus the 60 s index cache. */
 export const DELETE_GRACE_MS = 15 * 60_000;
+/** Pages of one print going up at once: a page's last steps (sidecar, then the index) are round trips that other pages' files can fill. */
+export const PAGE_CONCURRENCY = 4;
+/** How often a print's index.json goes up while its pages do (a big book's pages show on the site as they go, and a crash repeats at most this much). */
+export const INDEX_EVERY_MS = 30_000;
+
 /** The shortest grace period that is safe for a bucket behind a cache (RENDER_DELETE_GRACE_S below it is for local tests only). */
 export const MIN_DELETE_GRACE_MS = 360_000;
 
@@ -156,6 +168,10 @@ export interface UploaderOptions {
 	outDir: string;
 	/** Requests in flight at most. */
 	concurrency: number;
+	/** Pages of one print going up at once (default PAGE_CONCURRENCY). */
+	pageConcurrency?: number;
+	/** While a print's pages go up, its index.json goes up at most this often (default INDEX_EVERY_MS); always once they're done. */
+	indexEveryMs?: number;
 	log: (line: string) => void;
 	/** Per-request retries (tests pass a fake sleep). */
 	retry?: Omit<RetryOptions, 'signal'>;
@@ -240,10 +256,19 @@ export function rateWindow(windowMs: number, now: () => number) {
 }
 
 const LISTING_CACHE = 64;
+/** render_uploads rows written at once after an index went up. */
+const ROW_WRITES = 8;
 /** Due deletions read per query. */
 const DUE_BATCH = 1000;
 const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+/** Run `n` workers to the end, every one of them, even after one throws (none is left writing after the caller moved on); then throw the first error. */
+async function allWorkers(n: number, worker: () => Promise<void>) {
+	const results = await Promise.allSettled(Array.from({ length: n }, worker));
+	const failed = results.find((r) => r.status === 'rejected');
+	if (failed) throw failed.reason;
+}
 
 export function createUploader(opts: UploaderOptions) {
 	const { store, db, target, log } = opts;
@@ -317,11 +342,13 @@ export function createUploader(opts: UploaderOptions) {
 
 	/** A request slot. `urgent` (everything but tiles) goes ahead of the queue, so a print's last steps never wait behind another print's tiles. */
 	async function acquire(urgent: boolean) {
-		while (paused || active >= opts.concurrency) {
+		while (!broken && (paused || active >= opts.concurrency)) {
 			ac.signal.throwIfAborted();
 			await new Promise<void>((resolve) => (urgent ? slotWaiters.unshift(resolve) : slotWaiters.push(resolve)));
 		}
 		ac.signal.throwIfAborted();
+		// After a 401/403 no request starts: pages part-way up stop where they are (and go up next time).
+		if (broken) throw new StoreError(`uploads stopped: ${broken}`, false);
 		active++;
 	}
 	/** Every waiter re-checks (after a pause, an abort or a fatal error). */
@@ -334,25 +361,37 @@ export function createUploader(opts: UploaderOptions) {
 		slotWaiters.shift()?.();
 	};
 
-	/** One store call: a request slot, retries, abort. */
-	async function request<T>(what: string, f: (signal: AbortSignal) => Promise<T>, urgent = true): Promise<T> {
+	/** Run `f` holding a request slot. */
+	async function withSlot<T>(urgent: boolean, f: () => Promise<T>): Promise<T> {
 		await acquire(urgent);
 		byteWindow.start();
 		fileWindow.start();
 		pageWindow.start();
 		try {
-			return await withRetries(() => f(ac.signal), {
-				...opts.retry,
-				signal: ac.signal,
-				onRetry: (e, attempt, ms) => {
-					stats.lastError = e.message;
-					log(`  upload: ${what}: ${e.message}; retry ${attempt} in ${(ms / 1000).toFixed(1)} s`);
-				}
-			});
+			return await f();
 		} finally {
 			release();
 		}
 	}
+
+	/** One store call with retries and abort (the caller holds a slot). */
+	const retrying = <T>(what: string, f: (signal: AbortSignal) => Promise<T>) =>
+		withRetries(() => f(ac.signal), {
+			...opts.retry,
+			signal: ac.signal,
+			onRetry: (e, attempt, ms) => {
+				stats.lastError = e.message;
+				log(`  upload: ${what}: ${e.message}; retry ${attempt} in ${(ms / 1000).toFixed(1)} s`);
+			}
+		}).catch((e: unknown) => {
+			// At once, not when the page's other files are done: no other page starts another request.
+			if (e instanceof StoreError && e.fatal) breakOff(`${what}: ${message(e)}`, e);
+			throw e;
+		});
+
+	/** One store call: a request slot, retries, abort. */
+	const request = <T>(what: string, f: (signal: AbortSignal) => Promise<T>, urgent = true): Promise<T> =>
+		withSlot(urgent, () => retrying(what, f));
 
 	async function remoteKeys(id: string): Promise<Set<string>> {
 		const hit = listings.get(id);
@@ -375,6 +414,20 @@ export function createUploader(opts: UploaderOptions) {
 			byteWindow.add(body.byteLength);
 			fileWindow.add(1);
 		}
+	}
+
+	/** Put a file from disk, read only once a slot is free (so files waiting for one hold no memory). Returns its bytes. */
+	async function putFile(id: string, rel: string, file: string, contentType: string, remote: Set<string>) {
+		const key = `${id}/${rel}`;
+		const n = await withSlot(!rel.startsWith('t/'), async () => {
+			const body = await readBody(file);
+			await retrying(`put ${key}`, (signal) => store.put(key, body, contentType, renderCacheControl(rel), signal));
+			return body.byteLength;
+		});
+		remote.add(key);
+		byteWindow.add(n);
+		fileWindow.add(1);
+		return n;
 	}
 
 	/** Delete now: only for keys no cached file can name (an emptied index), and due deletions. */
@@ -412,8 +465,14 @@ export function createUploader(opts: UploaderOptions) {
 	async function cancelDeletes(keys: string[], ctx: PrintCtx) {
 		const hit = keys.filter((k) => ctx.pending.has(k));
 		if (!hit.length) return;
-		await db.dropDeletes(target, hit);
+		// Taken off before the await, so pages going up at once never drop (and count) a key twice; put back if the drop fails.
 		for (const k of hit) ctx.pending.delete(k);
+		try {
+			await db.dropDeletes(target, hit);
+		} catch (e) {
+			for (const k of hit) ctx.pending.add(k);
+			throw e;
+		}
 		stats.deletesCancelled += hit.length;
 		deletesPending = Math.max(0, deletesPending - hit.length);
 	}
@@ -436,10 +495,8 @@ export function createUploader(opts: UploaderOptions) {
 		stats.indexes++;
 	}
 
-	/** One page up, then the index, then its row. Returns the new row. */
-	async function uploadPage(id: string, job: UploadJob, listed: UploadRow[], ctx: PrintCtx): Promise<UploadRow> {
-		const { remote } = ctx;
-		const dir = join(opts.outDir, id);
+	/** The page's sidecar on disk, checked against its render_jobs row. */
+	async function pageSidecar(dir: string, job: UploadJob) {
 		const scBody = await readBody(join(dir, sidecarFile(job.path)));
 		let sc: RenderSidecar;
 		try {
@@ -453,83 +510,158 @@ export function createUploader(opts: UploaderOptions) {
 				false
 			);
 		}
-		const hashes = [...new Set(sc.levels.flatMap((l) => l.tiles).filter(Boolean))];
-		await cancelDeletes(
-			[sc.overview.file, pageDataFile(job.path), sidecarFile(job.path), ...hashes.map(tileHashFile)].map((rel) => `${id}/${rel}`),
-			ctx
-		);
-		const missing = hashes.filter((h) => !remote.has(`${id}/${tileHashFile(h)}`));
-		let files = 0;
-		let bytes = 0;
-		let failure: unknown = null;
-		// At most `concurrency` tiles of a page queued at once: a page with thousands of tiles doesn't
-		// hold every file read in memory, and other prints' tiles take turns with it.
-		let nextTile = 0;
-		await Promise.all(
-			Array.from({ length: Math.min(opts.concurrency, missing.length) }, async () => {
-				while (!failure && nextTile < missing.length) {
-					const h = missing[nextTile++];
-					try {
-						const body = await readBody(join(dir, tileHashFile(h)));
-						if (failure) return;
-						await put(id, tileHashFile(h), body, 'image/avif', remote);
-						files++;
-						bytes += body.byteLength;
-					} catch (e) {
-						failure ??= e;
-					}
-				}
-			})
-		);
-		if (failure) throw failure;
-		for (const [rel, type] of [
-			[sc.overview.file, 'image/avif'],
-			[pageDataFile(job.path), 'application/json']
-		] as const) {
-			const body = await readBody(join(dir, rel));
-			await put(id, rel, body, type, remote);
-			files++;
-			bytes += body.byteLength;
-		}
-		await put(id, sidecarFile(job.path), scBody, 'application/json', remote);
-		files++;
-		bytes += scBody.byteLength;
+		return { sc, scBody, hashes: [...new Set(sc.levels.flatMap((l) => l.tiles).filter(Boolean))] };
+	}
 
-		const row: UploadRow = {
-			target,
-			print_id: id,
-			path: job.path,
-			stamp: sc.stamp,
-			rendered_at: sc.renderedAt,
-			stale: 0,
-			files,
-			bytes,
-			uploaded_at: now(),
-			error: null,
-			failed_at: null
+	/** A tile another page claimed: once that page is done with it, up already, or else sent by this one. Returns the bytes sent, or null. */
+	async function ensureTile(id: string, rel: string, dir: string, ctx: PrintCtx): Promise<number | null> {
+		const key = `${id}/${rel}`;
+		for (let claim = ctx.claims.get(key); !ctx.remote.has(key) && claim; claim = ctx.claims.get(key)) await claim;
+		if (ctx.remote.has(key)) return null;
+		let done!: () => void;
+		ctx.claims.set(key, new Promise<void>((resolve) => (done = resolve)));
+		try {
+			return await putFile(id, rel, join(dir, rel), 'image/avif', ctx.remote);
+		} finally {
+			ctx.claims.delete(key);
+			done();
+		}
+	}
+
+	/**
+	 * One page's files up: its tiles not in the bucket, overview and page data at once, then the
+	 * sidecar. The index and its row come later (listPages). `turn` orders the pages' tile claims by
+	 * book order: the page waits for `turn.prev` (the page before it claimed) and calls `turn.open`
+	 * once it has claimed, so a tile two pages use is sent by the earlier one, as one at a time would.
+	 */
+	async function uploadPage(id: string, job: UploadJob, ctx: PrintCtx, turn: { prev: Promise<void>; open: () => void }): Promise<PageUp> {
+		const { remote, claims } = ctx;
+		const dir = join(opts.outDir, id);
+		/** Tiles this page claimed: key → resolve the claim (others waiting on it look again). */
+		const mine = new Map<string, () => void>();
+		/** Tiles another page in flight claimed first. */
+		const others: string[] = [];
+		const settle = (key: string) => {
+			const done = mine.get(key);
+			if (!done) return;
+			mine.delete(key);
+			claims.delete(key);
+			done();
 		};
-		await writeIndex(id, [...listed.filter((u) => u.path !== job.path), row], remote);
-		// The index no longer names the page's previous overview (or one from before stamps), but a
-		// cached sidecar may: it goes after the grace period.
-		const before = listed.find((u) => u.path === job.path)?.stamp;
-		if (before && before !== sc.stamp) stats.replaced++;
+		let page: Awaited<ReturnType<typeof pageSidecar>> | null = null;
+		try {
+			page = await pageSidecar(dir, job);
+		} finally {
+			await turn.prev;
+			for (const h of page?.hashes ?? []) {
+				const key = `${id}/${tileHashFile(h)}`;
+				if (remote.has(key)) continue;
+				if (claims.has(key)) {
+					others.push(tileHashFile(h));
+					continue;
+				}
+				let done!: () => void;
+				claims.set(key, new Promise<void>((resolve) => (done = resolve)));
+				mine.set(key, done);
+			}
+			turn.open();
+		}
+		const { sc, scBody, hashes } = page!;
+		try {
+			await cancelDeletes(
+				[sc.overview.file, pageDataFile(job.path), sidecarFile(job.path), ...hashes.map(tileHashFile)].map((rel) => `${id}/${rel}`),
+				ctx
+			);
+			// The overview (named by its stamp) goes with the tiles; the page data and sidecar, rewritten in place, only once those are up.
+			const tasks: [rel: string, type: string][] = [
+				[sc.overview.file, 'image/avif'],
+				...[...mine.keys()].map((key): [string, string] => [key.slice(id.length + 1), 'image/avif'])
+			];
+			let files = 0;
+			let bytes = 0;
+			let tilesSent = 0;
+			let failure: unknown = null;
+			// At most `concurrency` files of a page waiting for a slot at once: other prints' tiles take turns with a page of thousands.
+			let next = 0;
+			await Promise.all(
+				Array.from({ length: Math.min(opts.concurrency, tasks.length) }, async () => {
+					while (!failure && !broken && next < tasks.length) {
+						const [rel, type] = tasks[next++];
+						try {
+							const n = await putFile(id, rel, join(dir, rel), type, remote);
+							files++;
+							bytes += n;
+							if (rel.startsWith('t/')) tilesSent++;
+						} catch (e) {
+							failure ??= e;
+						} finally {
+							settle(`${id}/${rel}`);
+						}
+					}
+				})
+			);
+			if (failure) throw failure;
+			// The sidecar names these too: it waits until the pages that claimed them are done with them.
+			for (const rel of others) {
+				const n = await ensureTile(id, rel, dir, ctx);
+				if (n === null) continue;
+				files++;
+				bytes += n;
+				tilesSent++;
+			}
+			// Uploads broke (401/403) while this page went up: its other files may not all be there.
+			if (broken) throw new StoreError(broken, false);
+			const dataBytes = await putFile(id, pageDataFile(job.path), join(dir, pageDataFile(job.path)), 'application/json', remote);
+			files++;
+			bytes += dataBytes;
+			await put(id, sidecarFile(job.path), scBody, 'application/json', remote);
+			files++;
+			bytes += scBody.byteLength;
+			const row: UploadRow = {
+				target,
+				print_id: id,
+				path: job.path,
+				stamp: sc.stamp,
+				rendered_at: sc.renderedAt,
+				stale: 0,
+				files,
+				bytes,
+				uploaded_at: now(),
+				error: null,
+				failed_at: null
+			};
+			return { job, row, overview: sc.overview.file, reused: hashes.length - tilesSent };
+		} finally {
+			for (const key of mine.keys()) settle(key);
+		}
+	}
+
+	/**
+	 * After the index that lists these pages went up: schedule each re-rendered page's previous
+	 * overview for deletion (a cached sidecar may still name it), then write its row.
+	 * `before`: the stamp each page was listed at before.
+	 */
+	async function listPage(id: string, up: PageUp, before: string | null | undefined, ctx: PrintCtx) {
+		const { job, row } = up;
+		if (before && before !== row.stamp) stats.replaced++;
 		await deleteLater(
 			id,
 			[before ? overviewFile(job.path, before) : null, legacyOverview(job.path)].filter(
-				(rel): rel is string => !!rel && rel !== sc.overview.file && remote.has(`${id}/${rel}`)
+				(rel): rel is string => !!rel && rel !== up.overview && ctx.remote.has(`${id}/${rel}`)
 			),
 			'replaced',
 			ctx
 		);
 		await db.recordUpload(row);
+		const files = row.files ?? 0;
+		const bytes = row.bytes ?? 0;
 		stats.pages++;
 		pageWindow.add(1);
 		stats.files += files;
 		stats.bytes += bytes;
-		stats.reused += hashes.length - missing.length;
+		stats.reused += up.reused;
 		opts.onPageUp?.(id, files, bytes);
-		log(`  ↑ ${id} ${pageBase(job.path).padEnd(6)} ${files} files, ${mb(bytes)} (${hashes.length - missing.length} tiles already up)`);
-		return row;
+		log(`  ↑ ${id} ${pageBase(job.path).padEnd(6)} ${files} files, ${mb(bytes)} (${up.reused} tiles already up)`);
 	}
 
 	/** The keys the print's uploaded pages use: their names, and their tiles if every uploaded version's sidecar is on disk (else null). */
@@ -573,7 +705,7 @@ export function createUploader(opts: UploaderOptions) {
 			.filter((rel) => OURS.test(rel) && !expected.has(rel));
 		if (!extras.length) return;
 		// The index first, so it never names a page whose files are going.
-		await writeIndex(id, listed, remote);
+		if (!ctx.indexCurrent) await writeIndex(id, listed, remote);
 		const n = await deleteLater(
 			id,
 			extras.filter((rel) => rel !== 'index.json'),
@@ -605,34 +737,96 @@ export function createUploader(opts: UploaderOptions) {
 		let ctx: PrintCtx;
 		try {
 			const [remote, pending] = await Promise.all([remoteKeys(id), db.pendingDeletesOf(target, id)]);
-			ctx = { remote, pending: new Set(pending) };
+			ctx = { remote, pending: new Set(pending), claims: new Map(), indexCurrent: false };
 		} catch (e) {
 			if (isAbort(e)) throw e;
 			failed(id, null, e);
 			return 1;
 		}
-		for (const job of plan.upload) {
-			if (stopping || broken) return failures;
+		const pageFailed = async (job: UploadJob, e: unknown) => {
+			failures++;
+			failingPages.add(`${id}\n${job.path}`);
+			failed(id, job.path, e);
+			await db.recordFailure(target, id, job.path, message(e), now()).catch(() => undefined);
+		};
+		/** Pages whose files are up and that the remote index doesn't list yet. */
+		const waiting: PageUp[] = [];
+		let lastIndex = Date.now();
+		/** The index with every waiting page, then their rows. One at a time (chained on `flushing`). */
+		const flush = async () => {
+			const batch = waiting.splice(0);
+			if (!batch.length) return;
+			lastIndex = Date.now();
+			const before = new Map(listed.map((u) => [u.path, u.stamp]));
+			const next = [...listed];
+			for (const { row } of batch) {
+				const i = next.findIndex((u) => u.path === row.path);
+				if (i >= 0) next[i] = row;
+				else next.push(row);
+			}
 			try {
-				const row = await uploadPage(id, job, listed, ctx);
-				const i = listed.findIndex((u) => u.path === job.path);
-				if (i >= 0) listed[i] = row;
-				else listed.push(row);
-				failingPages.delete(`${id}\n${job.path}`);
-				pendingByPrint.set(id, Math.max(0, (pendingByPrint.get(id) ?? 1) - 1));
+				await writeIndex(id, next, ctx.remote);
 			} catch (e) {
 				if (isAbort(e)) throw e;
-				failures++;
-				failingPages.add(`${id}\n${job.path}`);
-				failed(id, job.path, e);
-				await db.recordFailure(target, id, job.path, message(e), now()).catch(() => undefined);
-				if (broken) return failures;
+				// The bucket's index may or may not list them now: either way their rows aren't written, so they go up again.
+				ctx.indexCurrent = false;
+				for (const up of batch) await pageFailed(up.job, e);
+				return;
 			}
+			listed.splice(0, listed.length, ...next);
+			ctx.indexCurrent = true;
+			// A few rows at a time: until they're written, a crash sends their pages again.
+			let nextRow = 0;
+			await allWorkers(Math.min(ROW_WRITES, batch.length), async () => {
+				while (nextRow < batch.length) {
+					const up = batch[nextRow++];
+					try {
+						await listPage(id, up, before.get(up.job.path), ctx);
+						failingPages.delete(`${id}\n${up.job.path}`);
+						pendingByPrint.set(id, Math.max(0, (pendingByPrint.get(id) ?? 1) - 1));
+					} catch (e) {
+						if (isAbort(e)) throw e;
+						await pageFailed(up.job, e);
+					}
+				}
+			});
+		};
+		let flushing: Promise<void> = Promise.resolve();
+		let nextPage = 0;
+		/** Resolved once the page before the next one to start has claimed its tiles (uploadPage). */
+		let turn: Promise<void> = Promise.resolve();
+		/** Another index soon; a rejection (abort) is handled here at once and thrown by `await flushing` below. */
+		const flushSoon = () => {
+			flushing = flushing.then(flush);
+			flushing.catch(() => undefined);
+		};
+		try {
+			await allWorkers(Math.min(opts.pageConcurrency ?? PAGE_CONCURRENCY, plan.upload.length), async () => {
+				while (!stopping && !broken && nextPage < plan.upload.length) {
+					const job = plan.upload[nextPage++];
+					const prev = turn;
+					let open!: () => void;
+					turn = new Promise<void>((resolve) => (open = resolve));
+					try {
+						waiting.push(await uploadPage(id, job, ctx, { prev, open }));
+						if (Date.now() - lastIndex >= (opts.indexEveryMs ?? INDEX_EVERY_MS)) flushSoon();
+					} catch (e) {
+						if (isAbort(e)) throw e;
+						await pageFailed(job, e);
+					}
+				}
+			});
+		} finally {
+			// Every page worker has stopped; a pending index finishes (or fails) before sync returns.
+			await flushing;
 		}
-		if (stopping || broken) return failures;
+		// Pages up, also after a stop; after a fatal error nothing more goes, and they go up again next time.
+		if (broken) return failures;
+		await flush();
+		if (stopping) return failures;
 		try {
 			if (plan.orphans.length) {
-				await writeIndex(id, listed, ctx.remote);
+				if (!ctx.indexCurrent) await writeIndex(id, listed, ctx.remote);
 				const files = plan.orphans.flatMap((u) => [
 					...(u.stamp ? [overviewFile(u.path, u.stamp)] : []),
 					legacyOverview(u.path),
@@ -758,15 +952,23 @@ export function createUploader(opts: UploaderOptions) {
 		return tally;
 	}
 
+	/** The store refuses us (401, 403): no more requests this run. */
+	function breakOff(msg: string, e: unknown) {
+		if (broken) return;
+		broken = message(e);
+		stats.lastError = msg;
+		settleAll();
+		log(`upload: ${msg}\nupload: stopping uploads for this run; rendering goes on, and the next run uploads what's left`);
+		wake();
+	}
+
 	function failed(id: string, path: string | null, e: unknown) {
 		const msg = `${id}${path === null ? '' : ` ${pageBase(path)}`}: ${message(e)}`;
-		stats.lastError = msg;
-		if (e instanceof StoreError && e.fatal && !broken) {
-			broken = message(e);
-			settleAll();
-			log(`upload: ${msg}\nupload: stopping uploads for this run; rendering goes on, and the next run uploads what's left`);
-			wake();
-		} else log(`  upload failed: ${msg}`);
+		if (e instanceof StoreError && e.fatal && !broken) breakOff(msg, e);
+		else {
+			stats.lastError = msg;
+			log(`  upload failed: ${msg}`);
+		}
 	}
 
 	function start(id: string) {
@@ -914,6 +1116,20 @@ interface PrintCtx {
 	remote: Set<string>;
 	/** Keys under `<id>/` waiting in render_deletes. */
 	pending: Set<string>;
+	/** Tiles a page in flight is sending (or will send): resolved once it is done with them, sent or not. */
+	claims: Map<string, Promise<void>>;
+	/** The bucket's index.json is the one the print's current `listed` makes (this sync wrote it). */
+	indexCurrent: boolean;
+}
+
+/** A page whose files are up, waiting for an index that lists it before its row is written. */
+interface PageUp {
+	job: UploadJob;
+	row: UploadRow;
+	/** The overview's name in its sidecar. */
+	overview: string;
+	/** Tiles of the page that were up already (or sent by another page). */
+	reused: number;
 }
 
 export interface DeleteTally {

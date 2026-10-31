@@ -168,7 +168,7 @@ const index = (store: ReturnType<typeof fakeStore>) => {
 };
 
 describe('uploader', () => {
-	test('a page goes up tiles first, then overview, page data, sidecar, index, and only then its row', async () => {
+	test('a page goes up tiles and overview first, then page data, the sidecar, the index, and only then its row', async () => {
 		await renderPage('', 'aaaaaaaaaa', [H(1), H(2)]);
 		const store = fakeStore();
 		const db = fakeDb([job('', 'aaaaaaaaaa')]);
@@ -176,8 +176,8 @@ describe('uploader', () => {
 		u.schedule(ID, 1);
 		await u.drain();
 		const puts = store.calls.filter((c) => c.startsWith('PUT'));
-		expect(puts.slice(0, 2).sort()).toEqual([`PUT ${ID}/t/${H(1)}.avif`, `PUT ${ID}/t/${H(2)}.avif`]);
-		expect(puts.slice(2)).toEqual([`PUT ${ID}/root.${A}.avif`, `PUT ${ID}/root.page.json`, `PUT ${ID}/root.json`, `PUT ${ID}/index.json`]);
+		expect(puts.slice(0, 3).sort()).toEqual([`PUT ${ID}/root.${A}.avif`, `PUT ${ID}/t/${H(1)}.avif`, `PUT ${ID}/t/${H(2)}.avif`]);
+		expect(puts.slice(3)).toEqual([`PUT ${ID}/root.page.json`, `PUT ${ID}/root.json`, `PUT ${ID}/index.json`]);
 		expect(db.log).toEqual(['record ']);
 		expect(index(store)).toEqual({ v: 2, cover: '', pages: { '': { stamp: A, overview: `root.${A}.avif` } } });
 		expect(store.objects.get(`${ID}/t/${H(1)}.avif`)?.type).toBe('image/avif');
@@ -288,13 +288,9 @@ describe('uploader', () => {
 		const second = uploader(store, db);
 		second.schedule(ID);
 		await second.drain();
-		expect(store.calls.filter((c) => c.startsWith('PUT'))).toEqual([
-			`PUT ${ID}/t/${H(4)}.avif`,
-			`PUT ${ID}/2.cccccccccc.avif`,
-			`PUT ${ID}/2.page.json`,
-			`PUT ${ID}/2.json`,
-			`PUT ${ID}/index.json`
-		]);
+		const puts = store.calls.filter((c) => c.startsWith('PUT'));
+		expect(puts.slice(0, 2).sort()).toEqual([`PUT ${ID}/2.cccccccccc.avif`, `PUT ${ID}/t/${H(4)}.avif`]);
+		expect(puts.slice(2)).toEqual([`PUT ${ID}/2.page.json`, `PUT ${ID}/2.json`, `PUT ${ID}/index.json`]);
 		expect(Object.keys(index(store)!.pages)).toEqual(['1', '2']);
 
 		store.calls.length = 0;
@@ -619,7 +615,7 @@ describe('uploader', () => {
 		await renderPage('2', 'cccccccccc', [H(2)]);
 		const store = fakeStore();
 		const db = fakeDb([job('1', 'bbbbbbbbbb'), job('2', 'cccccccccc')]);
-		const u = uploader(store, db);
+		const u = uploader(store, db, { pageConcurrency: 1 });
 		let stopped = false;
 		store.fail((op, key) => {
 			if (!stopped && op === 'put' && key.endsWith('1.bbbbbbbbbb.avif')) {
@@ -637,6 +633,259 @@ describe('uploader', () => {
 		u.schedule('-Other');
 		expect(u.pending).toBe(2);
 		expect(store.calls.some((c) => c.includes('-Other'))).toBe(false);
+	});
+});
+
+/**
+ * A bucket that checks the upload's orderings as it goes: a sidecar only once every file it names is
+ * up, an index only listing pages whose sidecar (at that stamp) and overview are up, and (through
+ * `checkRow`) a row only for a page the index lists. Puts take a pseudo-random time, so pages finish
+ * out of order, and it tracks how many pages are in flight at once (first put to sidecar).
+ */
+function checkedStore() {
+	const store = fakeStore();
+	const errors: string[] = [];
+	const text = (key: string) => {
+		const o = store.objects.get(key);
+		return o ? new TextDecoder().decode(o.body) : null;
+	};
+	const started = new Set<string>();
+	let inFlight = 0;
+	let maxPages = 0;
+	let seed = 7;
+	const put = store.put.bind(store);
+	store.put = async (key, body, type, cacheControl, signal) => {
+		seed = (seed * 1103515245 + 12345) % 2147483648;
+		await new Promise((r) => setTimeout(r, seed % 4));
+		const rel = key.slice(ID.length + 1);
+		const page = /^(root|\d+(?:\/\d+)*)\./.exec(rel)?.[1];
+		if (page && !started.has(page)) {
+			started.add(page);
+			maxPages = Math.max(maxPages, ++inFlight);
+		}
+		if (rel === 'index.json') {
+			const idx = JSON.parse(new TextDecoder().decode(body)) as RenderIndex;
+			for (const [path, p] of Object.entries(idx.pages)) {
+				const sc = text(`${ID}/${base(path)}.json`);
+				if (!sc || (JSON.parse(sc) as RenderSidecar).stamp !== p.stamp) errors.push(`index lists ${path} before its sidecar`);
+				if (!store.objects.has(`${ID}/${p.overview}`)) errors.push(`index lists ${path} before its overview`);
+			}
+		} else if (page && rel === `${page}.json`) {
+			const sc = JSON.parse(new TextDecoder().decode(body)) as RenderSidecar;
+			const need = [sc.overview.file, `${page}.page.json`, ...sc.levels.flatMap((l) => l.tiles.filter(Boolean).map((t) => `t/${t}.avif`))];
+			for (const n of need) if (!store.objects.has(`${ID}/${n}`)) errors.push(`sidecar ${page} before ${n}`);
+			inFlight--;
+			started.delete(page);
+		}
+		return put(key, body, type, cacheControl, signal);
+	};
+	const checkRow = (row: UploadRow) => {
+		const idx = text(`${ID}/index.json`);
+		const listedAt = idx ? (JSON.parse(idx) as RenderIndex).pages[row.path]?.stamp : undefined;
+		if (listedAt !== row.stamp) errors.push(`row ${row.path} before the index lists it`);
+	};
+	return { store, errors, checkRow, maxPages: () => maxPages };
+}
+
+describe('uploader: pages at once', () => {
+	/** Six pages sharing tiles with their neighbours. */
+	async function book() {
+		const jobs: UploadJob[] = [];
+		for (let i = 1; i <= 6; i++) {
+			const stamp = String(i).repeat(10);
+			await renderPage(String(i), stamp, [H(i), H(i + 1), H(100 + i), i % 2 ? '' : H(1)]);
+			jobs.push(job(String(i), stamp));
+		}
+		return jobs;
+	}
+	const rowsOf = (db: ReturnType<typeof fakeDb>) =>
+		[...db.uploads.values()]
+			.map(({ path, stamp, files, bytes, error }) => ({ path, stamp, files, bytes, error }))
+			.sort((a, b) => (a.path < b.path ? -1 : 1));
+
+	test('k pages go up at once, sidecars after their files, one index after them, rows after the index; the same objects and rows as one at a time', async () => {
+		const jobs = await book();
+		const one = fakeStore();
+		const oneDb = fakeDb(jobs);
+		const serial = uploader(one, oneDb, { pageConcurrency: 1 });
+		serial.schedule(ID, 6);
+		await serial.drain();
+
+		const c = checkedStore();
+		const db = fakeDb(jobs);
+		const record = db.recordUpload;
+		db.recordUpload = async (row) => {
+			c.checkRow(row);
+			return record(row);
+		};
+		const ups: [string, number, number][] = [];
+		const u = uploader(c.store, db, { pageConcurrency: 3, onPageUp: (id, files, bytes) => ups.push([id, files, bytes]) });
+		u.schedule(ID, 6);
+		await u.drain();
+		expect(c.errors).toEqual([]);
+		expect(c.maxPages()).toBeGreaterThan(1);
+		expect(c.maxPages() <= 3).toBe(true);
+		expect(c.store.calls.filter((x) => x === `PUT ${ID}/index.json`).length).toBe(1);
+		// Every tile once, credited to the first page in book order that uses it, as one at a time would.
+		expect(c.store.calls.filter((x) => x.startsWith('PUT')).sort()).toEqual(one.calls.filter((x) => x.startsWith('PUT')).sort());
+		expect([...c.store.objects.keys()].sort()).toEqual([...one.objects.keys()].sort());
+		for (const [k, o] of one.objects) {
+			expect(c.store.objects.get(k)?.type).toBe(o.type);
+			expect(c.store.objects.get(k)?.body).toEqual(o.body);
+		}
+		expect(rowsOf(db)).toEqual(rowsOf(oneDb));
+		expect(u.stats).toMatchObject({ pages: 6, files: serial.stats.files, bytes: serial.stats.bytes, reused: serial.stats.reused });
+		expect(ups.reduce((n, [, f]) => n + f, 0)).toBe(u.stats.files);
+		expect(u.pending).toBe(0);
+		expect(u.failing).toBe(0);
+		await u.settled(ID);
+	});
+
+	test('with the index going up as pages finish, no row is ever written before an index lists its page', async () => {
+		const jobs = await book();
+		const c = checkedStore();
+		const db = fakeDb(jobs);
+		const record = db.recordUpload;
+		db.recordUpload = async (row) => {
+			c.checkRow(row);
+			return record(row);
+		};
+		const u = uploader(c.store, db, { pageConcurrency: 4, indexEveryMs: 0 });
+		u.schedule(ID, 6);
+		await u.drain();
+		expect(c.errors).toEqual([]);
+		expect(c.store.calls.filter((x) => x === `PUT ${ID}/index.json`).length).toBeGreaterThan(1);
+		expect(Object.keys(index(c.store)!.pages)).toEqual(['1', '2', '3', '4', '5', '6']);
+		expect(db.uploads.size).toBe(6);
+	});
+
+	test("a shared tile whose page fails before sending it is sent by the next page that uses it, before that page's sidecar", async () => {
+		await renderPage('1', 'bbbbbbbbbb', [H(1), H(2)]);
+		await renderPage('2', 'cccccccccc', [H(2), H(3)]);
+		const c = checkedStore();
+		c.store.fail((op, key) => (op === 'put' && key.endsWith(`t/${H(1)}.avif`) ? new StoreError('gone', false) : null));
+		const db = fakeDb([job('1', 'bbbbbbbbbb'), job('2', 'cccccccccc')]);
+		// One request at a time: page 1 stops at tile 1, so tile 2 (claimed by page 1) is never sent by it.
+		const u = uploader(c.store, db, { concurrency: 1, maxRounds: 1 });
+		u.schedule(ID, 2);
+		await u.drain();
+		expect(c.errors).toEqual([]);
+		expect(Object.keys(index(c.store)!.pages)).toEqual(['2']);
+		expect(c.store.calls.filter((x) => x === `PUT ${ID}/t/${H(2)}.avif`).length).toBe(1);
+		expect(db.uploads.get(`local\n${ID}\n2`)?.files).toBe(5);
+		expect(db.uploads.get(`local\n${ID}\n1`)?.error).toContain('gone');
+		expect(u.failing).toBe(1);
+		expect(u.pending).toBe(1);
+	});
+
+	test('stop finishes the pages in flight, lists them and writes their rows, and starts no other', async () => {
+		const jobs = await book();
+		const store = fakeStore();
+		const db = fakeDb(jobs);
+		const u = uploader(store, db, { pageConcurrency: 2 });
+		let stopped = false;
+		store.fail((op, key) => {
+			if (!stopped && op === 'put' && key.endsWith('1.1111111111.avif')) {
+				stopped = true;
+				u.stop();
+			}
+			return null;
+		});
+		u.schedule(ID, 6);
+		await u.drain();
+		expect(Object.keys(index(store)!.pages)).toEqual(['1', '2']);
+		expect([...db.uploads.values()].map((r) => r.path).sort()).toEqual(['1', '2']);
+		expect(store.objects.has(`${ID}/3.json`)).toBe(false);
+		expect(u.pending).toBe(4);
+	});
+
+	test('a tile that fails leaves the page data and sidecar unsent (the bucket keeps the old pair)', async () => {
+		await renderPage('', A, [H(1), H(2)]);
+		const store = fakeStore();
+		store.fail((op, key) => (op === 'put' && key.endsWith(`t/${H(2)}.avif`) ? new StoreError('gone', false) : null));
+		const u = uploader(store, fakeDb([job('', A)]), { maxRounds: 1 });
+		u.schedule(ID, 1);
+		await u.drain();
+		expect(store.objects.has(`${ID}/root.page.json`)).toBe(false);
+		expect(store.objects.has(`${ID}/root.json`)).toBe(false);
+		expect(u.failing).toBe(1);
+	});
+
+	test('once uploads break (403), pages in flight send nothing more and no sidecar', async () => {
+		const jobs = await book();
+		const store = fakeStore();
+		let n = 0;
+		// The fourth put is refused: by then pages are part-way through their files.
+		store.fail((op) => (op === 'put' && ++n === 4 ? new StoreError('HTTP 403 AccessDenied', false, true) : null));
+		const u = uploader(store, fakeDb(jobs), { concurrency: 2, pageConcurrency: 3 });
+		u.schedule(ID, 6);
+		await u.drain();
+		expect(u.broken).toContain('403');
+		// One put may have been in flight beside the refused one; nothing starts after it.
+		expect(store.calls.filter((c) => c.startsWith('PUT')).length <= 4).toBe(true);
+		expect(store.calls.some((c) => /\/\d\.json$/.test(c) || c.endsWith('index.json'))).toBe(false);
+	});
+
+	test('an abort while an index goes up and pages are in flight: sync returns only once every page has stopped, with no unhandled rejection', async () => {
+		const jobs = await book();
+		const store = fakeStore();
+		const db = fakeDb(jobs);
+		let u: ReturnType<typeof uploader> | null = null;
+		const put = store.put.bind(store);
+		store.put = async (key, body, type, cacheControl, signal) => {
+			if (key.endsWith('index.json')) {
+				u!.abort();
+				signal?.throwIfAborted();
+			}
+			await new Promise((r) => setTimeout(r, 2));
+			return put(key, body, type, cacheControl, signal);
+		};
+		let settledAt = -1;
+		const writes: number[] = [];
+		const record = db.recordUpload;
+		db.recordUpload = async (row) => {
+			writes.push(Date.now());
+			return record(row);
+		};
+		const recordFailure = db.recordFailure;
+		db.recordFailure = async (...a) => {
+			writes.push(Date.now());
+			return recordFailure(...a);
+		};
+		u = uploader(store, db, { pageConcurrency: 3, indexEveryMs: 0 });
+		u.schedule(ID, 6);
+		await u.drain();
+		await u.settled(ID);
+		settledAt = Date.now();
+		await new Promise((r) => setTimeout(r, 30));
+		expect(writes.every((t) => t <= settledAt)).toBe(true);
+		expect(u.inFlight).toBe(0);
+		expect(db.uploads.size).toBe(0);
+	});
+
+	test('an index that fails leaves no rows: its pages count as failed and go up again', async () => {
+		const jobs = await book();
+		const store = fakeStore();
+		let fails = 1;
+		store.fail((op, key) => (op === 'put' && key.endsWith('index.json') && fails-- > 0 ? new StoreError('HTTP 400', false) : null));
+		const db = fakeDb(jobs);
+		const u = uploader(store, db, { maxRounds: 1 });
+		u.schedule(ID, 6);
+		await u.drain();
+		expect(store.objects.has(`${ID}/index.json`)).toBe(false);
+		expect([...db.uploads.values()].every((r) => r.stamp === null && r.error?.includes('HTTP 400'))).toBe(true);
+		expect(u.failing).toBe(6);
+		expect(u.stats.pages).toBe(0);
+
+		store.calls.length = 0;
+		const v = uploader(store, db);
+		v.schedule(ID);
+		await v.drain();
+		expect(Object.keys(index(store)!.pages)).toEqual(['1', '2', '3', '4', '5', '6']);
+		expect(v.stats.pages).toBe(6);
+		// The tiles made it up the first time: only each page's overview, page data and sidecar go again.
+		expect(store.calls.filter((x) => x.includes('/t/'))).toEqual([]);
+		expect(v.stats.reused).toBe(6 * 3 + 3);
 	});
 });
 
