@@ -8,13 +8,18 @@
  * `remote: true` bindings, and a Node sidecar (remote-bindings.mjs) opens wrangler's remote proxy
  * session for it with `getPlatformProxy` (a temporary preview Worker that forwards binding calls;
  * nothing is deployed). wrangler.jsonc is never edited.
+ *
+ * An update (scripts/sync.ts) opens its stage once with `openSharedStage` and names that sidecar to its
+ * steps in SHARED_STAGE_ENV; `openTarget` in a step attaches to it when the stage and D1 generation
+ * match and it answers, else opens its own as before. An attached handle's dispose leaves the sidecar
+ * running: the update ends it.
  */
 import { spawnSync } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getPlatformProxy } from 'wrangler';
 import { DATABASES, PREFIX, STAGES as DEPLOYED_STAGES, type Stage as DeployedStage } from '../../infra/databases';
-import { openRemoteBindings } from './remote';
+import { connectRemote, openRemoteBindings, pingRemote, startSidecar } from './remote';
 
 export const STAGES = ['local', ...DEPLOYED_STAGES] as const;
 export type Stage = (typeof STAGES)[number];
@@ -174,15 +179,20 @@ export const openTarget = async (stage: Stage, options: { generation?: number; l
 		}
 		return { stage, database: 'local D1 (.wrangler/state)', bucket: 'local R2 prints-raw', env, dispose: () => proxy.dispose() };
 	}
-	const generation = options.generation ?? boundGeneration(stage);
-	const names = resourceNames(stage, generation);
-	const databaseId = findDatabaseId(stage, names.database);
-	checkBucket(stage, names.raw);
-	const path = configPath(stage);
-	await mkdir(join(path, '..'), { recursive: true });
-	await writeFile(path, JSON.stringify(remoteConfig(stage, names, databaseId), null, '\t') + '\n');
+	return openRemoteTarget(stage, options.generation ?? boundGeneration(stage), options.log ?? ((line: string) => console.log(line)));
+};
+
+/** How a remote stage is reached: attach to the update's sidecar, else open one. Tests replace both. */
+export interface RemoteDeps {
+	attach: (shared: SharedStage, log: (line: string) => void) => Promise<Target | null>;
+	open: (stage: DeployedStage, generation: number, log: (line: string) => void) => Promise<Target>;
+}
+
+/** This process's own sidecar, as every standalone script opens it. */
+const openOwn = async (stage: DeployedStage, generation: number, log: (line: string) => void): Promise<Target> => {
+	const { names, databaseId, path } = await prepareRemote(stage, generation);
 	// Under Bun, wrangler's remote proxy session never connects, so a Node sidecar holds it (remote-bindings.mjs).
-	const remote = await openRemoteBindings(path, options.log ?? ((line) => console.log(line)));
+	const remote = await openRemoteBindings(path, log);
 	const env = { DB: remote.DB, RAW: remote.RAW };
 	try {
 		await checkSchema(stage, env.DB);
@@ -191,4 +201,137 @@ export const openTarget = async (stage: Stage, options: { generation?: number; l
 		throw e;
 	}
 	return { stage, database: `${names.database} (${databaseId})`, bucket: names.raw, env, dispose: remote.dispose };
+};
+
+/** A remote stage: the update's shared sidecar when SHARED_STAGE_ENV names this stage and generation and it answers, else its own. */
+export const openRemoteTarget = async (
+	stage: DeployedStage,
+	generation: number,
+	log: (line: string) => void,
+	deps: RemoteDeps = { attach: (shared, l) => attachShared(shared, l), open: openOwn },
+	environ: Record<string, string | undefined> = process.env
+): Promise<Target> => {
+	const shared = sharedStage(environ, stage, generation);
+	if (shared) {
+		const attached = await deps.attach(shared, log);
+		if (attached) return attached;
+	}
+	return deps.open(stage, generation, log);
+};
+
+/** Check the database and bucket exist, and write the sidecar's wrangler config. */
+const prepareRemote = async (stage: DeployedStage, generation: number) => {
+	const names = resourceNames(stage, generation);
+	const databaseId = findDatabaseId(stage, names.database);
+	checkBucket(stage, names.raw);
+	const path = configPath(stage);
+	await mkdir(join(path, '..'), { recursive: true });
+	await writeFile(path, JSON.stringify(remoteConfig(stage, names, databaseId), null, '\t') + '\n');
+	return { names, databaseId, path };
+};
+
+// --- one stage connection for a whole update
+
+/** The variable an update names its open stage in, for its steps (JSON: SharedStage). */
+export const SHARED_STAGE_ENV = 'ATLAS_SHARED_STAGE';
+
+/** A remote stage's sidecar that another process (the update) holds open. */
+export interface SharedStage {
+	stage: DeployedStage;
+	generation: number;
+	port: number;
+	token: string;
+	/** The sidecar's pid: gone means don't try. */
+	pid: number;
+	/** As Target's: `<name> (<id>)`. */
+	database: string;
+	bucket: string;
+	/** The Cloudflare account it was resolved in, so the update needn't ask `wrangler whoami` itself. */
+	account?: string;
+}
+
+const isPid = (pid: number) => {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch (e) {
+		// EPERM: it exists, owned by someone else (not ours, but alive).
+		return (e as NodeJS.ErrnoException).code === 'EPERM';
+	}
+};
+
+/** The shared stage in `environ` if it is this stage and D1 generation and its sidecar's process still runs, else null. */
+export const sharedStage = (
+	environ: Record<string, string | undefined>,
+	stage: Stage,
+	generation: number,
+	running: (pid: number) => boolean = isPid
+): SharedStage | null => {
+	const text = environ[SHARED_STAGE_ENV];
+	if (!text) return null;
+	let s: Partial<SharedStage>;
+	try {
+		s = JSON.parse(text) as Partial<SharedStage>;
+	} catch {
+		return null;
+	}
+	const ok =
+		s.stage === stage &&
+		s.generation === generation &&
+		Number.isInteger(s.port) &&
+		typeof s.token === 'string' &&
+		Number.isInteger(s.pid) &&
+		typeof s.database === 'string' &&
+		typeof s.bucket === 'string';
+	return ok && running(s.pid!) ? (s as SharedStage) : null;
+};
+
+/**
+ * A Target on the update's sidecar, after a health check (it may have lost its session over a long update);
+ * null when it doesn't answer, and the caller opens its own. Its dispose leaves the sidecar to the update.
+ */
+export const attachShared = async (
+	shared: SharedStage,
+	log: (line: string) => void,
+	ping: (port: number, token: string) => Promise<boolean> = pingRemote
+): Promise<Target | null> => {
+	if (!(await ping(shared.port, shared.token))) {
+		log(`  the update's ${shared.stage} connection (pid ${shared.pid}) didn't answer: opening a new one`);
+		return null;
+	}
+	const remote = connectRemote(shared.port, shared.token);
+	const env = { DB: remote.DB, RAW: remote.RAW };
+	await checkSchema(shared.stage, env.DB);
+	return { stage: shared.stage, database: shared.database, bucket: shared.bucket, env, dispose: async () => undefined };
+};
+
+/**
+ * Open a remote stage for a whole update: the checks and sidecar `openTarget` would start. Run by
+ * scripts/backfill/hold-stage.ts, a process of its own that the update starts (so wrangler's blocking calls
+ * never stall the update's heartbeat) and ends. `env` is the value of SHARED_STAGE_ENV for the steps.
+ */
+export const openSharedStage = async (
+	stage: DeployedStage,
+	options: { generation?: number; log?: (line: string) => void } = {}
+): Promise<{ env: string; pid: number; database: string; dispose: () => Promise<void> }> => {
+	const generation = options.generation ?? boundGeneration(stage);
+	const { names, databaseId, path } = await prepareRemote(stage, generation);
+	const sidecar = await startSidecar(path, options.log ?? ((line) => console.log(line)), { shared: true });
+	try {
+		await checkSchema(stage, connectRemote(sidecar.port, sidecar.token).DB);
+	} catch (e) {
+		await sidecar.dispose();
+		throw e;
+	}
+	const shared: SharedStage = {
+		stage,
+		generation,
+		port: sidecar.port,
+		token: sidecar.token,
+		pid: sidecar.pid,
+		database: `${names.database} (${databaseId})`,
+		bucket: names.raw,
+		account: accountId()
+	};
+	return { env: JSON.stringify(shared), pid: sidecar.pid, database: shared.database, dispose: sidecar.dispose };
 };

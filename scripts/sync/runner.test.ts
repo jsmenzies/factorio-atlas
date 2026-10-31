@@ -18,6 +18,7 @@ import {
 } from './runner';
 import { liveUpdateBesides } from './local-db';
 import { SYNC_RUN_ENV } from '#lib/server/sync.js';
+import { SHARED_STAGE_ENV } from '../backfill/stage';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const T = 1_800_000_000_000;
@@ -278,6 +279,19 @@ describe('SyncRunner', () => {
 		const { r } = runner('own-step');
 		writeFileSync(join(dir, 'env.js'), `console.log('run=' + process.env.${SYNC_RUN_ENV})`);
 		expect((await r.runScript([join(dir, 'env.js')])).tail).toContain('run=own-step');
+		await r.finish();
+	});
+
+	test("a step's process sees the update's shared stage (set in the runner's environment once it is open)", async () => {
+		const { r } = runner('shared-stage');
+		writeFileSync(join(dir, 'shared.js'), `console.log('shared=' + process.env.${SHARED_STAGE_ENV})`);
+		process.env[SHARED_STAGE_ENV] = '{"stage":"prod"}';
+		try {
+			expect((await r.runScript([join(dir, 'shared.js')])).tail).toContain('shared={"stage":"prod"}');
+		} finally {
+			delete process.env[SHARED_STAGE_ENV];
+		}
+		expect((await r.runScript([join(dir, 'shared.js')])).tail).toContain('shared=undefined');
 		await r.finish();
 	});
 

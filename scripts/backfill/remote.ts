@@ -11,6 +11,8 @@ import { createInterface } from 'node:readline';
 /** One remote call; a hung request fails instead of stalling a print forever. */
 const REQUEST_TIMEOUT_MS = 120_000;
 const START_TIMEOUT_MS = 90_000;
+/** The health check before a process uses a sidecar it didn't start. */
+const PING_TIMEOUT_MS = 20_000;
 
 export interface RemoteBindings {
 	readonly DB: D1Database;
@@ -20,7 +22,23 @@ export interface RemoteBindings {
 
 type Params = unknown[];
 
-export const openRemoteBindings = async (configPath: string, log: (line: string) => void): Promise<RemoteBindings> => {
+/** A running sidecar: where it listens, the token its requests carry, and how to end it. */
+export interface Sidecar {
+	readonly port: number;
+	readonly token: string;
+	readonly pid: number;
+	readonly dispose: () => Promise<void>;
+}
+
+/**
+ * Start the sidecar for a wrangler config and wait for its `READY <port>`. `shared`: it serves an update's
+ * steps (scripts/backfill/hold-stage.ts), which only changes what is said if it dies.
+ */
+export const startSidecar = async (
+	configPath: string,
+	log: (line: string) => void,
+	options: { shared?: boolean } = {}
+): Promise<Sidecar> => {
 	const token = randomBytes(24).toString('hex');
 	const child = spawn('node', [join(import.meta.dirname, 'remote-bindings.mjs'), configPath], {
 		cwd: join(import.meta.dirname, '..', '..'),
@@ -56,8 +74,38 @@ export const openRemoteBindings = async (configPath: string, log: (line: string)
 	});
 	let disposing = false;
 	child.once('exit', (code) => {
-		if (!disposing) log(`! remote bindings exited (${code}); remaining D1/R2 calls will fail:\n${recent.join('\n')}`);
+		if (disposing) return;
+		const after = options.shared ? 'calls through it fail now; later steps open their own' : 'remaining D1/R2 calls will fail';
+		log(`! remote bindings exited (${code}); ${after}:\n${recent.join('\n')}`);
 	});
+	const dispose = async () => {
+		disposing = true;
+		if (child.exitCode !== null) return;
+		const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
+		child.kill('SIGTERM');
+		await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 8000))]);
+		if (child.exitCode === null) child.kill('SIGKILL');
+	};
+	return { port, token, pid: child.pid!, dispose };
+};
+
+/** Whether the sidecar at `port` answers a D1 query within `timeoutMs` (it may have died, or lost its session). */
+export const pingRemote = async (port: number, token: string, timeoutMs = PING_TIMEOUT_MS): Promise<boolean> => {
+	try {
+		const res = await fetch(`http://127.0.0.1:${port}/d1`, {
+			method: 'POST',
+			headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+			body: JSON.stringify({ op: 'first', sql: 'SELECT 1 AS ok', params: [] }),
+			signal: AbortSignal.timeout(timeoutMs)
+		});
+		return res.ok && ((await res.json()) as { row?: { ok?: number } | null }).row?.ok === 1;
+	} catch {
+		return false;
+	}
+};
+
+/** D1 and R2 shims that talk to the sidecar at `port`: the one this process started, or one an update shares. */
+export const connectRemote = (port: number, token: string): Omit<RemoteBindings, 'dispose'> => {
 	const base = `http://127.0.0.1:${port}`;
 	const headers = { authorization: `Bearer ${token}` };
 
@@ -135,13 +183,10 @@ export const openRemoteBindings = async (configPath: string, log: (line: string)
 		}
 	} as unknown as R2Bucket;
 
-	const dispose = async () => {
-		disposing = true;
-		if (child.exitCode !== null) return;
-		const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()));
-		child.kill('SIGTERM');
-		await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 8000))]);
-		if (child.exitCode === null) child.kill('SIGKILL');
-	};
-	return { DB, RAW, dispose };
+	return { DB, RAW };
+};
+
+export const openRemoteBindings = async (configPath: string, log: (line: string) => void): Promise<RemoteBindings> => {
+	const sidecar = await startSidecar(configPath, log);
+	return { ...connectRemote(sidecar.port, sidecar.token), dispose: sidecar.dispose };
 };

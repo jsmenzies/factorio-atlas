@@ -38,7 +38,9 @@
  *
  * Each step is the existing command, run as its own process into one log in the run logs folder
  * (<renders dir>/logs/sync-<time>.log); scripts/sync/runner.ts runs them (the `sync_runs` row,
- * heartbeat, stopping, gating). A step that fails is marked so and the steps that don't need it
+ * heartbeat, stopping, gating). A remote stage is opened once, before the first step, and every step's
+ * openTarget attaches to that connection (scripts/backfill/stage.ts SHARED_STAGE_ENV); it is closed
+ * after the last step, also after a stop or Quit. A step that fails is marked so and the steps that don't need it
  * still run. Ctrl-C, SIGTERM or the Overview's Stop ends the current step cleanly and starts no
  * more; Ctrl-C again, or Quit now, ends it at once (killed 30 s later if it hasn't ended). An update
  * refuses to start while another is live, or its processes still run, or a render run is live.
@@ -90,7 +92,7 @@ import {
 	type SyncRun,
 	type SyncRunRow
 } from '#lib/sync.js';
-import { STAGES, type Stage } from './backfill/stage';
+import { SHARED_STAGE_ENV, STAGES, type Stage } from './backfill/stage';
 import { defaultAssets } from './render/assets-dir';
 import { favoritesCacheFile, rankFavorites, readFavorites } from './render/favorites';
 import type { AuthorsResult } from './authors';
@@ -100,6 +102,7 @@ import { scanStorePrints, STORE_SCOPE_CACHE } from './render/store-scope';
 import { cloneSource } from './render/source';
 import { confirmProd, fail, n } from './stage-command';
 import { localDbFile, openLocalDb } from './sync/local-db';
+import { holdSharedStage } from './sync/shared-stage';
 import { MIRROR_SITE, mirrorSource, type SourceAdapter } from './sync/mirror';
 import { failureLine, lastJsonLine, lastLine, lineMatching } from './sync/output';
 import { failedPlan, plansAfterFetch, resolveAccept } from './sync/plan';
@@ -887,7 +890,35 @@ const steps: StepDef[] = [
 	}
 ];
 
-await runner.runSteps(steps);
+/**
+ * A remote stage is opened once for the whole update (≈ 10 s a time), by a holder process (scripts/sync/shared-stage.ts):
+ * its sidecar is named to every step in SHARED_STAGE_ENV, and their openTarget attaches to it (a fresh open when it
+ * doesn't answer). Can't open it, or stopped meanwhile: each step opens its own, as when run alone.
+ */
+const openShared = async () => {
+	if (stage === 'local') return null;
+	const held = await holdSharedStage({ stage, cwd: ROOT, log: (line) => runner.say(line), stopping: runner.stopping });
+	if ('error' in held) {
+		runner.say(`! couldn't open ${stage} once for the update (${held.error}): each step opens it itself`);
+		return null;
+	}
+	process.env[SHARED_STAGE_ENV] = held.env;
+	// Resolved by the open: the steps' S3 stores and wrangler calls needn't ask `wrangler whoami` again.
+	if (held.shared.account) process.env.CLOUDFLARE_ACCOUNT_ID ||= held.shared.account;
+	runner.say(`${stage} opened once for every step: D1 ${held.shared.database} (sidecar pid ${held.shared.pid})`);
+	return held;
+};
+
+const shared = await openShared();
+try {
+	await runner.runSteps(steps);
+} finally {
+	if (shared) {
+		delete process.env[SHARED_STAGE_ENV];
+		await shared.dispose();
+		runner.say(`${stage} connection closed (sidecar pid ${shared.shared.pid})`);
+	}
+}
 const done = await runner.finish();
 local.close();
 process.exit(done.state === 'finished' && !done.steps.some((s) => s.status === 'failed') ? 0 : 1);
