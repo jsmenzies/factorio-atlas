@@ -122,7 +122,7 @@ export interface QueueEntry {
 	requests: ReportRow[];
 	/**
 	 * Live prints with exactly the same content (fold.ts groups, 50 entities and tiles or more), for the
-	 * approval to take down with it: the same author's ticked by default, others' not.
+	 * approval to take down with it, all ticked by default (left behind, the next copy would take its place in search).
 	 */
 	copies: IdenticalCopy[];
 }

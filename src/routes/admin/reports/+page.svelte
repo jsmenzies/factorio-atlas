@@ -126,10 +126,10 @@
 					/>
 					{#if e.copies.length}
 						<fieldset class="w-full space-y-1 rounded border border-stone-800 p-2">
-							<legend class="px-1 text-xs text-stone-400">Identical prints (same blueprint, 50+ entities): tick those to take down too</legend>
+							<legend class="px-1 text-xs text-stone-400">Identical prints (same blueprint, 50+ entities): ticked to go with it, untick any to keep</legend>
 							{#each e.copies as c (c.id)}
 								<label class="flex items-baseline gap-2 text-stone-300">
-									<input type="checkbox" name="copy" value={c.id} checked={c.sameAuthor} class="accent-amber-500" />
+									<input type="checkbox" name="copy" value={c.id} checked class="accent-amber-500" />
 									<a class="hover:text-amber-300" href="/prints/{c.id}" target="_blank" rel="noopener">{plainText(c.title)}</a>
 									<span class="text-xs text-stone-500">by {c.author_name ?? 'unknown'}{c.sameAuthor ? ' (same author)' : ''} · {c.id}</span>
 								</label>

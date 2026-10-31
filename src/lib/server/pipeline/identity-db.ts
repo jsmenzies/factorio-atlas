@@ -185,7 +185,7 @@ export interface IdenticalCopy {
 	readonly id: string;
 	readonly title: string;
 	readonly author_name: string | null;
-	/** By the same author (same site, same author id): ticked by default when the original goes. */
+	/** By the same author (same site, same author id): marked in the removal queue. */
 	readonly sameAuthor: boolean;
 }
 
