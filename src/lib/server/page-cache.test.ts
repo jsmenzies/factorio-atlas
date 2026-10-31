@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import {
+	BROWSER_KEEPS,
 	bumpPageVersion,
 	cachedPage,
 	cacheTtl,
@@ -51,8 +52,8 @@ const setup = () => {
 				...init
 			});
 		};
-	const get = async (url: string, render = page(), d = deps) => {
-		const res = await cachedPage(new Request(url), 3600, render, d);
+	const get = async (url: string, render = page(), d = deps, ttl = 3600, browserKeeps = false) => {
+		const res = await cachedPage(new Request(url), ttl, render, d, browserKeeps);
 		await Promise.all(pending.splice(0));
 		return res;
 	};
@@ -64,6 +65,10 @@ describe('what is cached', () => {
 		expect(cacheTtl('GET', '/')).toBe(3600);
 		expect(cacheTtl('GET', '/prints/[id]')).toBe(86_400);
 		expect(cacheTtl('GET', '/prints/[id]/render')).toBe(86_400);
+		// The JSON the pages fetch, as long as browsers already kept it.
+		expect(cacheTtl('GET', '/prints/[id]/viewer')).toBe(300);
+		expect(cacheTtl('GET', '/quality-levels')).toBe(300);
+		expect([...BROWSER_KEEPS].sort()).toEqual(['/prints/[id]/viewer', '/quality-levels']);
 		for (const [method, route] of [
 			['POST', '/'],
 			['HEAD', '/'],
@@ -171,6 +176,45 @@ describe('cachedPage', () => {
 		expect(await res.text()).toBe('ok');
 		const putFails = { ...s.deps, cache: { match: async () => undefined, put: async () => Promise.reject(new Error('full')) } };
 		expect(await (await s.get('https://example.com/', s.page('ok2'), putFails)).text()).toBe('ok2');
+	});
+});
+
+describe('endpoints browsers keep (BROWSER_KEEPS)', () => {
+	const json = (s: ReturnType<typeof setup>) =>
+		s.page('{"n":1}', {
+			headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=300', 'x-robots-tag': 'noindex' }
+		});
+
+	test('stored for the route lifetime; the browser keeps `public, max-age=300` on a miss and a hit', async () => {
+		const s = setup();
+		const url = 'https://example.com/prints/abc/viewer?page=3';
+		const miss = await s.get(url, json(s), s.deps, 300, true);
+		expect(miss.headers.get('x-page-cache')).toBe('miss');
+		expect(miss.headers.get('cache-control')).toBe('public, max-age=300');
+		expect(await miss.text()).toBe('{"n":1}');
+		expect(new Headers([...s.entries.values()][0].init.headers).get('cache-control')).toBe('public, max-age=300');
+		const hit = await s.get(url, json(s), s.deps, 300, true);
+		expect(hit.headers.get('x-page-cache')).toBe('hit');
+		expect(hit.headers.get('cache-control')).toBe('public, max-age=300');
+		expect(hit.headers.get('x-robots-tag')).toBe('noindex');
+		expect(await hit.text()).toBe('{"n":1}');
+		expect(s.renders()).toBe(1);
+	});
+
+	test('another page or search is its own entry; a 400 or 404 is never stored', async () => {
+		const s = setup();
+		await s.get('https://example.com/quality-levels?uses=entity:beacon&filter=uses&value=entity:beacon', json(s), s.deps, 300, true);
+		await s.get('https://example.com/quality-levels?uses=entity:lab&filter=uses&value=entity:lab', json(s), s.deps, 300, true);
+		expect(s.entries.size).toBe(2);
+		const bad = await s.get('https://example.com/quality-levels?filter=uses', s.page('no', { status: 400 }), s.deps, 300, true);
+		expect(bad.headers.get('x-page-cache')).toBeNull();
+		expect(s.entries.size).toBe(2);
+	});
+
+	test('pages still tell the browser no-cache', async () => {
+		const s = setup();
+		expect((await s.get('https://example.com/prints/abc')).headers.get('cache-control')).toBe('no-cache');
+		expect((await s.get('https://example.com/prints/abc')).headers.get('cache-control')).toBe('no-cache');
 	});
 });
 

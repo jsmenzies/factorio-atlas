@@ -4,7 +4,7 @@ import { env, waitUntil } from 'cloudflare:workers';
 import { adminDenial, adminNotFound, isAdminPath, withAdminHeaders } from '#lib/server/admin/guard.js';
 import { clearHintCookie, hasHintCookie, sessionToken } from '#lib/server/auth/cookies.js';
 import { accountReader } from '#lib/server/auth/locals.js';
-import { cachedPage, cacheTtl } from '#lib/server/page-cache.js';
+import { BROWSER_KEEPS, cachedPage, cacheTtl } from '#lib/server/page-cache.js';
 import { rateLimited } from '#lib/server/rate-limit.js';
 import { withSecurityHeaders } from '#lib/server/security-headers.js';
 
@@ -37,7 +37,13 @@ const guarded: Handle = async ({ event, resolve }) => {
 		if (ttl !== null) {
 			// Workers' CacheStorage; the DOM lib's type of `caches` hides `default`.
 			const cache = (caches as CacheStorage & { default: Cache }).default;
-			return cachedPage(event.request, ttl, () => resolve(event), { cache, db: env.DB, build: version, waitUntil });
+			return cachedPage(
+				event.request,
+				ttl,
+				() => resolve(event),
+				{ cache, db: env.DB, build: version, waitUntil },
+				BROWSER_KEEPS.has(event.route.id ?? '')
+			);
 		}
 	}
 	return resolve(event);

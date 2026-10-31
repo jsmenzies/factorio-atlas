@@ -11,7 +11,7 @@
  * VERSION_TTL_MS per isolate, so a bump reaches every page within that.
  *
  * Only 200s without Set-Cookie are stored. Browsers get `no-cache`, so they never keep a page past a
- * purge; `x-page-cache` says hit or miss. A cached page keeps the CSP header (and nonce) it was
+ * purge, except for the JSON endpoints in BROWSER_KEEPS; `x-page-cache` says hit or miss. A cached page keeps the CSP header (and nonce) it was
  * made with, which still matches its HTML.
  */
 
@@ -19,8 +19,18 @@
 export const CACHED_ROUTES: Record<string, number> = {
 	'/': 3600,
 	'/prints/[id]': 86_400,
-	'/prints/[id]/render': 86_400
+	'/prints/[id]/render': 86_400,
+	// JSON the pages fetch: the inline viewer's page (three R2 reads, up to ≈ 1 MB) and a quality chip's counts.
+	'/prints/[id]/viewer': 300,
+	'/quality-levels': 300
 };
+
+/**
+ * Cached routes whose responses browsers keep too (`public, max-age=<ttl>`), as they did before these
+ * were cached here: fetched by a page, never navigated to, and short-lived, so a purge reaches a browser
+ * within that lifetime (twice it at worst, when the location's copy was already old).
+ */
+export const BROWSER_KEEPS: ReadonlySet<string> = new Set(['/prints/[id]/viewer', '/quality-levels']);
 
 /** How long an isolate reuses the data version it read. */
 export const VERSION_TTL_MS = 30_000;
@@ -76,10 +86,10 @@ const forCache = (res: Response, ttl: number) => {
 	return out;
 };
 
-/** What the browser gets: never kept past a purge, and whether it came from the cache. */
-const forClient = (res: Response, state: 'hit' | 'miss') => {
+/** What the browser gets: never kept past a purge (unless `keepFor`, seconds), and whether it came from the cache. */
+const forClient = (res: Response, state: 'hit' | 'miss', keepFor: number | null) => {
 	const out = new Response(res.body, res);
-	out.headers.set('cache-control', 'no-cache');
+	out.headers.set('cache-control', keepFor === null ? 'no-cache' : `public, max-age=${keepFor}`);
 	out.headers.set('x-page-cache', state);
 	return out;
 };
@@ -96,13 +106,21 @@ export interface PageCacheDeps {
 /**
  * The cached page for this request, or `render()`'s, stored on the way out when it may be. Any
  * failure of the cache itself falls back to rendering, so the cache can't take the site down.
+ * `browserKeeps` (BROWSER_KEEPS) lets the browser keep it for `ttl` too.
  */
-export async function cachedPage(request: Request, ttl: number, render: () => Promise<Response>, deps: PageCacheDeps) {
+export async function cachedPage(
+	request: Request,
+	ttl: number,
+	render: () => Promise<Response>,
+	deps: PageCacheDeps,
+	browserKeeps = false
+) {
+	const keepFor = browserKeeps ? ttl : null;
 	let key: Request;
 	try {
 		key = pageCacheKey(request.url, deps.build, await dataVersion(deps.db));
 		const hit = await deps.cache.match(key);
-		if (hit) return forClient(hit, 'hit');
+		if (hit) return forClient(hit, 'hit', keepFor);
 	} catch (e) {
 		console.warn(`page cache: lookup failed, rendering: ${e instanceof Error ? e.message : String(e)}`);
 		return render();
@@ -114,5 +132,5 @@ export async function cachedPage(request: Request, ttl: number, render: () => Pr
 			console.warn(`page cache: store failed: ${e instanceof Error ? e.message : String(e)}`);
 		})
 	);
-	return forClient(res, 'miss');
+	return forClient(res, 'miss', keepFor);
 }
