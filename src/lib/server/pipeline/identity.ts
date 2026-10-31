@@ -23,7 +23,7 @@
  * changing what goes into them needs a migration that empties print_fingerprints and an INDEX_VERSION
  * bump to fill it again, and leaves existing hash blocks behind.
  */
-import { decodeGameVersion } from './decode.js';
+import { bookEntryIndex, decodeGameVersion } from './decode.js';
 import { gameData } from './game-data.js';
 
 /**
@@ -39,7 +39,8 @@ type Json = Record<string, unknown>;
 export interface PageFingerprint {
 	/**
 	 * Book path: "" for a lone blueprint, else "3", "3/1", …: the same as the analysis' `nodes[].path` and
-	 * the viewer's, a missing `index` counting as 0, so paths can repeat within a book as they do there.
+	 * the viewer's, a missing `index` counting as the entry's position (bookEntryIndex); paths repeat only
+	 * where a book repeats an `index`, as they do there.
 	 */
 	readonly path: string;
 	readonly label: string | null;
@@ -95,9 +96,8 @@ function* walk(obj: unknown, path: number[], inherited: RawPage['version']): Gen
 	const version = decodeGameVersion(body.version) ?? inherited;
 	if (kind === 'blueprint') yield { path: path.join('/'), body, version };
 	else if (kind === 'blueprint_book') {
-		for (const child of Array.isArray(body.blueprints) ? (body.blueprints as Json[]) : []) {
-			yield* walk(child, [...path, typeof child.index === 'number' ? child.index : 0], version);
-		}
+		const entries = Array.isArray(body.blueprints) ? (body.blueprints as Json[]) : [];
+		for (const [i, child] of entries.entries()) yield* walk(child, [...path, bookEntryIndex(child, i)], version);
 	}
 }
 

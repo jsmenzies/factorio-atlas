@@ -1,4 +1,4 @@
-import { decodeGameVersion } from './decode.js';
+import { bookEntryIndex, decodeGameVersion } from './decode.js';
 import { DLC_MODS, gameData as defaultGameData, type GameData, type SurfaceCondition } from './game-data.js';
 
 /**
@@ -715,10 +715,7 @@ function* walk(obj: Json, path: number[], inherited: Version | null, game: GameD
 	yield [emptyNode(p, kind, body, inherited, game), path.length];
 	if (kind === 'blueprint_book') {
 		const version = decodeGameVersion(body.version) ?? inherited;
-		for (const child of asArray(body.blueprints)) {
-			const idx = typeof child.index === 'number' ? child.index : 0;
-			yield* walk(child, [...path, idx], version, game);
-		}
+		for (const [i, child] of asArray(body.blueprints).entries()) yield* walk(child, [...path, bookEntryIndex(child, i)], version, game);
 	}
 }
 

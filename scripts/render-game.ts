@@ -165,7 +165,16 @@ import { favoritesCacheFile, favoritesDb, refreshFavorites, topIds, type Favorit
 import { entityCount, PageCache, prepared, preparedSkipped, skipReason, type Prepared } from './render/prepare.js';
 import { renderProgress } from './render/progress.js';
 import { batchCandidates, byPrint, isModern, leftOutLine, takesPrint, withTopFirst } from './render/scope.js';
-import { blueprintPages, cloneSource, decode, diskSource, versionString, withStore, type RecordSource } from './render/source.js';
+import {
+	blueprintPages,
+	cloneSource,
+	decode,
+	diskSource,
+	versionString,
+	withStore,
+	type BlueprintPage,
+	type RecordSource
+} from './render/source.js';
 import { recordsDir } from './records/store.js';
 import {
 	AVIF,
@@ -771,6 +780,17 @@ async function enqueuePrint(id: string): Promise<{ taken: boolean; queued: numbe
 	if ((r.taken && r.queued === 0) || (!r.taken && had)) thumbsAfterUpload.add(id);
 	return r;
 }
+/**
+ * A print's pages with each book path once (the first, as the site's viewer finds it): two entries
+ * with the same `index` would share one row and fail each other as "the record changed".
+ */
+function firstPerPath(id: string, pages: BlueprintPage[]): BlueprintPage[] {
+	const seen = new Set<string>();
+	const kept = pages.filter((p) => !seen.has(p.path) && seen.add(p.path));
+	if (kept.length < pages.length)
+		log(`  ${id}: ${pages.length - kept.length} pages share a book path with an earlier page; only the first at each path is drawn`);
+	return kept;
+}
 /** Prints whose thumbnails are offered after scheduleUpload (so they go up after the render files). */
 const thumbsAfterUpload = new Set<string>();
 
@@ -803,7 +823,7 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		tally.page(id, 'skipped');
 		return { taken: true, queued: 0, modern: true };
 	}
-	const pages = [...blueprintPages(decoded)];
+	const pages = firstPerPath(id, [...blueprintPages(decoded)]);
 	const favorite = favorites.has(id);
 	const modern = pages.some((p) => isModern(p.version));
 	if (!takesPrint({ modern, favorite })) {
@@ -977,7 +997,11 @@ async function pageJson(w: Work): Promise<Prepared | null> {
 	const decoded = await decode(record.blueprintString);
 	let found: Prepared | null = null;
 	const others = new Set(todo.filter((x) => x.id === w.id).map((x) => x.path));
+	const seen = new Set<string>();
 	for (const page of blueprintPages(decoded)) {
+		// The first page at a path, as queueing took it (firstPerPath).
+		if (seen.has(page.path)) continue;
+		seen.add(page.path);
 		if (page.path !== w.path && !others.has(page.path)) continue;
 		const prep = prepared(catalog, decoded, page);
 		if (page.path === w.path) found = prep;

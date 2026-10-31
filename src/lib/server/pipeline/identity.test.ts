@@ -131,11 +131,21 @@ describe('fingerprintPrint', () => {
 		expect((await one(moved)).exact).toBe(a.exact);
 	});
 
-	test("book paths are the analysis's: a missing index counts as 0, so paths can repeat", async () => {
+	test("book paths are the analysis's: a missing index counts as the entry's position; a repeated index repeats", async () => {
 		const p2 = page({ entities: [{ entity_number: 1, name: 'stone-furnace', position: { x: 0, y: 0 } }], wires: [] });
 		const fp = await fingerprintPrint({ blueprint_book: { item: 'blueprint-book', blueprints: [page(), p2] } });
-		expect(fp.pages.map((p) => p.path)).toEqual(['0', '0']);
+		expect(fp.pages.map((p) => p.path)).toEqual(['0', '1']);
 		expect(fp.pages[0].exact).not.toBe(fp.pages[1].exact);
+		const twice = await fingerprintPrint({
+			blueprint_book: {
+				item: 'blueprint-book',
+				blueprints: [
+					{ ...page(), index: 4 },
+					{ ...p2, index: 4 }
+				]
+			}
+		});
+		expect(twice.pages.map((p) => p.path)).toEqual(['4', '4']);
 	});
 
 	test('whole print: one page is the same print alone or in a book; several pages in their order', async () => {

@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Effect } from 'effect';
-import { decodeExchangeString, decodeGameVersion, OFFLINE_MAX_INFLATED_BYTES } from '#lib/server/pipeline/decode.js';
+import { bookEntryIndex, decodeExchangeString, decodeGameVersion, OFFLINE_MAX_INFLATED_BYTES } from '#lib/server/pipeline/decode.js';
 import { mirrorPath } from '#lib/server/pipeline/source.js';
 import { siteOfPrintId } from '#lib/print-id.js';
 import { storeFileOf, storePrintIds } from '../records/store.js';
@@ -144,10 +144,8 @@ export function* blueprintPages(obj: unknown, path: number[] = [], inherited: un
 			blueprint: version === undefined ? body : { ...body, version }
 		};
 	} else if (kind === 'blueprint_book') {
-		for (const child of Array.isArray(body.blueprints) ? (body.blueprints as Json[]) : []) {
-			const idx = typeof child.index === 'number' ? child.index : 0;
-			yield* blueprintPages(child, [...path, idx], version);
-		}
+		const entries = Array.isArray(body.blueprints) ? (body.blueprints as Json[]) : [];
+		for (const [i, child] of entries.entries()) yield* blueprintPages(child, [...path, bookEntryIndex(child, i)], version);
 	}
 }
 

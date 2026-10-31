@@ -2,7 +2,7 @@
  * Decoded exchange-string JSON → compact per-page payload for the viewer. Pure; the
  * prototype lookups come in through a `Catalog` so this module carries no game data.
  */
-import { decodeGameVersion } from '#lib/server/pipeline/decode.js';
+import { bookEntryIndex, decodeGameVersion } from '#lib/server/pipeline/decode.js';
 import { normalizeDirection } from './geometry.js';
 import type { Category, CompactEntity, CompactPage, EntityExtra, Kind, NameInfo, PageRef } from './types.js';
 
@@ -119,10 +119,7 @@ function* walkNodes(obj: Json, path: number[], inherited: Version | null): Gener
 	const version = decodeGameVersion(body.version) ?? inherited;
 	yield { path: path.join('/'), kind, body, version, depth: path.length };
 	if (kind === 'blueprint_book') {
-		for (const child of asArray(body.blueprints)) {
-			const idx = typeof child.index === 'number' ? child.index : 0;
-			yield* walkNodes(child, [...path, idx], version);
-		}
+		for (const [i, child] of asArray(body.blueprints).entries()) yield* walkNodes(child, [...path, bookEntryIndex(child, i)], version);
 	}
 }
 

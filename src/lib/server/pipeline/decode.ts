@@ -83,6 +83,15 @@ export const decodeGameVersion = (v: unknown): [number, number, number, number] 
 	return [part(48n), part(32n), part(16n), part(0n)];
 };
 
+/**
+ * A book entry's slot, the step in every book path: its `index`, else its position in the book's
+ * `blueprints` array, as the game places entries without one on import (codex books leave it out).
+ */
+export const bookEntryIndex = (entry: unknown, position: number): number => {
+	const index = entry && typeof entry === 'object' ? (entry as { index?: unknown }).index : undefined;
+	return typeof index === 'number' ? index : position;
+};
+
 const bytesToBase64 = (bytes: Uint8Array): string => {
 	let bin = '';
 	// Chunked: String.fromCharCode(...bytes) overflows the stack on large prints.
