@@ -10,7 +10,8 @@
  *     --refresh-top                                 # recompute the top list from the source first (with --top)
  *     --force                                       # render again even when nothing changed
  *     --retry-failed                                # queue again pages that failed every attempt (not kept by --resume)
- *     --plan-only                                   # enqueue (decode every print, write the rows) and exit without rendering
+ *     --plan-only                                   # enqueue (decode every print, write the rows) and exit without rendering;
+ *                                                   # touches no file in the renders dir and deletes no row
  *     --upload local|prod                           # put each finished page into a RENDERS bucket as the run goes
  *     --upload-concurrency N                        # upload requests in flight (default 32)
  *     --flags                                       # with --upload: then render:flags for that stage, and a page-cache bump (below)
@@ -745,9 +746,9 @@ let favorites = new Set<string>();
 /** Prints `--top` added: the stored top N by rank. */
 let topPicked: string[] = [];
 
-/** Drop a print's rows and files, e.g. once it has no 2.0+ page. Never a favourite's. */
+/** Drop a print's rows and files, e.g. once it has no 2.0+ page. Never a favourite's, and never in a plan-only run. */
 async function forgetPrint(id: string, rows: RenderJobRow[]) {
-	if (!rows.length || favorites.has(id)) return;
+	if (!rows.length || favorites.has(id) || planOnly) return;
 	await queue.writeJobs([], rows);
 	for (const r of rows) if (r.status === 'done') await removePage(OUT_DIR, id, r.path);
 	await writeIndex(OUT_DIR, id, []);
@@ -880,7 +881,7 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		let sc = forced ? null : await readSidecar(OUT_DIR, id, page.path);
 		// A drawn page is measured against the assets that drew it, not the current ones (drawnKey).
 		const kept = sc && sc.assets.id !== assets.id ? drawnKey(prep.json, sc.assets.id, assets) : key;
-		if (sc && sc.inputKey === kept && sc.overview.file !== overviewFile(page.path, sc.stamp)) {
+		if (sc && !planOnly && sc.inputKey === kept && sc.overview.file !== overviewFile(page.path, sc.stamp)) {
 			// Rendered before overviews carried the stamp: renamed, no redraw. Buckets need the new
 			// name (marked first, so a crash in between only re-sends the page). No overview: drawn again.
 			try {
@@ -899,9 +900,11 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 			doneHere++;
 			if (sc.pageData !== PAGE_DATA_VERSION) {
 				// Rendered before its page data existed: write that now, no redraw. Buckets holding the
-				// page need the new files: marked first, so a crash in between only re-sends them.
-				await queue.markStale(id, page.path);
-				await writePageData(OUT_DIR, id, sc, prep.page);
+				// page need the new files: marked first, so a crash in between only re-sends them. A plan-only run counts it.
+				if (!planOnly) {
+					await queue.markStale(id, page.path);
+					await writePageData(OUT_DIR, id, sc, prep.page);
+				}
 				pageDataWritten++;
 			}
 			if (!(old?.status === 'done' && old.input_key === kept && old.overview === sc.overview.file)) {
@@ -951,12 +954,17 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		if (!(old?.status === 'skipped' && old.reason === NO_PAGES))
 			writes.push({ ...failedRow(id, record.title, 'no-pages', NO_PAGES, t, old), status: 'skipped' });
 	}
-	// Rows for pages the print no longer has (it changed since), or a failed decode it got over.
+	// Rows for pages the print no longer has (it changed since), or a failed decode it got over. A plan-only
+	// run keeps them, their files and index.json as they are: it writes only the rows of what it found.
 	const gone = [...existing.values()];
+	if (queued) remaining.set(id, queued);
+	if (planOnly) {
+		await queue.writeJobs(writes);
+		return { taken: true, queued, modern };
+	}
 	await queue.writeJobs(writes, gone);
 	for (const g of gone) if (g.status === 'done') await removePage(OUT_DIR, id, g.path);
 	if (gone.length || (doneHere && !existsSync(join(OUT_DIR, id, 'index.json')))) indexStale = true;
-	if (queued) remaining.set(id, queued);
 	if (indexStale || (!queued && writes.length)) await writeIndex(OUT_DIR, id, await queue.donePages(id));
 	return { taken: true, queued, modern };
 }
@@ -1405,7 +1413,7 @@ try {
 				? `; ${preModernFavorites.prints} favourites (${preModernFavorites.pages} pages) with no 2.0+ page taken`
 				: '') +
 			(topPicked.length ? `\n  top list: ${topPicked.length} prints first in the selection` : '') +
-			(pageDataWritten ? `; page data written for ${pageDataWritten} pages rendered before it existed` : '') +
+			(pageDataWritten ? `; page data ${planOnly ? 'to write' : 'written'} for ${pageDataWritten} pages rendered before it existed` : '') +
 			(overviewsRenamed ? `; ${overviewsRenamed} overviews renamed to carry their stamp` : '') +
 			(batch ? `\n  batch: ${batch.picked.length} of ${batch.next} prints picked; about ${batch.left} prints may have work after it` : '') +
 			(uploader ? `\n  ${uploader.pending} rendered pages to upload so far` : '')

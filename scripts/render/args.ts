@@ -36,6 +36,7 @@ export interface RenderArgs {
 	force: boolean | 'pending';
 	/** Queue again pages that failed every attempt at their current input. */
 	retryFailed: boolean;
+	/** Plan and write the rows only: no drawing, and no file written or deleted in the renders dir. */
 	planOnly: boolean;
 	workers: number;
 	encodeParallel: number;
