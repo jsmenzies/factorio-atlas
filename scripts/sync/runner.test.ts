@@ -16,6 +16,8 @@ import {
 	type BackfillResult,
 	type StepDef
 } from './runner';
+import { liveUpdateBesides } from './local-db';
+import { SYNC_RUN_ENV } from '#lib/server/sync.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const T = 1_800_000_000_000;
@@ -272,6 +274,13 @@ describe('SyncRunner', () => {
 		await r.finish();
 	});
 
+	test("a step's process is told the update's run id, so a script that refuses beside an update runs as its step", async () => {
+		const { r } = runner('own-step');
+		writeFileSync(join(dir, 'env.js'), `console.log('run=' + process.env.${SYNC_RUN_ENV})`);
+		expect((await r.runScript([join(dir, 'env.js')])).tail).toContain('run=own-step');
+		await r.finish();
+	});
+
 	test('Quit on a step that ignores Ctrl-C: its group is killed after the grace', async () => {
 		const { r, log } = runner('stubborn', 300);
 		const started = r.runScript([join(dir, 'stubborn.js')]);
@@ -292,3 +301,16 @@ async function waitFor(ok: () => boolean, ms = 5000) {
 		await new Promise((r) => setTimeout(r, 20));
 	}
 }
+
+describe('liveUpdateBesides', () => {
+	test("a live update other than the caller's own; none when stale, or with no sync tables", () => {
+		const { sqlite } = fresh();
+		expect(liveUpdateBesides(sqlite, null, T)).toBeNull();
+		claimRun(sqlite, runAt('a', T), T, nobody);
+		expect(liveUpdateBesides(sqlite, null, T)).toBe('a');
+		expect(liveUpdateBesides(sqlite, 'b', T)).toBe('a');
+		expect(liveUpdateBesides(sqlite, 'a', T)).toBeNull();
+		expect(liveUpdateBesides(sqlite, null, T + SYNC_STALE_MS + 1)).toBeNull();
+		expect(liveUpdateBesides(new Database(':memory:'), null, T)).toBeNull();
+	});
+});

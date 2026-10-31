@@ -27,6 +27,8 @@
  *   --yes            don't ask before writing to prod
  *   --json           the result as JSON on stdout (`PolledAdmitResult`); every other line to stderr
  *
+ * Refuses (but for --dry-run) while an update is live, unless that update started it: its ingest step runs this.
+ *
  * Exit 0 when done (refusals and waiting deletions included), 2 on any error or when stopped (130 on the second
  * signal); the last line starts with ✓ or ✗.
  */
@@ -48,6 +50,7 @@ import { polledStoreAdapter } from './records/polled';
 import { pullSite, type PullCounts } from './records/pull';
 import { confirmProd, n, parseStageArgs, requireSchema } from './stage-command';
 import { openStageGate } from './sync/gate-env';
+import { otherLiveUpdate } from './sync/local-db';
 import { admissionWork, inboxDir, readLedger, readState, writeLedger, writeState } from './sync/polled';
 
 const USAGE = 'usage: bun run polled --stage local|prod --site <site> [--dir DIR] [--dry-run] [--force] [--yes] [--json]';
@@ -160,6 +163,12 @@ if (!site) {
 result.stage = stage;
 result.site = site;
 result.dryRun = Boolean(flags['dry-run']);
+// The update runs this itself (its ingest step) and writes the same ledger: a hand run waits for it to end.
+const live = result.dryRun ? null : otherLiveUpdate(join(import.meta.dirname, '..'));
+if (live) {
+	console.error(`✗ an update is running (${live}): its ingest step admits the polled sites itself; run this once it has finished`);
+	process.exit(2);
+}
 const storeDir = flags.dir ? resolve(flags.dir) : recordsDir();
 const inbox = inboxDir(storeDir);
 

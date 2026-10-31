@@ -15,7 +15,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { closeSync, fstatSync, openSync, readFileSync, readSync, writeSync } from 'node:fs';
 import type { Database } from 'bun:sqlite';
 import { retryBusy } from '#lib/server/admin/busy.js';
-import { OPEN_SYNC_PARAMS, OPEN_SYNC_WHERE, writeSyncRun } from '#lib/server/sync.js';
+import { OPEN_SYNC_PARAMS, OPEN_SYNC_WHERE, SYNC_RUN_ENV, writeSyncRun } from '#lib/server/sync.js';
 import { LIVE_STATES } from '#lib/server/pipeline/runs.js';
 import { RENDER_STALE_MS } from '#lib/server/render-queue.js';
 import {
@@ -318,7 +318,7 @@ export class SyncRunner {
 				cwd: this.opts.cwd,
 				detached: true,
 				stdio: ['ignore', this.fd, this.fd],
-				env: { ...process.env, ...env, FORCE_COLOR: '0' }
+				env: { ...process.env, ...env, [SYNC_RUN_ENV]: this.run.id, FORCE_COLOR: '0' }
 			});
 			this.child = c;
 			this.run.options.childPid = c.pid;

@@ -11,6 +11,11 @@ export const isLiveSync = (run: Pick<SyncRunRow, 'state' | 'updated_at'>, now = 
  */
 export const LIVE_SYNC_WHERE = `state IN (${LIVE_STATES.map(() => '?').join(', ')}) AND updated_at > ?`;
 export const liveSyncParams = (now = Date.now()) => [...LIVE_STATES, now - SYNC_STALE_MS];
+/**
+ * The environment variable the update sets on its steps' processes: its run id. A script that refuses to run
+ * beside a live update (scripts/polled.ts) runs when the live update is the one that started it.
+ */
+export const SYNC_RUN_ENV = 'ATLAS_SYNC_RUN';
 /** Rows in a live state whatever their heartbeat: live ones and those whose runner died. */
 export const OPEN_SYNC_WHERE = `state IN (${LIVE_STATES.map(() => '?').join(', ')})`;
 export const OPEN_SYNC_PARAMS = [...LIVE_STATES];
