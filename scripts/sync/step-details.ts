@@ -154,7 +154,9 @@ export function renderStageDetails(row: RenderRowCounts, stages: RenderStages | 
 					? [{ label: 'prints uploaded', value: `${n(s.upload.printsUp)} of ${n(s.plan.prints)}` }]
 					: []),
 				...detail('waiting to upload', s.upload?.waiting, { tone: 'warn' }),
-				...(s.thumbs?.of ? [{ label: 'thumbnails', value: `${n(s.thumbs.done)} of ${n(s.thumbs.of)} prints` }] : [])
+				...(s.thumbs?.of ? [{ label: 'thumbnails', value: `${n(s.thumbs.done)} of ${n(s.thumbs.of)} prints` }] : []),
+				...(s.thumbs?.pagesOf ? [{ label: 'thumbnail pages made', value: `${n(s.thumbs.pagesMade ?? 0)} of ${n(s.thumbs.pagesOf)}` }] : []),
+				...detail('thumbnails waiting on upload', s.thumbs?.waitingUpload, { tone: 'warn' })
 			]
 		});
 	}

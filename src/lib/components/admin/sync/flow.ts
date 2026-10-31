@@ -582,8 +582,14 @@ function renderCells(
 		: thumbs.of
 			? cell(
 					live && (thumbs.done < thumbs.of || more) ? 'part' : 'done',
-					[{ n: `${int(thumbs.done)} of ${int(thumbs.of)}`, text: 'prints' }],
-					'Made (and uploaded) per print once its pages are final.'
+					[
+						...(thumbs.pagesOf ? [{ n: `${int(thumbs.pagesMade ?? 0)} of ${int(thumbs.pagesOf)}`, text: 'pages' }] : []),
+						{ n: `${int(thumbs.done)} of ${int(thumbs.of)}`, text: 'prints' },
+						...fact(thumbs.waitingUpload, 'waiting on upload')
+					],
+					'Made (and uploaded) per print once its pages are final. x of y pages: thumbnail pages made of those to make (counted as ' +
+						'each print is looked at; prints already up to date have none); x of y prints: prints done; waiting on upload: prints ' +
+						'whose thumbnails are made, waiting for their render files to go up first.'
 				)
 			: more
 				? cell('wait', [], 'Made per print once its pages are final.')

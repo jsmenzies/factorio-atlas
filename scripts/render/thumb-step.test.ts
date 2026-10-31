@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import sharp from 'sharp';
@@ -80,8 +80,8 @@ test('makes, keeps, renews and clears thumbnails; uploads each print after its r
 		// By site (here by the id's letter), as the run's stages count it.
 		expect(first.progressBy((id) => id)).toEqual(
 			new Map([
-				['a', { done: 0, of: 1 }],
-				['b', { done: 0, of: 1 }]
+				['a', { done: 0, of: 1, pagesMade: 0, pagesOf: 0, waitingUpload: 0 }],
+				['b', { done: 0, of: 1, pagesMade: 0, pagesOf: 0, waitingUpload: 0 }]
 			])
 		);
 		// Offered again while being worked on: looked at once more afterwards, never twice at once.
@@ -89,7 +89,7 @@ test('makes, keeps, renews and clears thumbnails; uploads each print after its r
 		await first.drain();
 		// Prints, not offers: `a` counts once, and is done only after its second look.
 		expect(progress.at(-1)).toEqual({ done: 2, of: 2 });
-		expect(first.progressBy(() => 'all').get('all')).toEqual({ done: 2, of: 2 });
+		expect(first.progressBy(() => 'all').get('all')).toEqual({ done: 2, of: 2, pagesMade: 4, pagesOf: 4, waitingUpload: 0 });
 		expect(progress.every((p) => p.of === 2 && p.done <= 2)).toBe(true);
 		expect(progress.length).toBe(3);
 		expect(first.stats).toMatchObject({ prints: 3, current: 1, pages: 4, failed: 0 });
@@ -128,6 +128,103 @@ test('makes, keeps, renews and clears thumbnails; uploads each print after its r
 		expect(gone.stats.cleared).toBe(1);
 		expect(JSON.parse(await readFile(join(thumbs, 'b', 'thumbs.json'), 'utf8'))).toEqual({ v: 1, pages: {} });
 		expect(existsSync(join(thumbs, 'b', '0.0123456789.t320.avif'))).toBe(false);
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+/** A noisy overview, so the encoder has real work: what concurrency must never change. */
+const noisy = (w: number, h: number, seed: number) =>
+	sharp({
+		create: {
+			width: w,
+			height: h,
+			channels: 3,
+			background: { r: seed % 255, g: 90, b: 40 },
+			noise: { type: 'gaussian', mean: 120, sigma: 40 }
+		}
+	})
+		.avif()
+		.toBuffer();
+
+test('pages made of those to make, and prints waiting on their render upload, per key', async () => {
+	const tmp = mkdtempSync(join(tmpdir(), 'thumb-step-'));
+	try {
+		const renders = join(tmp, 'renders');
+		await render(renders, 'a', '0123456789');
+		let release = () => {};
+		const held = new Promise<void>((r) => (release = r));
+		const step = createThumbStep({
+			rendersDir: renders,
+			thumbsDir: join(tmp, 'thumbs'),
+			concurrency: 1,
+			planOnly: false,
+			log: () => {},
+			upload: { uploader: { uploadPrint: async () => true } as unknown as ThumbUploader, renderFilesSettled: () => held },
+			stopped: () => false
+		});
+		step.offer('a');
+		// Made, then waiting for its render files.
+		while (!step.progressBy(() => 'all').get('all')?.waitingUpload) await new Promise((r) => setTimeout(r, 5));
+		expect(step.progressBy(() => 'all').get('all')).toEqual({ done: 0, of: 1, pagesMade: 2, pagesOf: 2, waitingUpload: 1 });
+		await new Promise((r) => setTimeout(r, 20));
+		release();
+		await step.drain();
+		expect(step.progressBy(() => 'all').get('all')).toEqual({ done: 1, of: 1, pagesMade: 2, pagesOf: 2, waitingUpload: 0 });
+		// The time it waited is summed for the run's last line.
+		expect(step.stats.waitingMs).toBeGreaterThan(10);
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+});
+
+test('more prints at once makes byte-identical files; setConcurrency raises it mid-run', async () => {
+	const tmp = mkdtempSync(join(tmpdir(), 'thumb-step-'));
+	try {
+		const renders = join(tmp, 'renders');
+		const ids = ['p1', 'p2', 'p3', 'p4'];
+		for (const [i, id] of ids.entries()) {
+			await mkdir(join(renders, id), { recursive: true });
+			await writeFile(join(renders, id, '0.0123456789.avif'), await noisy(300 + i * 37, 180 - i * 23, i));
+			await writeFile(join(renders, id, '1.abcdef0123.avif'), await noisy(140, 280, i + 7));
+			await writeFile(
+				join(renders, id, 'index.json'),
+				JSON.stringify({
+					v: 2,
+					cover: '0',
+					pages: {
+						'0': { stamp: '0123456789', overview: '0.0123456789.avif' },
+						'1': { stamp: 'abcdef0123', overview: '1.abcdef0123.avif' }
+					}
+				})
+			);
+		}
+		const run = async (thumbs: string, concurrency: number, raiseTo?: number) => {
+			const step = createThumbStep({
+				rendersDir: renders,
+				thumbsDir: thumbs,
+				concurrency,
+				planOnly: false,
+				log: () => {},
+				stopped: () => false
+			});
+			for (const id of ids) step.offer(id);
+			// Raised while the first print is in hand: the rest start together.
+			if (raiseTo) step.setConcurrency(raiseTo);
+			if (raiseTo) expect(step.pending - step.progress.done).toBeGreaterThan(0);
+			await step.drain();
+			return { step };
+		};
+		const one = await run(join(tmp, 'one'), 1);
+		const many = await run(join(tmp, 'many'), 1, 4);
+		expect(many.step.concurrency).toBe(4);
+		expect(one.step.stats.pages).toBe(8);
+		expect(many.step.stats.pages).toBe(8);
+		for (const id of ids) {
+			const names = (await readdir(join(tmp, 'one', id))).sort();
+			expect((await readdir(join(tmp, 'many', id))).sort()).toEqual(names);
+			for (const name of names) expect(await readFile(join(tmp, 'many', id, name))).toEqual(await readFile(join(tmp, 'one', id, name)));
+		}
 	} finally {
 		rmSync(tmp, { recursive: true, force: true });
 	}

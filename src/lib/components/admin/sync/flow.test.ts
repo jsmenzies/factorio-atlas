@@ -342,6 +342,19 @@ describe('render per source', () => {
 		expect(cellOf(flowOf({ run: inRender(), phase: 'running', liveRender: renderRow() }), 'codex', 'plan').tip).not.toContain('Retrying');
 	});
 
+	test('Thumbnails: pages made of those to make, prints done, prints waiting on their render upload', () => {
+		const s = stages();
+		s.sites.codex!.thumbs = { done: 30, of: 41, pagesMade: 310, pagesOf: 420, waitingUpload: 6 };
+		const f = flowOf({ run: inRender(), phase: 'running', liveRender: renderRow({}, s) });
+		expect(said(cellOf(f, 'codex', 'thumbs'))).toBe('part · 310 of 420 pages · 30 of 41 prints · 6 waiting on upload');
+		// None waiting: no third line; a snapshot from before the page counts: prints only.
+		s.sites.codex!.thumbs = { done: 41, of: 41, pagesMade: 420, pagesOf: 420, waitingUpload: 0 };
+		expect(said(cellOf(flowOf({ run: inRender(), phase: 'running', liveRender: renderRow({}, s) }), 'codex', 'thumbs'))).toBe(
+			'part · 420 of 420 pages · 41 of 41 prints'
+		);
+		expect(said(cellOf(f, 'fprints', 'thumbs'))).toBe('part · 35 of 41 prints');
+	});
+
 	test('a render run from before this step isn’t this update’s', () => {
 		const f = flowOf({ run: inRender(), phase: 'running', liveRender: renderRow({ started_at: 900_000 }) });
 		expect(cellOf(f, 'codex', 'plan').kind).toBe('wait');

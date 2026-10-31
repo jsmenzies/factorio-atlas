@@ -146,7 +146,7 @@ test('the render step: the run as a whole, then each source, its clean up and it
 				plan: { prints: 2, pages: 15, queued: 11, unchanged: 3, skipped: 1, failed: 0 },
 				draw: { drawn: 10, failed: 1, left: 0, printsDone: 2, printsDrawn: 2 },
 				upload: { pages: 12, files: 300, bytes: 9, waiting: 0, failing: 0, printsUp: 1 },
-				thumbs: { done: 2, of: 2 }
+				thumbs: { done: 2, of: 2, pagesMade: 11, pagesOf: 11, waitingUpload: 1 }
 			},
 			upload: {
 				plan: { prints: 1, pages: 2, queued: 2, unchanged: 0, skipped: 0, failed: 0 },
@@ -170,7 +170,9 @@ test('the render step: the run as a whole, then each source, its clean up and it
 		['failed', 1],
 		['pages uploaded', 12],
 		['prints uploaded', '1 of 2'],
-		['thumbnails', '2 of 2 prints']
+		['thumbnails', '2 of 2 prints'],
+		['thumbnail pages made', '11 of 11'],
+		['thumbnails waiting on upload', 1]
 	]);
 	// A snapshot from before printsUp: no "prints uploaded" row.
 	expect(g[2].rows.map((r) => r.label)).not.toContain('prints uploaded');

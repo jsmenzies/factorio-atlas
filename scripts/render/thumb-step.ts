@@ -6,8 +6,9 @@
  *
  * It runs in the runner's own process, never in an fpsr worker, and only on finished overviews, so
  * it changes nothing a page's input key depends on. A few prints at a time (`concurrency`, 1 by
- * default; THUMB_STEP_MB each counts against the memory budget): a decoded 2048 px overview is
- * 16 MB, and sharp works single-threaded here.
+ * default while pages are drawn, more once drawing is over: `setConcurrency`; THUMB_STEP_MB each counts
+ * against the memory budget): a decoded 2048 px overview is 16 MB, and sharp works single-threaded here,
+ * so how many prints run at once never changes a byte of what is made.
  *
  * Prints whose thumbnails are up to date cost a few small reads; a page redrawn gets a new stamp and
  * so new thumbnails (the old ones are swept from disk and, uploaded, scheduled for deletion); a page
@@ -25,7 +26,7 @@ export const THUMB_STEP_MB = 200;
 export interface ThumbStepOptions {
 	rendersDir: string;
 	thumbsDir: string;
-	/** Prints worked on at once. */
+	/** Prints worked on at once (to start with: `setConcurrency` changes it). */
 	concurrency: number;
 	/** Count what would be made, make nothing. */
 	planOnly: boolean;
@@ -50,6 +51,18 @@ export interface ThumbStepStats {
 	removed: number;
 	/** Prints whose render went: their thumbnails cleared. */
 	cleared: number;
+	/** Time spent making thumbnails, and waiting for prints' render files to finish uploading, summed over prints (ms). */
+	makingMs: number;
+	waitingMs: number;
+}
+
+/** One key's (site's) thumbnails: prints done of those offered, pages made of those to make (known once a print is planned), prints made and waiting on their render upload. */
+export interface ThumbProgress {
+	done: number;
+	of: number;
+	pagesMade: number;
+	pagesOf: number;
+	waitingUpload: number;
 }
 
 export function createThumbStep(opts: ThumbStepOptions) {
@@ -58,7 +71,25 @@ export function createThumbStep(opts: ThumbStepOptions) {
 		sharp.concurrency(1);
 		sharp.cache(false);
 	}
-	const stats: ThumbStepStats = { prints: 0, current: 0, pages: 0, failed: 0, files: 0, bytes: 0, removed: 0, cleared: 0 };
+	const stats: ThumbStepStats = {
+		prints: 0,
+		current: 0,
+		pages: 0,
+		failed: 0,
+		files: 0,
+		bytes: 0,
+		removed: 0,
+		cleared: 0,
+		makingMs: 0,
+		waitingMs: 0
+	};
+	let concurrency = Math.max(1, opts.concurrency);
+	/** Pages to make and made, per print, this run (a print looked at again adds its new work). */
+	const pagesOf = new Map<string, number>();
+	const pagesMade = new Map<string, number>();
+	/** Prints whose thumbnails are made, waiting for their render files to go up. */
+	const waitingUpload = new Set<string>();
+	const add = (m: Map<string, number>, id: string, n: number) => m.set(id, (m.get(id) ?? 0) + n);
 	const queue: string[] = [];
 	const queued = new Set<string>();
 	/** Every print offered in the run, for "N of M prints". */
@@ -83,13 +114,16 @@ export function createThumbStep(opts: ThumbStepOptions) {
 			if (!plan.rewrite) stats.current++;
 			return;
 		} else if (plan.rewrite) {
+			const started = Date.now();
 			const pages = { ...plan.kept };
+			add(pagesOf, id, plan.jobs.length);
 			for (const job of plan.jobs) {
-				if (opts.stopped()) return;
+				if (opts.stopped()) break;
 				try {
 					const r = await makePage(opts.rendersDir, opts.thumbsDir, job, THUMB);
 					if (!r) continue;
 					pages[job.path] = r.page;
+					add(pagesMade, id, 1);
 					stats.pages++;
 					stats.files += r.page.sizes.length;
 					stats.bytes += Object.values(r.bytes).reduce((a, b) => a + b, 0);
@@ -98,16 +132,28 @@ export function createThumbStep(opts: ThumbStepOptions) {
 					opts.log(`  thumbnails ${id} ${job.path || 'root'}: ${e instanceof Error ? e.message : String(e)}`);
 				}
 			}
+			if (opts.stopped()) {
+				stats.makingMs += Date.now() - started;
+				return;
+			}
 			stats.removed += await finishPrint(opts.thumbsDir, id, plan.order, pages);
+			stats.makingMs += Date.now() - started;
 		} else stats.current++;
 		if (opts.upload && !opts.stopped()) {
-			await opts.upload.renderFilesSettled(id);
+			const waitFrom = Date.now();
+			waitingUpload.add(id);
+			try {
+				await opts.upload.renderFilesSettled(id);
+			} finally {
+				waitingUpload.delete(id);
+				stats.waitingMs += Date.now() - waitFrom;
+			}
 			await opts.upload.uploader.uploadPrint(id);
 		}
 	}
 
 	function pump() {
-		while (active < opts.concurrency && queue.length && !opts.stopped()) {
+		while (active < concurrency && queue.length && !opts.stopped()) {
 			const id = queue.shift()!;
 			queued.delete(id);
 			if (working.has(id)) {
@@ -150,19 +196,30 @@ export function createThumbStep(opts: ThumbStepOptions) {
 		get pending() {
 			return queue.length + active;
 		},
+		/** Prints worked on at once from now on (at least 1); more start at once when there is work. */
+		setConcurrency(n: number) {
+			concurrency = Math.max(1, Math.floor(n));
+			pump();
+		},
+		get concurrency() {
+			return concurrency;
+		},
 		/** Prints offered in the run, and those of them done (none waiting or being worked on). */
 		get progress(): { done: number; of: number } {
 			return { done: offered.size - queue.length - active, of: offered.size };
 		},
-		/** `progress` split by a key of the print id (its site): prints done of those offered, per key. */
-		progressBy<K>(keyOf: (id: string) => K): Map<K, { done: number; of: number }> {
-			const out = new Map<K, { done: number; of: number }>();
+		/** `progress` split by a key of the print id (its site), with the pages and the prints waiting on their render upload. */
+		progressBy<K>(keyOf: (id: string) => K): Map<K, ThumbProgress> {
+			const out = new Map<K, ThumbProgress>();
 			for (const id of offered) {
 				const k = keyOf(id);
 				let p = out.get(k);
-				if (!p) out.set(k, (p = { done: 0, of: 0 }));
+				if (!p) out.set(k, (p = { done: 0, of: 0, pagesMade: 0, pagesOf: 0, waitingUpload: 0 }));
 				p.of++;
 				if (!queued.has(id) && !working.has(id)) p.done++;
+				p.pagesMade += pagesMade.get(id) ?? 0;
+				p.pagesOf += pagesOf.get(id) ?? 0;
+				if (waitingUpload.has(id)) p.waitingUpload++;
 			}
 			return out;
 		},

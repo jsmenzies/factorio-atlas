@@ -59,6 +59,13 @@ export interface ThumbsStage {
 	/** Prints whose thumbnails are done, of those offered to the thumb step. */
 	done: number;
 	of: number;
+	/**
+	 * Thumbnail pages made, of those to make (known once a print is looked at), and prints whose thumbnails are
+	 * made but wait for their render files to finish uploading. Missing in snapshots from before them.
+	 */
+	pagesMade?: number;
+	pagesOf?: number;
+	waitingUpload?: number;
 }
 
 export interface SiteStages {

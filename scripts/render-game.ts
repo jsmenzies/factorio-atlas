@@ -15,7 +15,7 @@
  *     --upload-concurrency N                        # upload requests in flight (default 32)
  *     --flags                                       # with --upload: then render:flags for that stage, and a page-cache bump (below)
  *     --no-thumbs                                   # don't make (or upload) page thumbnails
- *     --thumb-jobs N                                # prints whose thumbnails are made at once (default 1)
+ *     --thumb-jobs N                                # prints whose thumbnails are made at once while drawing (default 1)
  *   bun run render --resume [flags]                 # a new run with the latest run's options (flags given override them)
  *     --workers N                                   # render processes (default: half the CPU threads)
  *     --encode-parallel N                           # AVIF encodes in flight per worker (default 4)
@@ -114,7 +114,8 @@
  * Thumbnails (scripts/render/thumb-step.ts): once a print's pages are final, or at once when it has
  * nothing to draw, its page thumbnails in THUMBS_DIR are brought up to date from the overviews on disk
  * (the same code as `bun run render:thumbs`, in this process, never in a worker, `--thumb-jobs` prints
- * at a time, counted against --mem-budget-mb), so a redrawn page gets new ones and missing ones fill
+ * at a time while pages are drawn, then as many as there were workers and the memory budget holds;
+ * counted against --mem-budget-mb), so a redrawn page gets new ones and missing ones fill
  * in as runs pass over prints (`--next` picks prints by their render work only). With `--upload`
  * they go up after the print's render files, as `render:thumbs --upload` does them (thumb_uploads;
  * replaced ones through render_deletes after the same grace). `--plan-only` counts the pages that
@@ -1096,8 +1097,8 @@ async function admission(slot: Slot): Promise<(w: Work) => Admission> {
 			workerMb,
 			workers: workersNow,
 			inFlight,
-			// The thumb step's sharp work in this process takes from the same RAM.
-			budgetMb: memBudgetMb - (thumbStep && !planOnly ? THUMB_STEP_MB * args.thumbJobs : 0),
+			// The thumb step's sharp work in this process takes from the same RAM (--thumb-jobs prints while drawing).
+			budgetMb: memBudgetMb - (thumbStep && !planOnly ? THUMB_STEP_MB * thumbStep.concurrency : 0),
 			availableMb: mem?.availableMb ?? null,
 			reserveMb: memReserveMb
 		});
@@ -1392,6 +1393,15 @@ try {
 		run.state = paused ? 'paused' : 'running';
 		await heartbeat();
 		if (todo.length) await renderAll();
+		// Drawing is over and the fpsr workers have exited: their cores make thumbnails, as many prints at once as
+		// there were workers and the memory budget holds (THUMB_STEP_MB each). Only the scheduling changes, never a byte.
+		if (thumbStep && !stopping) {
+			const n = Math.max(1, Math.min(workers, Math.floor(memBudgetMb / THUMB_STEP_MB)));
+			if (n > thumbStep.concurrency) {
+				thumbStep.setConcurrency(n);
+				log(`thumbnails: drawing finished, ${n} at once`);
+			}
+		}
 	}
 	// After the last page: each phase is logged for people and set in the run's options.phase, which the Update tab reads.
 	if (thumbStep) {
@@ -1489,6 +1499,7 @@ function thumbSummary() {
 	return (
 		`thumbnails: ${t.pages} pages made (${t.files} files, ${mb(t.bytes)}), ${t.current} of ${t.prints} prints up to date, ` +
 		`${t.removed} old files deleted from disk${t.cleared ? `, ${t.cleared} prints cleared` : ''}${t.failed ? `, ${t.failed} pages FAILED` : ''}` +
+		`; ${(t.makingMs / 1000).toFixed(0)} s making, ${(t.waitingMs / 1000).toFixed(0)} s waiting on render uploads (summed over prints)` +
 		(u
 			? `; uploaded ${u.uploaded} prints (${u.files} files, ${mb(u.bytes)}), ${u.deletesScheduled} deletions scheduled, ${u.deleted} due ones deleted` +
 				(u.failed ? `, ${u.failed} failed` : '')
