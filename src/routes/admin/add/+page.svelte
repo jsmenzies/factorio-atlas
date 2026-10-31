@@ -3,7 +3,7 @@
 	import { enhance, type SubmitFunction } from '$app/forms';
 	import type { AddView } from '#lib/add-by-link.js';
 	import { parsePostLink } from '#lib/factoriobin-link.js';
-	import { formatDate } from '#lib/format.js';
+	import { formatCount as count, formatDate } from '#lib/format.js';
 	import { plainText } from '#lib/richtext.js';
 	import type { PageProps } from './$types';
 
@@ -22,8 +22,7 @@
 	const problem = $derived(dev ? devProblem : form && 'problem' in form ? String(form.problem) : null);
 	const valid = $derived(parsePostLink(link) !== null);
 
-	const kb = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024)).toLocaleString('en-US')} KB`;
-	const count = (n: number) => n.toLocaleString('en-US');
+	const kb = (bytes: number) => `${count(Math.max(1, Math.round(bytes / 1024)))} KB`;
 	const TYPES: Record<string, string> = {
 		blueprint: 'Blueprint',
 		'blueprint-book': 'Blueprint book',

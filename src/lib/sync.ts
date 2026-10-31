@@ -7,6 +7,7 @@
  * #lib/server/sync.js.
  */
 import type { RenderStages } from './render-stages.js';
+import { formatCount } from '#lib/format.js';
 import type { RunState } from '#lib/server/pipeline/runs.js';
 
 // --- settings
@@ -81,15 +82,18 @@ export function holdBack(o: {
 	what?: string;
 }): string | null {
 	if (o.accepted) return null;
-	const n = (x: number) => x.toLocaleString('en-US');
-	const counts = [`${n(o.added)} new`, `${n(o.removed)} removed`, ...(o.moved ? [`${n(o.moved)} moved`] : [])].join(', ');
+	const counts = [
+		`${formatCount(o.added)} new`,
+		`${formatCount(o.removed)} removed`,
+		...(o.moved ? [`${formatCount(o.moved)} moved`] : [])
+	].join(', ');
 	if (o.known === 0)
 		return o.added + o.removed + (o.moved ?? 0) > 0
 			? `${counts}: a first import; check ${o.what ?? 'the site'}, then accept it to import them`
 			: null;
 	if (o.added + o.removed + (o.moved ?? 0) <= holdLimit(o.maxChange, o.known)) return null;
 	return (
-		`${counts}: more than ${Math.round(o.maxChange * 100)}% (${HOLD_FLOOR} at least) of ${n(o.known)}; ` +
+		`${counts}: more than ${Math.round(o.maxChange * 100)}% (${HOLD_FLOOR} at least) of ${formatCount(o.known)}; ` +
 		`check ${o.what ?? 'the site'}, then accept it if it's right`
 	);
 }
@@ -219,7 +223,6 @@ export interface StepFigures {
 }
 
 /** Bytes as the screenshots step shows them: "156.1 MB". */
-export const megabytes = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
 
 /** The screenshots step's group of one site's images (`From other sites: codex`). */
 export const SITE_SHOTS_GROUP = 'From other sites: ';

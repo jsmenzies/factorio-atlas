@@ -18,7 +18,7 @@ export const fail = (message: string): never => {
 
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-export const n = (x: number) => x.toLocaleString('en-US');
+export { formatCount as n } from '#lib/format.js';
 
 const COMMON = {
 	stage: { type: 'string' },

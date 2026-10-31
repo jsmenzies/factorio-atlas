@@ -2,6 +2,7 @@
  * Pure parts of `bun run backfill` (scripts/backfill.ts): picking a test sample, the rolling rate
  * and ETA, and the status lines shared by the live terminal view and `bun run backfill:status`.
  */
+import { formatCount } from '#lib/format.js';
 import { D1_MONTHLY_ROWS, fullRunEstimate, R2_FREE_CLASS_A, writers } from '#lib/run-estimate.js';
 import { LIVE_STATES, type PipelineRun } from './runs.js';
 
@@ -54,7 +55,7 @@ export const etaSeconds = (left: number, rate: number | null) => (left <= 0 ? 0 
 // ---------------------------------------------------------------------------------------------
 // Formatting
 
-export const fmtInt = (n: number) => Math.round(n).toLocaleString('en-US');
+export const fmtInt = (n: number) => formatCount(Math.round(n));
 
 /** 417k, 1.2M. */
 export const fmtCompact = (n: number) =>

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import type { UploadRunResult } from '../screenshots/run';
 import type { FromUploadsResult } from '../screenshots/uploads';
-import { megabytes } from '#lib/sync.js';
+import { megabytes } from '#lib/format.js';
 import { bucketPut, screenshotBucketDetails } from './screenshot-details';
 
 const uploaded: FromUploadsResult = {

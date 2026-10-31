@@ -14,6 +14,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { closeSync, fstatSync, openSync, readFileSync, readSync, writeSync } from 'node:fs';
 import type { Database } from 'bun:sqlite';
+import { formatCount as count } from '#lib/format.js';
 import { retryBusy } from '#lib/server/admin/busy.js';
 import { OPEN_SYNC_PARAMS, OPEN_SYNC_WHERE, SYNC_RUN_ENV, writeSyncRun } from '#lib/server/sync.js';
 import { LIVE_STATES } from '#lib/server/pipeline/runs.js';
@@ -137,8 +138,6 @@ export interface BackfillResult {
 	unfolded?: number;
 	failures: Record<string, number>;
 }
-
-const count = (x: number) => x.toLocaleString('en-US');
 
 /**
  * The ingest step's summary: what the backfill did to each print. Analysed and failed always show;

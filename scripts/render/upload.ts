@@ -61,6 +61,7 @@ import {
 } from '#lib/viewer/game-render.js';
 import { buildIndex, comparePaths, readSidecar } from './files.js';
 import type { RenderJobRow } from '#lib/server/render-queue.js';
+import { mebibytes as mb } from '#lib/format.js';
 import { isAbort, StoreError, withRetries, type RenderStore, type RetryOptions } from './store.js';
 
 export const UPLOAD_TARGETS = ['local', 'prod'] as const;
@@ -253,7 +254,6 @@ const LISTING_CACHE = 64;
 const ROW_WRITES = 8;
 /** Due deletions read per query. */
 const DUE_BATCH = 1000;
-const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Run `n` workers to the end, every one of them, even after one throws (none is left writing after the caller moved on); then throw the first error. */

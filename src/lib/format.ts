@@ -5,6 +5,14 @@ export const signalName = (signal: string) => {
 	return words.charAt(0).toUpperCase() + words.slice(1);
 };
 
+/** A count with thousands separators, the same everywhere: "18,046". */
+export const formatCount = (n: number) => n.toLocaleString('en-US');
+
+/** Bytes in decimal megabytes (10⁶), one decimal: "156.1 MB". The update's figures and the screenshot logs. */
+export const megabytes = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
+/** Bytes in binary megabytes (2²⁰), still labelled "MB" as the render logs always were: "148.9 MB". */
+export const mebibytes = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
+
 /** The unit rates are shown in: per second (the default) or per minute. Belt speeds are always per second. */
 export type RateUnit = 's' | 'min';
 

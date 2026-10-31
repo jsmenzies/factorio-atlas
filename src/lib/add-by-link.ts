@@ -2,6 +2,7 @@
  * Adding a print by its link on another site (/admin/add, `bun run add`): the one result shape both
  * paths answer with, and its one-line summary. Browser-safe (types only from the server modules).
  */
+import { formatCount as count } from '#lib/format.js';
 import type { AddPostResult } from '#lib/server/pipeline/factoriobin.js';
 
 /** What /admin/add shows: the Worker action's answer, or `bun run add --json`'s last line under `vite dev`. */
@@ -14,8 +15,7 @@ export type AddView = {
 	summary: string;
 } & (AddPostResult | { ok: false; problem: 'error'; message: string });
 
-const kb = (bytes: number) => `${Math.round(bytes / 1024).toLocaleString('en-US')} KB`;
-const count = (x: number) => x.toLocaleString('en-US');
+const kb = (bytes: number) => `${count(Math.round(bytes / 1024))} KB`;
 
 /** One line for a result: ✓ when the gate answered (refusals too), ✗ when the post couldn't be read or the add failed. */
 export const summaryOf = (r: AddPostResult): string => {

@@ -2,13 +2,12 @@
  * Figures the Overview shows for the removals step, the fetch step's record store, the authors step and the render step, built
  * from the scripts' `--json` results and the render run's row. Pure, for tests.
  */
+import { formatCount as n } from '#lib/format.js';
 import type { RenderStages } from '#lib/render-stages.js';
 import { detail, GROUP, ROW, type DetailGroup } from '#lib/sync.js';
 import type { AuthorsResult } from '../authors';
 import type { RecordsResult } from '../records';
 import type { RemovalsResult } from '../removals';
-
-const n = (x: number) => x.toLocaleString('en-US');
 
 /** What this run of `removals` did, then the stage's removed prints so far (its tombstones), labelled as totals. */
 export function removalsDetails(r: RemovalsResult): DetailGroup[] {

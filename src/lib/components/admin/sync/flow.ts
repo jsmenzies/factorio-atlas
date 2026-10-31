@@ -14,6 +14,7 @@
  * (its `options.stages` while the step runs) and the steps' live counts (#lib/sync-progress.js). Pure and
  * browser-safe.
  */
+import { formatCount, megabytes } from '#lib/format.js';
 import type { RenderRun } from '#lib/server/admin/render.js';
 import { stageTotals, type RenderStages, type SiteStages, type ThumbsStage } from '#lib/render-stages.js';
 import type { LogProgress } from '#lib/sync-progress.js';
@@ -23,7 +24,6 @@ import type { Site } from '#lib/print-id.js';
 import {
 	GROUP,
 	groupOf,
-	megabytes,
 	POLLED_SITES,
 	ROW,
 	SITE_SHOTS_GROUP,
@@ -463,7 +463,7 @@ function shotsCell(mode: BoardMode, run: SyncRun | null, site: string, progress:
 const putFacts = (put: { files: number; bytes: number }): Fact[] =>
 	put.files
 		? [
-				{ n: put.files.toLocaleString('en-US'), text: 'files' },
+				{ n: formatCount(put.files), text: 'files' },
 				{ n: megabytes(put.bytes), text: '' }
 			]
 		: [];

@@ -3,11 +3,12 @@
  * rest (Imgur copies) in the stage's bucket group. `screenshots --upload --json` counts both in its totals and
  * the upload images again under `uploads`, so the bucket group takes those out: each file counts once.
  */
-import { detail, GROUP, megabytes, ROW, type DetailGroup, type StepFigures } from '#lib/sync.js';
+import { formatCount, megabytes } from '#lib/format.js';
+import { detail, GROUP, ROW, type DetailGroup, type StepFigures } from '#lib/sync.js';
 import type { UploadRunResult } from '../screenshots/run';
 import type { FromUploadsResult } from '../screenshots/uploads';
 
-const filesPut = (put: number, bytes: number) => (put ? `${put.toLocaleString('en-US')} (${megabytes(bytes)})` : 0);
+const filesPut = (put: number, bytes: number) => (put ? `${formatCount(put)} (${megabytes(bytes)})` : 0);
 
 /** A bucket count, less the upload images' when they have their own group (`uploaded`). */
 const bucketCount = (uploaded: FromUploadsResult | null, bucket: UploadRunResult, key: keyof UploadRunResult['uploads']) =>

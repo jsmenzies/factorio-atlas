@@ -12,9 +12,9 @@ import { pool } from './pace.js';
 import type { StateEntry } from './state.js';
 import { openShotStore } from './store.js';
 import { syncImage } from './upload.js';
+import { megabytes as mb } from '#lib/format.js';
 import { isUploadImage } from '#lib/screenshots.js';
 
-const mb = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
 const secs = (ms: number) => `${Math.round(ms / 1000)}s`;
 
 /** The entries a step works on: `--ids` (Imgur or print ids) narrow them, `--limit` caps them. */

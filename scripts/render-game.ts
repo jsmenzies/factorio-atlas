@@ -195,6 +195,7 @@ import { openTarget, type Target } from './backfill/stage.js';
 import { deleteGraceMs, openStore } from './render/target.js';
 import { createUploader, DELETE_GRACE_MS, hasUploadWork, planPrint, type Uploader, type UploadRow } from './render/upload.js';
 import { thumbsDir } from '#lib/server/renders-dir.js';
+import { mebibytes as mb } from '#lib/format.js';
 import { createThumbStep, THUMB_STEP_MB, type ThumbStep } from './render/thumb-step.js';
 import { createThumbUploader, thumbUploadDb } from './render/thumbs-upload.js';
 import { FLAGS_TIMEOUT_MS, needsPageBump, runStageFlags, withDeadline } from './render/stage-flags.js';
@@ -593,8 +594,6 @@ const preModernFavorites = { prints: 0, pages: 0 };
 let pageDataWritten = 0;
 /** Prints whose index.json listed other pages or stamps than their done rows, rewritten (a plan-only run only counts them). */
 let indexesRepaired = 0;
-
-const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
 
 async function heartbeat() {
 	const t = Date.now();

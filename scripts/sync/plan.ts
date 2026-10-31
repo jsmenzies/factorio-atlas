@@ -3,10 +3,9 @@
  * source, a source whose plan failed included with its error (so the Overview never calls it up to date), and
  * after the fetch the fetched sources level at their new cursors. Pure; sync.ts runs it.
  */
+import { formatCount as n } from '#lib/format.js';
 import type { SourceCursor, SourcePlan, SourceRun } from '#lib/sync.js';
 import type { SourceAdapter } from './mirror';
-
-const n = (x: number) => x.toLocaleString('en-US');
 
 /** The plan of a source that couldn't be checked: nothing new, and why. */
 export const failedPlan = (s: Pick<SourceAdapter, 'site' | 'polled' | 'ingestsItself'>, error: string): SourcePlan => {

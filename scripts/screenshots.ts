@@ -55,6 +55,7 @@ import { decodes } from './screenshots/make.js';
 import { runMake, runUpload } from './screenshots/run.js';
 import { runFromUploads } from './screenshots/uploads.js';
 import { runFromSites } from './screenshots/sites.js';
+import { megabytes as mb } from '#lib/format.js';
 import { IMGUR_ID, isOwnImage } from '#lib/screenshots.js';
 import { fetchImgur, imgurOriginal } from './screenshots/fetch.js';
 import { EXT, kindOfMime, requestExt } from './screenshots/image.js';
@@ -92,7 +93,6 @@ const dir = screenshotsDir(root);
 const stateFile = join(dir, STATE_FILE);
 await mkdir(dir, { recursive: true });
 
-const mb = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
 const duration = (ms: number) => {
 	const s = Math.round(ms / 1000);
 	return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
