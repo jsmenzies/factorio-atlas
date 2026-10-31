@@ -72,7 +72,7 @@
 
 {#if live}
 	<p class="rounded-lg border border-stone-800 bg-stone-900/50 px-4 py-2.5 text-xs text-stone-500">
-		Settings are locked while the update runs (it read them when it started): authors {settings.authors ? `on, ≤ ${int(settings.authorLimit)} Firebase lookups` : 'off'} · screenshots
+		Settings are locked while the update runs (it read them when it started): authors {settings.authors ? 'on' : 'off'} · screenshots
 		{settings.screenshots ? `on, Imgur recheck ${settings.imgurRecheck}` : 'off'} · render {settings.render
 			? `on, top ${int(settings.top)}, ${settings.perUpdate === null ? 'every print with work' : `≤ ${int(settings.perUpdate)} prints`}, ${settings.workers ?? 'default'} threads`
 			: 'off'} · hold back at {Math.round(settings.maxChange * 100)}% · codex {settings.polled.codex.on ? 'on' : 'off'} · fprints {settings.polled.fprints.on ? 'on' : 'off'}
@@ -86,11 +86,6 @@
 				<p class="text-sm font-medium text-stone-100">Name new authors <span class="font-normal text-stone-500">· factorioprints only</span></p>
 				<p class="text-xs text-stone-500">Their records first, then Firebase, once per author, ever.</p>
 			</div>
-			<label class="{lbl} {settings.authors ? '' : 'opacity-50'}">
-				Firebase lookups ≤
-				<input id="authorLimit" type="number" min="1" max="1000" step="1" value={settings.authorLimit} class={field('authorLimit')} oninput={(e) => (settings.authorLimit = numberInput(e) as number)} onchange={() => onchange()} />
-				per update
-			</label>
 			<Toggle bind:checked={settings.authors} label="Name new authors" {onchange} />
 		</div>
 

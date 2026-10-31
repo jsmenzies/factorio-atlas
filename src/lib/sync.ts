@@ -24,9 +24,8 @@ export interface SyncSettings {
 	screenshots: boolean;
 	/** Ask Imgur whether copied screenshots were deleted, at most this often (≈ 75 min for 18k). */
 	imgurRecheck: 'never' | 'weekly';
-	/** Name new authors, asking Firebase about at most `authorLimit` an update. */
+	/** Name new authors: their records first, then Firebase for every author never asked. An old saved `authorLimit` is ignored. */
 	authors: boolean;
-	authorLimit: number;
 	/**
 	 * Hold a source back when its new and removed prints (the mirror's moved files too) in one update are more
 	 * than this share of the prints known from it, and at least HOLD_FLOOR; edits don't count (`holdBack`). A
@@ -104,7 +103,6 @@ export const DEFAULT_SETTINGS: SyncSettings = {
 	screenshots: true,
 	imgurRecheck: 'never',
 	authors: true,
-	authorLimit: 50,
 	maxChange: 0.05,
 	polled: Object.fromEntries(POLLED_SITES.map((p) => [p.site, DEFAULT_POLLED])) as Record<PolledSiteId, PolledSettings>
 };
@@ -136,7 +134,6 @@ export function parseSettings(input: unknown): { settings: SyncSettings; errors:
 		screenshots: pick('screenshots', (v) => (typeof v === 'boolean' ? v : undefined)),
 		imgurRecheck: pick('imgurRecheck', (v) => (v === 'never' || v === 'weekly' ? v : undefined)),
 		authors: pick('authors', (v) => (typeof v === 'boolean' ? v : undefined)),
-		authorLimit: pick('authorLimit', (v) => whole(v, 1, 1000)),
 		maxChange: pick('maxChange', (v) => (typeof v === 'number' && v > 0 && v <= 1 ? v : undefined)),
 		polled: parsePolled(o.polled, errors)
 	};

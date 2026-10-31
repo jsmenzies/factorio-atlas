@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS, estimateRender, parseSettings, HOLD_FLOOR, holdBack, 
 describe('parseSettings', () => {
 	test('nothing stored: the defaults', () => {
 		expect(parseSettings(undefined)).toEqual({ settings: DEFAULT_SETTINGS, errors: [] });
-		expect(DEFAULT_SETTINGS).toMatchObject({ top: 1000, perUpdate: 500, authors: true, authorLimit: 50, maxChange: 0.05 });
+		expect(DEFAULT_SETTINGS).toMatchObject({ top: 1000, perUpdate: 500, authors: true, maxChange: 0.05 });
 	});
 
 	test('valid fields kept, invalid ones named and replaced by the default', () => {

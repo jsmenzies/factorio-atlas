@@ -25,7 +25,7 @@
  *                   backfill, so a blueprint new on factorioprints and on the site in one update joins
  *                   the factorioprints print (its id stays the URL). When it wrote, it pulls the site's
  *                   own prints into the record store, so the render step draws them
- *   4. authors      `authors --stage S --limit <authorLimit>` (Firebase, only authors never asked;
+ *   4. authors      `authors --stage S` (Firebase, only authors never asked;
  *                   factorioprints only); needs ingest
  *   5. screenshots  `screenshots` (new ones from Imgur; weekly `--recheck` if set), `--from-uploads S`
  *                   (approved upload screenshots, from the stage's RAW), `--from-sites S` (images other
@@ -645,7 +645,7 @@ const steps: StepDef[] = [
 		needs: ['ingest'],
 		gate: () => (!settings.authors ? 'turned off in the settings' : !hasSource(MIRROR_SITE) ? 'factorioprints prints only' : null),
 		async run(): Promise<Outcome> {
-			const r = await script(['scripts/authors.ts', '--stage', stage, '--limit', String(settings.authorLimit), '--yes']);
+			const r = await script(['scripts/authors.ts', '--stage', stage, '--yes']);
 			return r.code === 0 ? outcomeOf(r, lastLine(r.tail)) : failed(r);
 		}
 	},

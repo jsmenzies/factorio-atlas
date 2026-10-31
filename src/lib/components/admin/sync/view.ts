@@ -138,7 +138,7 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 			idle: !t.backfill && !t.polled
 		},
 		settings.authors
-			? { id: 'authors', text: `their records first, then Firebase for up to ${int(settings.authorLimit)}` }
+			? { id: 'authors', text: 'their records first, then Firebase for every author never asked' }
 			: { id: 'authors', text: 'off in the settings', idle: true },
 		settings.screenshots
 			? {
