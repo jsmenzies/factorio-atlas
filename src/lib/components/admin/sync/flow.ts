@@ -860,66 +860,24 @@ export function nowSentence(flow: Flow, o: { plan: SyncPlan | null; phase: Updat
 	return 'Up to date: nothing new on any source.';
 }
 
-const STATUS_WORD: Record<SyncStep['status'], string> = {
-	pending: 'Not run yet',
-	running: 'Running',
-	done: 'Done',
-	warning: 'Finished with a warning',
-	failed: 'Failed',
-	skipped: 'Skipped',
-	stopped: 'Stopped'
-};
-
-export interface StepLine {
-	/** Bold, then `rest` after a colon. */
-	lead: string;
-	rest: string;
-	/** A slim bar while the step has a count (0–100), else null. */
-	bar: number | null;
-	tone: 'warn' | 'bad' | null;
-}
-
 /**
- * The detail bar above the board for one step: a slim bar while it has a count, and one sentence (its lead in
- * bold): what it does now, or how it ended.
+ * The top box's thin bar while a step runs: an honest fraction, or null. Render: prints finished of the prints the
+ * run picked (then, after the last page, prints whose thumbnails are done); the fetch and the gate: the running
+ * source's reads or admissions; screenshots: other sites' images copied of those to copy.
  */
-export function stepLine(flow: Flow, step: SyncStep, sentence: string): StepLine {
-	const tone = step.status === 'failed' ? 'bad' : step.status === 'warning' ? 'warn' : null;
-	if (step.status === 'running') {
-		if (step.id === 'render' && flow.renderNow) {
-			const r = flow.renderNow;
-			return {
-				lead: r.label,
-				rest: [...(r.of !== null ? [`${int(r.value ?? 0)} of ${int(r.of)} ${r.unit}`.trim()] : []), ...r.figures].join(' · '),
-				bar: r.of ? pct(r.value ?? 0, r.of) : null,
-				tone: r.warn ? 'warn' : null
-			};
-		}
-		const col: ColumnId | null =
-			step.id === 'fetch' ? 'changes' : step.id === 'ingest' ? 'added' : step.id === 'screenshots' ? 'shots' : null;
-		const bar = col ? (runningIn(flow, col)?.cells[col].bar ?? null) : null;
-		const at = sentence.indexOf(': ');
-		return at > 0
-			? { lead: sentence.slice(0, at), rest: sentence.slice(at + 2), bar, tone: null }
-			: { lead: sentence.replace(/\.$/, ''), rest: '', bar, tone: null };
+export function heroBar(flow: Flow, progress: LogProgress | null): number | null {
+	if (!flow.live) return null;
+	if (flow.current === 'render') {
+		const r = flow.renderNow;
+		return r && r.of ? pct(r.value ?? 0, r.of) : null;
 	}
-	if (step.id === 'render' && step.render) {
-		const t = stageTotals(step.render);
-		const c = step.render.cleanup;
-		const f = step.render.flags;
-		const rest = [
-			`${int(t.prints)} prints`,
-			`${int(t.drawn)} pages drawn`,
-			...(t.uploaded ? [`${int(t.uploaded)} uploaded`] : []),
-			...(t.failed ? [`${int(t.failed)} failed`] : []),
-			...(t.waiting ? [`${int(t.waiting)} left to upload`] : []),
-			...(t.thumbsOf ? [`${int(t.thumbsDone)} prints’ thumbnails`] : []),
-			...(c?.state === 'done' && c.deleted + c.thumbsDeleted ? [`${int(c.deleted + c.thumbsDeleted)} replaced files deleted`] : []),
-			...(f?.state === 'failed' ? [`search flags on ${f.stage} failed`] : f?.state === 'done' ? [`search flags set on ${f.stage}`] : [])
-		];
-		return { lead: STATUS_WORD[step.status], rest: rest.join(' · '), bar: null, tone };
+	const col: ColumnId | null = flow.current === 'fetch' ? 'changes' : flow.current === 'ingest' ? 'added' : null;
+	if (col) return runningIn(flow, col)?.cells[col].bar ?? null;
+	if (flow.current === 'screenshots' && progress?.step === 'screenshots' && progress.shots.toCopy) {
+		const done = Object.values(progress.shots.bySite).reduce((n, s) => n + s.fetched + s.failed, 0);
+		return flow.rows.some((r) => r.cells.shots.kind === 'run' || r.cells.shots.kind === 'part') ? pct(done, progress.shots.toCopy) : null;
 	}
-	return { lead: STATUS_WORD[step.status], rest: step.summary ?? '', bar: null, tone };
+	return null;
 }
 
 export const STEP_IDS = SYNC_STEPS.map((s) => s.id);

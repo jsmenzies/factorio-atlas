@@ -1,33 +1,18 @@
 <script lang="ts">
 	import { stepLabel, SYNC_STEPS, type SyncRun, type SyncStepId } from '#lib/sync.js';
 	import { duration } from '../metrics.js';
-	import { stepLine, type Flow } from './flow.js';
 	import StepList from './StepList.svelte';
 	import { STEP_MARK, type PreviewStep } from './view.js';
 
 	/**
-	 * The update's seven steps in a row, the running one pulsing. A step opens its detail bar below: one slim bar
-	 * while it has a count and one sentence (what it does now, or how it ended; the board shows the figures per
-	 * source), its time and render run link, and its recorded figures folded away; or with no update to show,
-	 * what it would do now. Opens by itself on the running step, else on the first that failed or needs a look.
+	 * The update's seven steps in a row, the running one pulsing. The board below shows the figures per source; a
+	 * step (clicked, or Enter/Space on it) opens its own in a small panel under the strip: how it ended, its time
+	 * and render run link, every figure it recorded (the only place for steps with no board column: removals and
+	 * the site's counts), and with no update running, what it would do now. One open at a time, none by default.
 	 */
-	let {
-		run,
-		live,
-		preview,
-		now,
-		flow,
-		sentence
-	}: { run: SyncRun | null; live: boolean; preview: PreviewStep[]; now: number; flow: Flow; sentence: string } = $props();
+	let { run, live, preview, now }: { run: SyncRun | null; live: boolean; preview: PreviewStep[]; now: number } = $props();
 
-	let picked = $state<SyncStepId | null | undefined>(undefined);
-	// Live: the running step; else the first that failed or needs a look.
-	const auto = $derived(
-		live
-			? (run?.steps.find((s) => s.status === 'running')?.id ?? null)
-			: (run?.steps.find((s) => s.status === 'failed' || s.status === 'warning')?.id ?? null)
-	);
-	const open = $derived(picked === undefined ? auto : picked);
+	let open = $state<SyncStepId | null>(null);
 	const steps = $derived(SYNC_STEPS.map(({ id }, i) => ({ id, i, step: run?.steps.find((s) => s.id === id) ?? null, plan: preview.find((p) => p.id === id) })));
 	const openStep = $derived(steps.find((s) => s.id === open));
 </script>
@@ -41,9 +26,10 @@
 				<button
 					type="button"
 					aria-expanded={open === s.id}
-					onclick={() => (picked = open === s.id ? null : s.id)}
+					aria-controls="step-panel"
+					onclick={() => (open = open === s.id ? null : s.id)}
 					title={[s.step?.summary, !live && s.plan ? `Next update: ${s.plan.text}` : ''].filter(Boolean).join('\n')}
-					class="group flex w-full flex-col items-center gap-1 rounded-md px-1 pt-0.5 pb-1 text-center {open === s.id ? 'bg-stone-800/60' : 'hover:bg-stone-900'}"
+					class="group flex w-full flex-col items-center gap-1 rounded-md px-1 pt-0.5 pb-1 text-center focus-visible:outline-2 focus-visible:outline-amber-400 {open === s.id ? 'bg-stone-800/60' : 'hover:bg-stone-900'}"
 				>
 					<span class="dot grid size-7 place-items-center rounded-full border text-xs font-bold {mark && status !== 'running' ? mark.class : 'border-stone-700 bg-stone-900 text-stone-400'}">
 						{#if status === 'running'}<span class="spinner" aria-label="Running"></span>{:else if mark?.mark}{mark.mark}{:else}{s.i + 1}{/if}
@@ -57,45 +43,26 @@
 		{/each}
 	</ol>
 	{#if openStep}
-		<div class="rounded-lg border border-stone-800 bg-stone-900/50 px-3 py-2">
+		<div id="step-panel" class="rounded-lg border border-stone-800 bg-stone-900/50 px-3 py-2 text-sm" role="region" aria-label="{stepLabel(openStep.id)}: its figures">
 			{#if openStep.step}
 				{@const s = openStep.step}
-				{@const mark = STEP_MARK[s.status]}
-				{@const line = stepLine(flow, s, sentence)}
-				<div class="flex items-start gap-3">
-					<span class="mt-0.5 grid size-6 shrink-0 place-items-center rounded-md text-xs font-bold {s.status === 'running' ? 'bg-amber-500/15' : mark.class}" title={mark.label}>
-						{#if s.status === 'running'}<span class="spinner" aria-label="Running"></span>{:else}{mark.mark}{/if}
+				<p class="flex flex-wrap items-baseline justify-between gap-x-3">
+					<span class="font-medium text-stone-100">{stepLabel(s.id)} <span class="font-normal text-stone-500">· {STEP_MARK[s.status].label.toLowerCase()}</span></span>
+					<span class="text-xs whitespace-nowrap text-stone-500 tabular-nums">
+						{#if s.startedAt && (s.finishedAt || s.status === 'running')}{duration((s.finishedAt ?? now) - s.startedAt)}{/if}
+						{#if s.id === 'render' && s.runId}
+							· <a href="/admin/render/{s.runId}" class="text-stone-400 underline decoration-stone-600 hover:text-amber-300">render run</a>
+						{/if}
 					</span>
-					<div class="min-w-0 flex-1">
-						<p class="flex flex-wrap items-baseline justify-between gap-x-3">
-							<span class="text-sm font-medium text-stone-100">{stepLabel(s.id)}</span>
-							<span class="text-xs whitespace-nowrap text-stone-500 tabular-nums">
-								{#if s.startedAt && (s.finishedAt || s.status === 'running')}{duration((s.finishedAt ?? now) - s.startedAt)}{/if}
-								{#if s.id === 'render' && s.runId}
-									· <a href="/admin/render/{s.runId}" class="text-stone-400 underline decoration-stone-600 hover:text-amber-300">render run</a>
-								{/if}
-							</span>
-						</p>
-						{#if line.bar !== null}
-							<div class="mt-1.5 h-[5px] overflow-hidden rounded-full bg-stone-800" aria-hidden="true">
-								<div class="h-full bg-amber-500 transition-[width] duration-500" style="width: {line.bar}%"></div>
-							</div>
-						{/if}
-						<p class="mt-1 text-xs break-words tabular-nums {line.tone === 'bad' ? 'text-rose-300' : line.tone === 'warn' ? 'text-amber-200' : 'text-stone-400'}">
-							<b class="font-semibold text-stone-200">{line.lead}</b>{line.rest ? `: ${line.rest}` : ''}
-						</p>
-						{#if s.details?.length && s.status !== 'running'}
-							<details class="mt-1 text-xs text-stone-500">
-								<summary class="cursor-pointer select-none hover:text-stone-300">All its figures</summary>
-								<StepList steps={[s]} {now} bare />
-							</details>
-						{/if}
-					</div>
-				</div>
+				</p>
+				{#if s.summary}
+					<p class="mt-0.5 text-xs break-words {s.status === 'failed' ? 'text-rose-300' : s.status === 'warning' ? 'text-amber-200' : 'text-stone-400'}">{s.summary}</p>
+				{/if}
+				{#if s.details?.length}<StepList steps={[s]} {now} bare />{/if}
 			{/if}
 			{#if !live && openStep.plan}
 				<!-- What this step would do in an update started now (the last check and the settings on the page). -->
-				<p class="text-sm text-stone-400 {openStep.step ? 'mt-2 border-t border-stone-800 pt-1.5' : ''}">
+				<p class="text-stone-400 {openStep.step ? 'mt-2 border-t border-stone-800 pt-1.5' : ''}">
 					<span class="text-stone-200">{openStep.step ? 'Next update' : stepLabel(openStep.id)}:</span>
 					{openStep.plan.text}
 				</p>

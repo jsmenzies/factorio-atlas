@@ -21,6 +21,7 @@
 		union,
 		sentence,
 		logTail,
+		bar = null,
 		now,
 		timeZone,
 		message
@@ -33,6 +34,8 @@
 		sentence: string;
 		/** The log's last lines while an update runs. */
 		logTail: string | null;
+		/** While a step runs and has an honest fraction (flow.ts heroBar), its progress 0–100: a thin bar under the sentence. */
+		bar?: number | null;
 		now: number;
 		timeZone: string;
 		message?: string;
@@ -160,6 +163,11 @@
 						Checking the sources…
 					{/if}
 				</p>
+				{#if live && bar !== null}
+					<div class="mt-2 h-1 max-w-xl overflow-hidden rounded-full bg-stone-800" role="progressbar" aria-label="Progress of this step" aria-valuemin="0" aria-valuemax="100" aria-valuenow={bar}>
+						<div class="h-full bg-amber-500 transition-[width] duration-500" style="width: {bar}%"></div>
+					</div>
+				{/if}
 				{#if run && !live && phase !== 'crashed'}
 					<p class="mt-0.5 text-xs text-stone-500">
 						<a href="/admin" class="underline decoration-stone-700 hover:text-amber-300">Last update</a>: {run.state}

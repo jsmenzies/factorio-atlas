@@ -3,7 +3,7 @@ import type { RenderStages } from '#lib/render-stages.js';
 import type { RenderRun } from '#lib/server/admin/render.js';
 import { logProgress } from '#lib/sync-progress.js';
 import { SITE_SHOTS_GROUP, type SourcePlan, type SyncPlan, type SyncRun, type SyncStep } from '#lib/sync.js';
-import { buildFlow, COLUMNS, nowSentence, renderNow, stepLine, type Cell, type Flow } from './flow';
+import { buildFlow, COLUMNS, heroBar, nowSentence, renderNow, type Cell, type Flow } from './flow';
 import finished from './flow.fixture.json';
 
 // The update of 2026-10-30 (12:00Z): codex 431 and fprints 407 read and admitted, 3 codex records failed, the
@@ -232,12 +232,8 @@ describe('the board while an update runs', () => {
 		expect(f.caption).toEqual({ lead: 'This update', rest: '· step 2 of 7' });
 		const sentence = nowSentence(f, { plan: BEFORE, phase: 'running' });
 		expect(sentence).toBe('Reading fprints: 180 of 407, about one a second.');
-		expect(stepLine(f, mid().steps[1], sentence)).toEqual({
-			lead: 'Reading fprints',
-			rest: '180 of 407, about one a second.',
-			bar: 44,
-			tone: null
-		});
+		// The top box's bar: the reading source's fraction.
+		expect(heroBar(f, null)).toBe(44);
 	});
 
 	test('the gate: one source at a time; the one being added runs, the next waits its turn', () => {
@@ -351,6 +347,7 @@ describe('render per source', () => {
 		expect(f.shared.cleanup.kind).toBe('wait');
 		expect(f.renderNow).toMatchObject({ phase: 'drawing', value: 86, of: 103 });
 		expect(nowSentence(f, { plan: BEFORE, phase: 'running' })).toBe('Drawing prints: 86 of 103.');
+		expect(heroBar(f, null)).toBe(83);
 	});
 
 	test('a render run from before this step isn’t this update’s', () => {
@@ -366,13 +363,11 @@ describe('render per source', () => {
 			latestRender: renderRow({ options: { phase: 'thumbnails', thumbs: { done: 80, of: 103 } } })
 		});
 		expect(thumbs.renderNow).toMatchObject({ label: 'Making and uploading thumbnails', value: 80, of: 103 });
-		const step = inRender().steps.find((s) => s.id === 'render')!;
-		expect(stepLine(thumbs, step, '')).toEqual({
-			lead: 'Making and uploading thumbnails',
-			rest: '80 of 103 prints · 3,522 pages drawn · 2,492 uploaded · 10 failed',
-			bar: 78,
-			tone: null
-		});
+		// The top box's bar: prints finished (thumbnails done) of those picked.
+		expect(heroBar(thumbs, null)).toBe(78);
+		expect(
+			heroBar(flowOf({ run: inRender(), phase: 'running', latestRender: renderRow({ options: { phase: 'deletions' } }) }), null)
+		).toBeNull();
 		expect(renderNow(renderRow({ options: { phase: 'deletions' } })).sentence).toBe('Removing replaced files from the bucket.');
 		expect(
 			renderNow(renderRow({ options: { phase: 'flags', stages: stages({ flags: { state: 'running', stage: 'prod' } }) } })).sentence
@@ -435,11 +430,8 @@ describe('render per source', () => {
 		expect(said(f.shared.flags)).toBe('done · 102 rows written · cache bumped');
 		expect(f.shared.summary.title).toBe('One run · 59 min');
 		expect(f.rendering).toBe(false);
-		expect(stepLine(f, step, '')).toMatchObject({
-			lead: 'Finished with a warning',
-			rest: '103 prints · 3,629 pages drawn · 3,195 uploaded · 10 failed · 434 left to upload · 97 prints’ thumbnails · 186 replaced files deleted · search flags set on prod',
-			tone: 'warn'
-		});
+		// Finished: no bar in the top box.
+		expect(heroBar(f, null)).toBeNull();
 	});
 
 	test('a site only the render drew gets a row of its own', () => {

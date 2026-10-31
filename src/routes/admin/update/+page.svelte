@@ -7,7 +7,7 @@
 	import FlowSettings from '#lib/components/admin/sync/FlowSettings.svelte';
 	import FlowStrip from '#lib/components/admin/sync/FlowStrip.svelte';
 	import UpdateBox from '#lib/components/admin/sync/UpdateBox.svelte';
-	import { buildFlow, nowSentence } from '#lib/components/admin/sync/flow.js';
+	import { buildFlow, heroBar, nowSentence } from '#lib/components/admin/sync/flow.js';
 	import { previewSteps, updateState } from '#lib/components/admin/sync/view.js';
 	import type { LogProgress } from '#lib/sync-progress.js';
 	import type { SyncSettings } from '#lib/sync.js';
@@ -157,8 +157,8 @@
 				A render run started by hand is live (<a href="/admin/render" class="underline">Render runs</a>): an update can't start until it ends.
 			</p>
 		{/if}
-		<UpdateBox bind:this={box} {run} {plan} settings={draft} union={view.scopes.union} {sentence} {logTail} now={clock.now} timeZone={data.timeZone} {message} />
-		<FlowStrip {run} live={live || phase === 'crashed'} {preview} now={clock.now} {flow} {sentence} />
+		<UpdateBox bind:this={box} {run} {plan} settings={draft} union={view.scopes.union} {sentence} {logTail} bar={flow ? heroBar(flow, progress) : null} now={clock.now} timeZone={data.timeZone} {message} />
+		<FlowStrip {run} live={live || phase === 'crashed'} {preview} now={clock.now} />
 		<FlowBoard {flow} bind:settings={draft} onchange={saveSettings} onaccepted={() => void box?.check()} figures={view.figures?.value ?? null} now={clock.now} timeZone={data.timeZone} />
 		<FlowSettings bind:settings={draft} {live} union={view.scopes.union} modern={view.scopes.modern.total} errors={save.errors} onchange={saveSettings} />
 		<p class="text-xs text-stone-500">
