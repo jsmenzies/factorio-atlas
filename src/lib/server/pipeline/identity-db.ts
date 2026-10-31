@@ -144,6 +144,17 @@ export const lostSources = async (db: D1Database, site: Site): Promise<string[]>
 			.all<{ site_id: string }>()
 	).results.map((r) => r.site_id);
 
+/** A site's ids that are a source of a live print (add-record.ts `knownSource` for every id at once). */
+export const liveSourceIds = async (db: D1Database, site: Site): Promise<Set<string>> =>
+	new Set(
+		(
+			await db
+				.prepare(`SELECT s.site_id AS site_id FROM print_sources s JOIN prints p ON p.id = s.print_id WHERE s.site = ?`)
+				.bind(site)
+				.all<{ site_id: string }>()
+		).results.map((r) => r.site_id)
+	);
+
 /**
  * `sources` as they will be once `source` is written for `printId` (`identityStatements`: attached and
  * live again), for a document written before that batch.

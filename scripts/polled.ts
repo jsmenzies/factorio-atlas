@@ -36,7 +36,7 @@ import { join, resolve } from 'node:path';
 import { Effect, Layer } from 'effect';
 import { printIdFor } from '#lib/print-id.js';
 import { addRecord } from '#lib/server/pipeline/add-record.js';
-import { lostSources } from '#lib/server/pipeline/identity-db.js';
+import { liveSourceIds, lostSources } from '#lib/server/pipeline/identity-db.js';
 import { OFFLINE_MAX_INFLATED_BYTES } from '#lib/server/pipeline/decode.js';
 import { RawStoreR2 } from '#lib/server/pipeline/raw-store.js';
 import { PrintRepository, PrintRepositoryD1 } from '#lib/server/pipeline/repository.js';
@@ -49,7 +49,7 @@ import { pullSite, type PullCounts } from './records/pull';
 import { confirmProd, jsonScript, n, parseStageArgs, requireSchema } from './stage-command';
 import { openStageGate } from './sync/gate-env';
 import { otherLiveUpdate } from './sync/local-db';
-import { admissionWork, inboxDir, readLedger, readState, writeLedger, writeState } from './sync/polled';
+import { admissionWork, inboxDir, readLedger, readState, retriedAs, writeLedger, writeState } from './sync/polled';
 import { progress } from './sync/progress';
 
 const USAGE = 'usage: bun run polled --stage local|prod --site <site> [--dir DIR] [--dry-run] [--force] [--yes] [--json]';
@@ -169,6 +169,8 @@ try {
 	// Records whose print a failed hand-over purged (gate.ts sourceGone): through the gate again, whatever the ledger says.
 	const lost = (await lostSources(db, site)).filter((id) => state.records[id]);
 	const work = admissionWork(state, ledger, Boolean(flags.force), lost);
+	// What the stage had before any try below wrote (retriedAs).
+	const knownBefore = work.records.length ? await liveSourceIds(db, site) : new Set<string>();
 	result.waiting = work.records.length;
 	result.goneWaiting = work.gone.length;
 	progress({ t: 'admit', site, records: work.records.length });
@@ -227,6 +229,10 @@ try {
 		for (let attempt = 1; attempt <= TRIES; attempt++) {
 			try {
 				({ outcome, note } = await admitOne(printId));
+				if (attempt > 1 && (outcome === 'updated' || outcome === 'unchanged')) {
+					const was = retriedAs(knownBefore.has(siteId), note, printId);
+					if (was) ({ outcome, note } = { outcome: was, note: was === 'new' ? '' : note });
+				}
 				ledger.records[siteId] = rev;
 				break;
 			} catch (e) {
@@ -242,6 +248,8 @@ try {
 					break;
 				}
 				if (attempt === TRIES) break;
+				// Indented, so sync-progress.ts's RECORD line doesn't read it as an outcome.
+				say(`  ${site}/${siteId}: try ${attempt} of ${TRIES} failed (${note}), trying again`);
 				await new Promise((r) => setTimeout(r, 500 * attempt + Math.random() * 500));
 			}
 		}

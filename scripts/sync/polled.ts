@@ -297,6 +297,14 @@ export const admissionWork = (state: PollState, ledger: AdmittedLedger, force = 
 	};
 };
 
+/**
+ * What a retried admission's 'already' (`updated` or `unchanged`) really was: a try that threw may have written
+ * the print first, so for a source the stage didn't have before the first try it is that try's work: 'new' when
+ * the print is the record's own, else 'joined'. null when the source was known before (a real 'already').
+ */
+export const retriedAs = (knownBefore: boolean, printId: string, ownPrintId: string): 'new' | 'joined' | null =>
+	knownBefore ? null : printId === ownPrintId ? 'new' : 'joined';
+
 // --- plan
 
 /**

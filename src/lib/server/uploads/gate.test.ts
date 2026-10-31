@@ -8,7 +8,7 @@ import { analysisKey } from '../pipeline/print-doc';
 import { d1FromSqlite } from '../pipeline/d1-sqlite';
 import { addRecord } from '../pipeline/add-record';
 import { admitRecord } from '../pipeline/admit';
-import { lostSources } from '../pipeline/identity-db';
+import { liveSourceIds, lostSources } from '../pipeline/identity-db';
 import { pipelineLayer } from '../pipeline/layers';
 import { ingestRecord } from '../pipeline/pipeline';
 import { fromFactorioprints, fromPipelineText, toPipelineText, type SourceRecord } from '../pipeline/source-record';
@@ -310,14 +310,19 @@ describe('uploads through the real gate', () => {
 		// Joined, but its record never archived: the hand-over can't read it.
 		await Effect.runPromise(Effect.provide(ingestRecord(codex, admitted), pipelineLayer(s.env)));
 		expect(await lostSources(s.db, 'codex')).toEqual([]);
+		expect([...(await liveSourceIds(s.db, 'codex'))]).toEqual(['7']);
 		expect(await deleteUpload(s.deps(), ada.id, printId)).toBe(true);
 		expect(s.one('SELECT 1 AS hit FROM prints WHERE id = ?', printId)).toBeNull();
 		expect(await lostSources(s.db, 'codex')).toEqual(['7']);
+		expect([...(await liveSourceIds(s.db, 'codex'))]).toEqual([]);
 		expect(await lostSources(s.db, 'upload')).toEqual([siteIdOf(printId)]);
 		// The site's next admission (scripts/polled.ts) sends it through the gate again.
 		expect(await addRecord(s.env, codex, { update: true })).toMatchObject({ status: 'new', printId: 'codex-7' });
 		expect(s.one('SELECT title FROM prints WHERE id = ?', 'codex-7')).toEqual({ title: 'Belts on codex' });
 		expect(await lostSources(s.db, 'codex')).toEqual([]);
+		expect([...(await liveSourceIds(s.db, 'codex'))]).toEqual(['7']);
+		// A retry of that admission (a try that wrote, then threw) finds its own print: polled.ts counts it new (retriedAs).
+		expect(await addRecord(s.env, codex, { update: true })).toMatchObject({ status: 'already', printId: 'codex-7' });
 	});
 
 	test('a rename reaches the account’s uploads; until it has, nobody else can take the old name', async () => {

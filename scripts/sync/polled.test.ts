@@ -11,6 +11,7 @@ import {
 	PoliteHttp,
 	planPoll,
 	readState,
+	retriedAs,
 	type Fetched,
 	type ListedPrint,
 	type PolledSite,
@@ -333,6 +334,14 @@ describe('polled sites: fetch', () => {
 });
 
 describe('polled sites: admission work', () => {
+	test('a retry that finds the print an earlier try wrote counts as that try: new or joined', () => {
+		expect(retriedAs(false, 'codex-7', 'codex-7')).toBe('new');
+		expect(retriedAs(false, '-Kabc', 'codex-7')).toBe('joined');
+		// The source was there before the first try: a real 'already' (updated or unchanged).
+		expect(retriedAs(true, 'codex-7', 'codex-7')).toBeNull();
+		expect(retriedAs(true, '-Kabc', 'codex-7')).toBeNull();
+	});
+
 	test("records at a revision the stage wasn't given, and gone prints it had", () => {
 		const state: PollState = {
 			...emptyState(),
