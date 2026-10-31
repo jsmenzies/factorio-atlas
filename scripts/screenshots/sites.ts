@@ -51,7 +51,39 @@ export interface SitesPlan {
 	dead: number;
 	/** Removed since (a takedown): never copied again. */
 	removed: number;
+	/** The same, per site (the image id's prefix): the update's per-source Screenshots cells. */
+	bySite: Record<string, SiteImageCounts>;
 }
+
+/** One site's images in a `--from-sites` run. */
+export interface SiteImageCounts {
+	shown: number;
+	alreadyCopied: number;
+	dead: number;
+	removed: number;
+	toFetch: number;
+	fetched: number;
+	newlyDead: number;
+	maybeDead: number;
+	failed: number;
+}
+
+/** The site an image id belongs to: `codex.<hex>` → codex. */
+export const imageSite = (id: string) => id.slice(0, Math.max(0, id.indexOf('.'))) || 'other';
+
+const noImages = (): SiteImageCounts => ({
+	shown: 0,
+	alreadyCopied: 0,
+	dead: 0,
+	removed: 0,
+	toFetch: 0,
+	fetched: 0,
+	newlyDead: 0,
+	maybeDead: 0,
+	failed: 0
+});
+/** `bySite[site]`, made when missing. */
+export const siteCounts = (bySite: Record<string, SiteImageCounts>, id: string) => (bySite[imageSite(id)] ??= noImages());
 
 /** Which images still need copying. Pure. */
 export function planSiteImages(
@@ -59,13 +91,24 @@ export function planSiteImages(
 	state: ReadonlyMap<string, StateEntry>,
 	hasFile: (e: StateEntry) => boolean
 ): SitesPlan {
-	const plan: SitesPlan = { todo: [], done: 0, dead: 0, removed: 0 };
+	const plan: SitesPlan = { todo: [], done: 0, dead: 0, removed: 0, bySite: {} };
 	for (const s of shown) {
 		const e = state.get(s.id);
-		if (e?.status === 'removed') plan.removed++;
-		else if (e?.status === 'dead') plan.dead++;
-		else if (e?.status === 'fetched' && hasFile(e)) plan.done++;
-		else plan.todo.push(s);
+		const site = siteCounts(plan.bySite, s.id);
+		site.shown++;
+		if (e?.status === 'removed') {
+			plan.removed++;
+			site.removed++;
+		} else if (e?.status === 'dead') {
+			plan.dead++;
+			site.dead++;
+		} else if (e?.status === 'fetched' && hasFile(e)) {
+			plan.done++;
+			site.alreadyCopied++;
+		} else {
+			plan.todo.push(s);
+			site.toFetch++;
+		}
 	}
 	return plan;
 }
@@ -172,6 +215,8 @@ export interface FromSitesResult {
 	/** Answered 404 for the first time: not a failure, asked again next run (dead if it answers so again). */
 	maybeDead: number;
 	failed: number;
+	/** The same per site (`codex`, `fprints`); absent from runs before it. */
+	bySite?: Record<string, SiteImageCounts>;
 }
 
 export async function runFromSites(dir: string, stateFile: string, entries: Map<string, StateEntry>, args: ShotArgs): Promise<number> {
@@ -256,11 +301,22 @@ export async function runFromSites(dir: string, stateFile: string, entries: Map<
 					entry = settle('failed', e instanceof Error ? e.message : String(e));
 				}
 				appendFileSync(stateFile, formatEntry(entry));
-				if (entry.status === 'fetched') fetched++;
-				else if (entry.status === 'dead') newlyDead++;
+				const site = siteCounts(plan.bySite, s.id);
+				if (entry.status === 'fetched') {
+					fetched++;
+					site.fetched++;
+				} else if (entry.status === 'dead') {
+					newlyDead++;
+					site.newlyDead++;
+				}
 				// A first 404 is not a failure of the run: the image is maybe dead, asked once more next run.
-				else if (entry.reason?.endsWith('(dead if again next run)')) maybeDead++;
-				else failed.push(`${entry.id}: ${entry.reason}`);
+				else if (entry.reason?.endsWith('(dead if again next run)')) {
+					maybeDead++;
+					site.maybeDead++;
+				} else {
+					failed.push(`${entry.id}: ${entry.reason}`);
+					site.failed++;
+				}
 				console.log(`screenshots: ${s.id} (${s.prints[0]}): ${entry.status}${entry.reason ? ` (${entry.reason})` : ''}`);
 			}
 			console.log(
@@ -280,7 +336,8 @@ export async function runFromSites(dir: string, stateFile: string, entries: Map<
 					fetched,
 					newlyDead,
 					maybeDead,
-					failed: failed.length
+					failed: failed.length,
+					bySite: plan.bySite
 				} satisfies FromSitesResult)
 			);
 		return failed.length ? 1 : 0;

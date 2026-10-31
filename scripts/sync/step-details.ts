@@ -1,7 +1,8 @@
 /**
- * Figures the Overview shows for the removals step and the fetch step's record store, built from the
- * scripts' `--json` results. Pure, for tests.
+ * Figures the Overview shows for the removals step, the fetch step's record store and the render step, built
+ * from the scripts' `--json` results and the render run's row. Pure, for tests.
  */
+import type { RenderStages } from '#lib/render-stages.js';
 import { detail, type DetailGroup } from '#lib/sync.js';
 import type { RecordsResult } from '../records';
 import type { RemovalsResult } from '../removals';
@@ -85,4 +86,83 @@ export function recordStoreFetch(store: RecordsResult, polled: readonly string[]
 			]
 		}
 	};
+}
+
+/** The render run's row, as the render step reads it. */
+export interface RenderRowCounts {
+	prints_total: number;
+	prints_rendered: number;
+	rendered: number;
+	failed: number;
+	uploaded: number;
+	uploads_pending: number;
+}
+
+/** A site's name for people: the upload site is "uploads", as on the board. */
+const siteName = (site: string) => (site === 'upload' ? 'uploads' : site);
+
+/**
+ * The render step's figures: the run as a whole, then each source's stages, its clean up and search flags
+ * (from `options.stages`; rows from before them have only the first group).
+ */
+export function renderStageDetails(row: RenderRowCounts, stages: RenderStages | null): DetailGroup[] {
+	const any = row.prints_total > 0;
+	const groups: DetailGroup[] = [
+		{
+			title: 'This run',
+			rows: [
+				{ label: 'prints with work', value: row.prints_total },
+				...detail('pages drawn', row.rendered, { always: any }),
+				...detail('prints drawn', row.prints_rendered),
+				...detail('pages uploaded', row.uploaded, { always: any }),
+				...detail('failed', row.failed, { always: any, tone: 'bad' }),
+				...detail('uploads left for the next update', row.uploads_pending, { tone: 'warn' })
+			]
+		}
+	];
+	if (!stages) return groups;
+	for (const [site, s] of Object.entries(stages.sites)) {
+		if (!s) continue;
+		groups.push({
+			title: `Render: ${siteName(site)}`,
+			rows: [
+				...detail('prints', s.plan.prints, { always: true }),
+				...detail('pages to draw', s.plan.queued),
+				...detail('unchanged', s.plan.unchanged),
+				...detail('skipped', s.plan.skipped),
+				...detail('drawn', s.draw.drawn),
+				...detail('failed', s.plan.failed + s.draw.failed, { tone: 'bad' }),
+				...detail('uploaded', s.upload?.pages),
+				...detail('waiting to upload', s.upload?.waiting, { tone: 'warn' }),
+				...(s.thumbs?.of ? [{ label: 'thumbnails', value: `${n(s.thumbs.done)} of ${n(s.thumbs.of)} prints` }] : [])
+			]
+		});
+	}
+	const c = stages.cleanup;
+	if (c)
+		groups.push({
+			title: 'Clean up',
+			rows: [
+				...detail('replaced files deleted', c.deleted + c.thumbsDeleted, { always: c.state === 'done' }),
+				...detail('kept (used again)', c.kept),
+				...detail('failed', c.failed, { tone: 'bad' }),
+				...detail('still in their grace period', c.pending),
+				...(c.state === 'skipped' ? [{ label: 'at the end', value: 'not run (stopped)', muted: true }] : [])
+			]
+		});
+	const f = stages.flags;
+	if (f)
+		groups.push({
+			title: `Search flags on ${f.stage}`,
+			rows:
+				f.state === 'failed'
+					? [{ label: 'failed', value: f.error ?? 'unknown error', tone: 'bad' }]
+					: f.state === 'done'
+						? [
+								...detail('rows written', f.rowsWritten ?? 0, { always: true }),
+								...(f.bumped ? [{ label: 'page cache', value: 'bumped' }] : [])
+							]
+						: [{ label: 'state', value: f.state }]
+		});
+	return groups;
 }

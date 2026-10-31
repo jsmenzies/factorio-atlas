@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { toPipelineText, type SourceRecord } from '#lib/server/pipeline/source-record.js';
 import { allowedImageUrl, imageUrlOf, MAX_IMAGE_BYTES, siteImage } from './site-images.js';
-import { imageFetcher, planSiteImages, siteImageEntry } from './sites.js';
+import { imageFetcher, imageSite, planSiteImages, siteImageEntry } from './sites.js';
 import type { StateEntry } from './state.js';
 
 // A 3 × 2 PNG header (IHDR) is all the entry reads.
@@ -94,6 +94,21 @@ describe('site images', () => {
 		const plan = planSiteImages(shown, state, (e) => e.file === 'originals/co/a.png');
 		expect([plan.done, plan.dead, plan.removed]).toEqual([1, 1, 1]);
 		expect(plan.todo.map((s) => s.id)).toEqual(['codex.dddddddddddddddd', 'codex.eeeeeeeeeeeeeeee']);
+		expect(plan.bySite).toEqual({
+			codex: { shown: 5, alreadyCopied: 1, dead: 1, removed: 1, toFetch: 2, fetched: 0, newlyDead: 0, maybeDead: 0, failed: 0 }
+		});
+		// Per site by the id's prefix: each site's own counts, adding up to the plan's.
+		const mixed = planSiteImages(
+			[...shown.slice(3), { id: 'fprints.ffffffffffffffff', prints: ['fprints-1'], rawKey: 'fprints/1.json' }],
+			state,
+			() => true
+		);
+		expect(Object.fromEntries(Object.entries(mixed.bySite).map(([k, v]) => [k, [v.shown, v.toFetch]]))).toEqual({
+			codex: [2, 2],
+			fprints: [1, 1]
+		});
+		expect(imageSite('codex.aaaaaaaaaaaaaaaa')).toBe('codex');
+		expect(imageSite('nodot')).toBe('other');
 		expect(siteImageEntry({ id: 'codex.eeeeeeeeeeeeeeee', prints: ['codex-1'] }, PNG, 'now')).toMatchObject({
 			status: 'fetched',
 			file: 'originals/co/codex.eeeeeeeeeeeeeeee.png',

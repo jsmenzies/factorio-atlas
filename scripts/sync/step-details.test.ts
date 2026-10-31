@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test';
 import type { RecordsResult } from '../records';
 import type { RemovalsResult } from '../removals';
-import { recordStoreFetch, removalsDetails, removalsSummary } from './step-details';
+import type { RenderStages } from '#lib/render-stages.js';
+import { recordStoreFetch, removalsDetails, removalsSummary, renderStageDetails } from './step-details';
 
 /** The removals result of update 2026-10-30T11:44:34Z-u3og: nothing to do, 2 tombstones on prod (1 a takedown). */
 const quietRemovals: RemovalsResult = {
@@ -123,4 +124,60 @@ test("a polled site the fetch's record store changed is named", () => {
 		{ label: 'removed', value: 1 },
 		{ label: 'fprints', value: 'new prints counted in the ingest step', muted: true }
 	]);
+});
+
+test('the render step: the run as a whole, then each source, its clean up and its search flags', () => {
+	const row = { prints_total: 3, prints_rendered: 2, rendered: 12, failed: 1, uploaded: 14, uploads_pending: 0 };
+	// Rows from before stages: only the run's own figures, "pages uploaded" (they are pages, not files).
+	const old = renderStageDetails(row, null);
+	expect(old.length).toBe(1);
+	expect(old[0].rows.map((r) => [r.label, r.value])).toEqual([
+		['prints with work', 3],
+		['pages drawn', 12],
+		['prints drawn', 2],
+		['pages uploaded', 14],
+		['failed', 1]
+	]);
+	const stages: RenderStages = {
+		v: 1,
+		at: 0,
+		sites: {
+			codex: {
+				plan: { prints: 2, pages: 15, queued: 11, unchanged: 3, skipped: 1, failed: 0 },
+				draw: { drawn: 10, failed: 1, left: 0, printsDone: 2, printsDrawn: 2 },
+				upload: { pages: 12, files: 300, bytes: 9, waiting: 0, failing: 0 },
+				thumbs: { done: 2, of: 2 }
+			},
+			upload: {
+				plan: { prints: 1, pages: 2, queued: 2, unchanged: 0, skipped: 0, failed: 0 },
+				draw: { drawn: 2, failed: 0, left: 0, printsDone: 1, printsDrawn: 1 },
+				upload: { pages: 2, files: 40, bytes: 1, waiting: 0, failing: 0 },
+				thumbs: { done: 1, of: 1 }
+			}
+		},
+		cleanup: { state: 'done', deleted: 5, kept: 0, failed: 0, pending: 7, nextDue: null, thumbsDeleted: 1 },
+		flags: { state: 'done', stage: 'prod', rowsWritten: 3, bumped: true }
+	};
+	const g = renderStageDetails(row, stages);
+	expect(g.map((x) => x.title)).toEqual(['This run', 'Render: codex', 'Render: uploads', 'Clean up', 'Search flags on prod']);
+	expect(g[1].rows.map((r) => [r.label, r.value])).toEqual([
+		['prints', 2],
+		['pages to draw', 11],
+		['unchanged', 3],
+		['skipped', 1],
+		['drawn', 10],
+		['failed', 1],
+		['uploaded', 12],
+		['thumbnails', '2 of 2 prints']
+	]);
+	expect(g[3].rows.map((r) => [r.label, r.value])).toEqual([
+		['replaced files deleted', 6],
+		['still in their grace period', 7]
+	]);
+	expect(g[4].rows.map((r) => [r.label, r.value])).toEqual([
+		['rows written', 3],
+		['page cache', 'bumped']
+	]);
+	const failed = renderStageDetails(row, { ...stages, flags: { state: 'failed', stage: 'prod', error: 'remote /d1: lost' } });
+	expect(failed.at(-1)!.rows).toEqual([{ label: 'failed', value: 'remote /d1: lost', tone: 'bad' }]);
 });

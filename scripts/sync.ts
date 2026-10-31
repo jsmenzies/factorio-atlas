@@ -63,7 +63,7 @@ import { IDENTITY_VERSION } from '#lib/server/pipeline/identity.js';
 import { INDEX_VERSION } from '#lib/server/pipeline/repository.js';
 import { newRunId } from '#lib/server/pipeline/runs.js';
 import { VIEWER_VERSION } from '#lib/server/pipeline/viewer-files.js';
-import { siteOfPrintId } from '#lib/print-id.js';
+import { parseStages } from '#lib/render-stages.js';
 import { rendersDir } from '#lib/server/renders-dir.js';
 import { LIVE_SYNC_WHERE, liveSyncParams, readMeta, writeMeta } from '#lib/server/sync.js';
 import { PROCESSING_ATTEMPTS } from '#lib/server/uploads/uploads.js';
@@ -76,6 +76,7 @@ import {
 	parseSyncRun,
 	sourceDigest,
 	sourceMoved,
+	SITE_SHOTS_GROUP,
 	type DetailGroup,
 	type SourcePlan,
 	type SourceRun,
@@ -105,7 +106,7 @@ import type { UploadRunResult } from './screenshots/run';
 import type { FromUploadsResult } from './screenshots/uploads';
 import type { FromSitesResult } from './screenshots/sites';
 import { screenshotBucketDetails } from './sync/screenshot-details';
-import { recordStoreFetch, removalsDetails, removalsSummary } from './sync/step-details';
+import { recordStoreFetch, removalsDetails, removalsSummary, renderStageDetails, type RenderRowCounts } from './sync/step-details';
 import type { RemovalsResult } from './removals';
 import {
 	backfillComplete,
@@ -372,16 +373,6 @@ const script = (args: string[], env?: Record<string, string>) => runner.runScrip
 const hasSource = (site: string) => run.sources.some((s) => s.site === site);
 /** A failed command's outcome, summarised by its last result line. */
 const failed = (r: ScriptResult) => outcomeOf(r, '', [], `exit ${r.code}: ${failureLine(r.tail)}`);
-
-/** Of a render run's batch (`--next`), the prints from the record store: any site's but factorioprints'. */
-const storePicks = (options: string) => {
-	try {
-		const picked = (JSON.parse(options) as { batch?: { picked?: string[] } }).batch?.picked ?? [];
-		return picked.filter((id) => siteOfPrintId(id) !== 'factorioprints').length;
-	} catch {
-		return 0;
-	}
-};
 
 /** The ingest step's first part: the backfill over the mirror clone, skipped when nothing it reads changed. */
 const backfillStep = async (): Promise<Outcome> => {
@@ -750,6 +741,20 @@ const steps: StepDef[] = [
 						...detail('failed, tried again next update', sites.failed, { tone: 'bad' })
 					]
 				});
+			// Each site's own, for the Update tab's per-source Screenshots cells (SITE_SHOTS_GROUP).
+			for (const [site, c] of Object.entries(sites?.bySite ?? {}))
+				details.push({
+					title: `${SITE_SHOTS_GROUP}${site}`,
+					rows: [
+						...detail('images shown', c.shown, { always: true }),
+						...detail('already copied', c.alreadyCopied),
+						...detail('copied now', c.fetched),
+						...detail('gone at the source', c.dead + c.newlyDead, { tone: 'warn' }),
+						...detail('answered 404 once (asked again next update)', c.maybeDead),
+						...detail('removed', c.removed),
+						...detail('failed, tried again next update', c.failed, { tone: 'bad' })
+					]
+				});
 			if (stopping()) return { status: 'stopped', summary: parts.join(' · '), details };
 			const up = await script(['scripts/screenshots.ts', '--upload', stage, '--json']);
 			if (up.code !== 0) return { ...failed(up), details };
@@ -820,19 +825,13 @@ const steps: StepDef[] = [
 			const rendered = await script(args, { FPSR_ASSETS_DIR: assetsDir });
 			const row = await db
 				.prepare(
-					'SELECT id, options, prints_total, prints_rendered, rendered, failed, uploaded, uploads_pending FROM render_runs WHERE started_at >= ? ORDER BY started_at DESC LIMIT 1'
+					`SELECT id, json_extract(options, '$.stages') AS stages, prints_total, prints_rendered, rendered, failed, uploaded, uploads_pending
+					FROM render_runs WHERE started_at >= ? ORDER BY started_at DESC LIMIT 1`
 				)
 				.bind(since - 1000)
-				.first<{
-					id: string;
-					options: string;
-					prints_total: number;
-					prints_rendered: number;
-					rendered: number;
-					failed: number;
-					uploaded: number;
-					uploads_pending: number;
-				}>();
+				.first<RenderRowCounts & { id: string; stages: string | null }>();
+			// The run's stages per source as it ended: the Update tab's board reads them from the step.
+			const stages = row ? parseStages(row.stages) : null;
 			parts.push(
 				row
 					? row.prints_total === 0
@@ -842,25 +841,14 @@ const steps: StepDef[] = [
 							(row.uploads_pending ? `, ${n(row.uploads_pending)} uploads left for the next update` : '')
 					: lastLine(rendered.tail)
 			);
-			if (row)
-				details.push({
-					title: 'This run',
-					rows: [
-						{ label: 'prints with work', value: row.prints_total },
-						...detail('pages drawn', row.rendered, { always: row.prints_total > 0 }),
-						...detail('prints drawn', row.prints_rendered),
-						...detail('from the record store', storePicks(row.options)),
-						...detail('files uploaded', row.uploaded, { always: row.prints_total > 0 }),
-						...detail('failed', row.failed, { always: row.prints_total > 0, tone: 'bad' }),
-						...detail('uploads left for the next update', row.uploads_pending, { tone: 'warn' })
-					]
-				});
+			if (row) details.push(...renderStageDetails(row, stages));
 			// 2: pages failed; 3: uploads left for the next update; 4: the search flags step failed (run it by hand).
 			if (rendered.code === 4) parts.push('render:flags failed: run it by hand');
 			return {
 				...outcomeOf(rendered, parts.join(' · '), [2, 3, 4], `exit ${rendered.code}: ${lastLine(rendered.tail)}`),
 				runId: row?.id,
-				details
+				details,
+				...(stages ? { render: stages } : {})
 			};
 		}
 	},

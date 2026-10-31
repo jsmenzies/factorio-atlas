@@ -185,7 +185,7 @@ export const polledAdmitStatus = (
 
 // --- steps
 
-export type Outcome = Pick<SyncStep, 'status' | 'summary' | 'runId' | 'code' | 'details'>;
+export type Outcome = Pick<SyncStep, 'status' | 'summary' | 'runId' | 'code' | 'details' | 'render'>;
 
 export interface StepContext {
 	/** Aborts on Quit: for work the step does in this process (git). */

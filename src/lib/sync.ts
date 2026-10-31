@@ -6,6 +6,7 @@
  * (migration 0020), the `sync_meta` documents and the estimates. The database helpers are in
  * #lib/server/sync.js.
  */
+import type { RenderStages } from './render-stages.js';
 import type { RunState } from '#lib/server/pipeline/runs.js';
 
 // --- settings
@@ -151,7 +152,12 @@ export interface SyncStep {
 	code?: number | null;
 	/** Its figures, from the commands' structured output (rows older than these have only `summary`). */
 	details?: DetailGroup[];
+	/** The render step: its run's stages per source as the run ended (#lib/render-stages.js). */
+	render?: RenderStages;
 }
+
+/** The screenshots step's group of one site's images (`From other sites: codex`), besides the combined one. */
+export const SITE_SHOTS_GROUP = 'From other sites: ';
 
 /** One figure in a step's details: a label and its value; a long value (a path) is `muted`. */
 export interface DetailRow {
