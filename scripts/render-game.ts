@@ -161,7 +161,7 @@ import { indexDiffers, indexWriter, readSidecar, removePage, sweepTiles, writeIn
 import { childWorkerd, stopOrphanedWorkerd } from './render/orphans.js';
 import { admit, maxWorkers, memEstimateMb, pagePeakMb, readMeminfo, type Admission, type WorkerMemory } from './render/memory.js';
 import { createPool, type Outcome, type Pool, type Slot } from './render/pool.js';
-import { gaveUp, MAX_ATTEMPTS, renderQueue, type DeferredUpdate, type JobWrite, type RunnerRun } from './render/queue.js';
+import { gaveUp, MAX_ATTEMPTS, planOnlyWrites, renderQueue, type DeferredUpdate, type JobWrite, type RunnerRun } from './render/queue.js';
 import { favoritesCacheFile, favoritesDb, refreshFavorites, topIds, type FavoritesMeta } from './render/favorites.js';
 import { entityCount, PageCache, prepared, preparedSkipped, skipReason, type Prepared } from './render/prepare.js';
 import { renderProgress } from './render/progress.js';
@@ -812,8 +812,11 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 	const t = Date.now();
 	const record = await source.read(id);
 	const existing = new Map((withRows.has(id) ? await queue.jobsOf(id) : []).map((r) => [r.path, r]));
+	/** The rows as they were: a plan-only run writes nothing that moves a done one to another status. */
+	const before: ReadonlyMap<string, RenderJobRow> = new Map(existing);
+	const rowWrites = (w: JobWrite[]) => queue.writeJobs(planOnly ? planOnlyWrites(w, before) : w);
 	if (!record) {
-		await queue.writeJobs([failedRow(id, null, 'missing', `no record in ${source.label}`, t, existing.get(''))]);
+		await rowWrites([failedRow(id, null, 'missing', `no record in ${source.label}`, t, existing.get(''))]);
 		tally.page(id, 'planFailed');
 		return { taken: true, queued: 0, modern: true };
 	}
@@ -825,9 +828,7 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		const reason = (e as { reason?: unknown })?.reason;
 		const why = typeof reason === 'string' ? reason : e instanceof Error ? e.message : String(e);
 		// Not a failure to retry: the string will never decode (mostly the pre-0.15 format), so it can't render.
-		await queue.writeJobs([
-			{ ...failedRow(id, record.title, 'undecodable', `undecodable: ${why}`, t, existing.get('')), status: 'skipped' }
-		]);
+		await rowWrites([{ ...failedRow(id, record.title, 'undecodable', `undecodable: ${why}`, t, existing.get('')), status: 'skipped' }]);
 		tally.page(id, 'skipped');
 		return { taken: true, queued: 0, modern: true };
 	}
@@ -947,13 +948,14 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 	const gone = [...existing.values()];
 	if (queued) remaining.set(id, queued);
 	if (gone.length || (doneHere && !existsSync(join(OUT_DIR, id, 'index.json')))) indexStale = true;
-	// An index.json out of step with the done rows (an earlier run's page writes could land out of order): rewritten.
-	if (!indexStale && doneHere && (await indexDiffers(OUT_DIR, id, drawn))) {
+	// An index.json out of step with the done rows (an earlier run's page writes could land out of order, or it
+	// lists pages that have no done row any more): rewritten. With no done row and no index.json, nothing to do.
+	if (!indexStale && (await indexDiffers(OUT_DIR, id, drawn))) {
 		indexStale = true;
 		indexesRepaired++;
 	}
 	if (planOnly) {
-		await queue.writeJobs(writes);
+		await rowWrites(writes);
 		return { taken: true, queued, modern };
 	}
 	await queue.writeJobs(writes, gone);
@@ -1023,9 +1025,9 @@ async function finishPrint(id: string, open?: number) {
 	remaining.set(id, left);
 	if (left > 0) return;
 	remaining.delete(id);
-	// Every queued page is final: index.json once more from every done row, after the writes before it.
-	if (renderedPrints.has(id)) await indexes.update(id);
-	// Thumbnails from its overviews (the thumb step plans from that index.json).
+	// Every queued page is final, and index.json lists every done row: each drawn page's complete() awaited its
+	// own index write (which read the done rows then) before counting itself here. Thumbnails from its overviews
+	// (the thumb step plans from that index.json).
 	thumbStep?.offer(id);
 	if (printsTracked.has(id)) printsFinished.add(id);
 	if (!renderedPrints.has(id) || (open ?? (await queue.openJobs(id)))) return;

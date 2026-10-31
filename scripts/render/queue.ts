@@ -138,6 +138,14 @@ export interface DeferredUpdate {
 }
 export type JobWrite = Pick<RenderJobRow, (typeof JOB_COLUMNS)[number]>;
 
+/**
+ * The writes a plan-only run may make: none that moves a done row (`old`, by path) to another status. Such a
+ * move goes with a rewrite of index.json and the removal of the page's files, which plan-only leaves out; the
+ * row has to keep saying done, so the next real run makes the same move and does both.
+ */
+export const planOnlyWrites = (writes: JobWrite[], old: ReadonlyMap<string, Pick<RenderJobRow, 'status'>>): JobWrite[] =>
+	writes.filter((w) => w.status === 'done' || old.get(w.path)?.status !== 'done');
+
 export function renderQueue(db: D1Database) {
 	const upsertRun = `INSERT INTO render_runs (${RUN_COLUMNS.join(', ')}) VALUES (${RUN_COLUMNS.map(() => '?').join(', ')})
 		ON CONFLICT (id) DO UPDATE SET ${RUN_COLUMNS.filter((c) => c !== 'id')

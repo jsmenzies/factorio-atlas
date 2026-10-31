@@ -106,6 +106,8 @@ describe('indexDiffers', () => {
 			expect(await indexDiffers(dir, 'p', [page('1'), page('2', 'abcdefabcd')])).toBe(true);
 			expect(await indexDiffers(dir, 'q', [page('1')])).toBe(true);
 			expect(await indexDiffers(dir, 'q', [])).toBe(false);
+			// An index.json whose pages have no done row any more (a plan-only run left them): rewritten.
+			expect(await indexDiffers(dir, 'p', [])).toBe(true);
 		});
 	});
 });
