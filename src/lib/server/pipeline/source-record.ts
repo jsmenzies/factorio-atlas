@@ -11,7 +11,7 @@
  */
 import type { Site } from '#lib/print-id.js';
 import { siteUrl } from '#lib/sources.js';
-import { stripPrivateFields, toEpochMs, type FirebaseRecord } from './record.js';
+import { stripPrivate, toEpochMs, type FirebaseRecord } from './record.js';
 
 export interface SourceAuthor {
 	readonly site: Site;
@@ -133,17 +133,21 @@ export const fromPipelineText = (text: string): SourceRecord | null => {
 	};
 };
 
-/** The text to ingest a record from: factorioprints' own (sanitised), anything else's `toPipelineText`. */
+/**
+ * The text to ingest a record from: factorioprints' own, anything else's `toPipelineText`. Not sanitised
+ * here: `planIngest` sanitises whatever it ingests (and `fromFactorioprints` already did).
+ */
 export const pipelineText = (r: SourceRecord): string => {
 	if (r.site !== 'factorioprints') return toPipelineText(r);
 	if (r.native === undefined) throw new Error(`factorioprints ${r.siteId}: no record text`);
-	return stripPrivateFields(r.native);
+	return r.native;
 };
 
 /** A factorioprints record (the mirror's or Firebase's JSON text) as a SourceRecord. Throws when it isn't JSON. */
 export const fromFactorioprints = (id: string, text: string): SourceRecord => {
-	const native = stripPrivateFields(text);
-	const r = JSON.parse(native) as Partial<FirebaseRecord>;
+	// Parsed once: the sanitised value is what parsing `native` again would give.
+	const r = stripPrivate(JSON.parse(text)) as Partial<FirebaseRecord>;
+	const native = JSON.stringify(r);
 	const userId = r.author?.userId ?? r.authorId ?? null;
 	return {
 		site: 'factorioprints',
@@ -192,13 +196,20 @@ export const sourceMetaOfRecord = (r: SourceRecord): SourceMeta => ({
 
 /** The archive key for a pipeline record's text, read without the schema (so failed records land in the right place). */
 export const rawKeyOfText = (printId: string, text: string): string => {
+	let value: unknown;
 	try {
-		const s = (JSON.parse(text) as { source?: { site?: unknown; siteId?: unknown } }).source;
-		if (s && typeof s.site === 'string' && typeof s.siteId === 'string' && s.site !== 'factorioprints') {
-			return rawKeyFor(s.site as Site, s.siteId);
-		}
+		value = JSON.parse(text);
 	} catch {
 		// Not JSON: archived under the print's own key, as before.
+	}
+	return rawKeyOf(printId, value);
+};
+
+/** `rawKeyOfText` for the value parsed from the text (undefined when it isn't JSON). */
+export const rawKeyOf = (printId: string, value: unknown): string => {
+	const s = value == null ? undefined : (value as { source?: { site?: unknown; siteId?: unknown } }).source;
+	if (s && typeof s.site === 'string' && typeof s.siteId === 'string' && s.site !== 'factorioprints') {
+		return rawKeyFor(s.site as Site, s.siteId);
 	}
 	return rawKeyFor('factorioprints', printId);
 };

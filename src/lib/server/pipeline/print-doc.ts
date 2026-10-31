@@ -92,40 +92,61 @@ export const toPrintDoc = (id: string, sourceUrl: string, r: FirebaseRecord, ana
 	analysis
 });
 
+/*
+ * Each patch below comes twice: on a document object (the ingest builds its document, patches it and
+ * serialises it once) and on a stored document's text (authors, `writeFolds`, `syncSources`), which is
+ * the same string when nothing changes. The object patches return the same object when nothing changes,
+ * and put keys where the text patches would, so serialising the result gives the text patches' bytes.
+ */
+
+/** The document credited to `name`; the same object when it already is, or with no name. */
+export const docWithAuthorName = (doc: PrintDoc, name: string | null): PrintDoc =>
+	name === null || doc.print.author_name === name ? doc : { ...doc, print: { ...doc.print, author_name: name } };
+
 /** A serialised document credited to `name`; unchanged (the same string) when it already is, or with no name. */
 export const withAuthorName = (text: string, name: string | null): string => {
 	if (name === null) return text;
-	const doc = JSON.parse(text) as PrintDoc;
-	return doc.print.author_name === name ? text : JSON.stringify({ ...doc, print: { ...doc.print, author_name: name } });
+	return patchText(text, (doc) => docWithAuthorName(doc, name));
 };
 
 /**
- * A serialised document with a fold (fold.ts) as its `copy_of` and `identical_to`; the same string when
- * it already has it. Only the ids: the page reads the other print's title and author from its document.
+ * The document with a fold (fold.ts) as its `copy_of` and `identical_to`; the same object when it
+ * already has it. Only the ids: the page reads the other print's title and author from its document.
  */
-export const withFold = (text: string, fold: FoldState): string => {
-	const doc = JSON.parse(text) as PrintDoc;
-	if ((doc.print.copy_of?.id ?? null) === fold.duplicateOf && (doc.print.identical_to?.id ?? null) === fold.identicalTo) return text;
+export const docWithFold = (doc: PrintDoc, fold: FoldState): PrintDoc => {
+	if ((doc.print.copy_of?.id ?? null) === fold.duplicateOf && (doc.print.identical_to?.id ?? null) === fold.identicalTo) return doc;
 	const print = { ...doc.print };
 	delete print.copy_of;
 	delete print.identical_to;
-	return JSON.stringify({
+	return {
 		...doc,
 		print: {
 			...print,
 			...(fold.duplicateOf ? { copy_of: { id: fold.duplicateOf } } : {}),
 			...(fold.identicalTo ? { identical_to: { id: fold.identicalTo } } : {})
 		}
-	});
+	};
 };
 
-/** A serialised document listing `sources` (`docSources`'s, undefined for none); the same string when it already does. */
-export const withSources = (text: string, sources: readonly PrintSource[] | undefined): string => {
-	const doc = JSON.parse(text) as PrintDoc;
-	if (JSON.stringify(doc.print.sources ?? null) === JSON.stringify(sources ?? null)) return text;
+/** `docWithFold` on a serialised document; the same string when it already has the fold. */
+export const withFold = (text: string, fold: FoldState): string => patchText(text, (doc) => docWithFold(doc, fold));
+
+/** The document listing `sources` (`docSources`'s, undefined for none); the same object when it already does. */
+export const docWithSources = (doc: PrintDoc, sources: readonly PrintSource[] | undefined): PrintDoc => {
+	if (JSON.stringify(doc.print.sources ?? null) === JSON.stringify(sources ?? null)) return doc;
 	const print = { ...doc.print };
 	delete print.sources;
-	return JSON.stringify({ ...doc, print: sources ? { ...print, sources: [...sources] } : print });
+	return { ...doc, print: sources ? { ...print, sources: [...sources] } : print };
+};
+
+/** `docWithSources` on a serialised document; the same string when it already lists them. */
+export const withSources = (text: string, sources: readonly PrintSource[] | undefined): string =>
+	patchText(text, (doc) => docWithSources(doc, sources));
+
+const patchText = (text: string, patch: (doc: PrintDoc) => PrintDoc): string => {
+	const doc = JSON.parse(text) as PrintDoc;
+	const next = patch(doc);
+	return next === doc ? text : JSON.stringify(next);
 };
 
 export const parsePrintDoc = (text: string | null): PrintDoc | null => {

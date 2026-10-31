@@ -72,11 +72,14 @@ export const toEpochMs = (t: number | string | undefined): number | null => {
  * `keepSource`: only `toPipelineText` (source-record.ts) writes one, and a factorioprints record that
  * carried its own must not pass for another site's. Throws when the text isn't JSON.
  */
-export const stripPrivateFields = (text: string, keepSource = false): string => {
-	const record = JSON.parse(text) as Record<string, unknown>;
+export const stripPrivateFields = (text: string, keepSource = false): string => JSON.stringify(stripPrivate(JSON.parse(text), keepSource));
+
+/** `stripPrivateFields` on a parsed record, in place (returned for chaining). Throws for `null`, as the text version does. */
+export const stripPrivate = (value: unknown, keepSource = false): unknown => {
+	const record = value as Record<string, unknown>;
 	delete record.favorites;
 	if (!keepSource) delete record.source;
 	const image = record.image as Record<string, unknown> | undefined;
 	if (image && typeof image === 'object') delete image.deletehash;
-	return JSON.stringify(record);
+	return record;
 };

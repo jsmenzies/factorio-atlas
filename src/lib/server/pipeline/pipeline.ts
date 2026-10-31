@@ -8,9 +8,20 @@ import type { Admission } from './admit.js';
 import { fingerprintPrint, type PrintFingerprint } from './identity.js';
 import type { FoldMember } from './fold.js';
 import { blockHashes, docSourcesOf, withSourceRow, type PrintSourceRow } from './identity-db.js';
-import { analysisKey, ownAuthorName, parsePrintDoc, toPrintDoc, withAuthorName, withFold, withSources } from './print-doc.js';
+import {
+	analysisKey,
+	docWithAuthorName,
+	docWithFold,
+	docWithSources,
+	ownAuthorName,
+	parsePrintDoc,
+	toPrintDoc,
+	withFold,
+	withSources,
+	type PrintDoc
+} from './print-doc.js';
 import { RawStore } from './raw-store.js';
-import { FirebaseRecord, stripPrivateFields } from './record.js';
+import { FirebaseRecord, stripPrivate } from './record.js';
 import {
 	authorIdOf,
 	INDEX_VERSION,
@@ -22,7 +33,7 @@ import {
 } from './repository.js';
 import { sha256Hex } from '../hash.js';
 import { PrintSource } from './source.js';
-import { pipelineText, rawKeyOfText, sourceMetaOf, sourceMetaOfRecord, type SourceRecord } from './source-record.js';
+import { pipelineText, rawKeyOf, sourceMetaOf, sourceMetaOfRecord, type SourceRecord } from './source-record.js';
 import { buildViewerFilesEffect, deleteViewerFiles, putViewerFiles, VIEWER_VERSION, type ViewerFiles } from './viewer-files.js';
 
 const sha256 = (text: string) => Effect.promise(() => sha256Hex(text));
@@ -41,10 +52,9 @@ const resolveAuthorName = Effect.fn('resolveAuthorName')(function* (record: Fire
 	return yield* (yield* PrintRepository).authorName(authorId);
 });
 
-const decodeRecord = (id: string, text: string) =>
-	Schema.decodeUnknownEffect(Schema.fromJsonString(FirebaseRecord))(text).pipe(
-		Effect.mapError((cause) => new RecordParseError({ id, cause }))
-	);
+/** The record schema over a parsed record (`CleanRecord.value`): what decoding its JSON text would give. */
+const decodeRecord = (id: string, value: unknown) =>
+	Schema.decodeUnknownEffect(FirebaseRecord)(value).pipe(Effect.mapError((cause) => new RecordParseError({ id, cause })));
 
 /** Why a record can't be analysed. The prefix says whether a new analyzer could ever help. */
 export class AnalyzeError extends Data.TaggedError('AnalyzeError')<{ readonly cause: unknown }> {}
@@ -102,17 +112,59 @@ export interface IngestOptions {
 
 /**
  * The record's identity for change detection: sha256 of the sanitised JSON without
- * `numberOfFavorites`, which the mirror updates far more often than anything else.
+ * `numberOfFavorites`, which the mirror updates far more often than anything else. Takes the parsed
+ * record and leaves it as it is.
  */
-export const fingerprint = (id: string, clean: string) =>
+const fingerprint = (value: unknown) =>
 	Effect.gen(function* () {
-		const record = yield* Effect.try({
-			try: () => JSON.parse(clean) as Record<string, unknown>,
+		const record = value as Record<string, unknown>;
+		const favorites = typeof record.numberOfFavorites === 'number' ? record.numberOfFavorites : 0;
+		let rest: unknown = record;
+		if (Object.hasOwn(record, 'numberOfFavorites')) {
+			const { numberOfFavorites: _, ...others } = record;
+			rest = others;
+		}
+		return { contentSha256: yield* sha256(JSON.stringify(rest)), favorites };
+	});
+
+/**
+ * A record as planning reads it, parsed and hashed once: its text (archived, and hashed as `raw_sha256`),
+ * the value that text is the JSON of, and its change key (`fingerprint`).
+ */
+interface CleanRecord {
+	readonly text: string;
+	/** `JSON.parse(text)`; undefined when the text isn't JSON (an archived record's: decoding it then fails). */
+	readonly value: unknown;
+	readonly contentSha256: string;
+	readonly favorites: number;
+}
+
+/**
+ * `stripPrivateFields` as an Effect: drop `favorites`, `image.deletehash` (and an untrusted `source`) before
+ * anything is stored. The record is parsed once, here, and fingerprinted from the parsed value.
+ */
+export const sanitizeRaw = (id: string, text: string, keepSource = false) =>
+	Effect.gen(function* () {
+		const value = yield* Effect.try({
+			try: () => stripPrivate(JSON.parse(text), keepSource),
 			catch: (cause) => new RecordParseError({ id, cause })
 		});
-		const favorites = typeof record.numberOfFavorites === 'number' ? record.numberOfFavorites : 0;
-		delete record.numberOfFavorites;
-		return { contentSha256: yield* sha256(JSON.stringify(record)), favorites };
+		const clean: CleanRecord = { text: JSON.stringify(value), value, ...(yield* fingerprint(value)) };
+		return clean;
+	});
+
+/** An archived record's text, taken as it is: one that isn't JSON plans as a parse failure (change key 'unparseable'). */
+const archivedRecord = (text: string) =>
+	Effect.gen(function* () {
+		let value: unknown;
+		try {
+			value = JSON.parse(text);
+		} catch {
+			const unparseable: CleanRecord = { text, value: undefined, contentSha256: 'unparseable', favorites: 0 };
+			return unparseable;
+		}
+		const parsed: CleanRecord = { text, value, ...(yield* fingerprint(value)) };
+		return parsed;
 	});
 
 /**
@@ -135,10 +187,10 @@ export interface Predecoded {
 	readonly fingerprint: PrintFingerprint;
 }
 
-/** Parse the record and inflate its blueprint string (unless `pre` has it). */
-const decodePayload = (id: string, text: string, options: IngestOptions, pre?: Predecoded) =>
+/** Decode the parsed record and inflate its blueprint string (unless `pre` has it). */
+const decodePayload = (id: string, value: unknown, options: IngestOptions, pre?: Predecoded) =>
 	Effect.gen(function* () {
-		const record = yield* decodeRecord(id, text);
+		const record = yield* decodeRecord(id, value);
 		const decoded = pre ? pre.decoded : yield* decodeExchangeString(record.blueprintString, { maxInflatedBytes: options.maxInflatedBytes });
 		return { record, decoded };
 	});
@@ -186,8 +238,8 @@ export type IngestPlan =
 			readonly archive: string | null;
 			/** null when the stored viewer files are already current. */
 			readonly viewerFiles: ViewerFiles | null;
-			/** The R2 analysis document (`analysisKey`). */
-			readonly doc: string;
+			/** The R2 analysis document (`analysisKey`), before applyPlan credits, folds and sources it and serialises it once. */
+			readonly doc: PrintDoc;
 			/**
 			 * Check `removal_blocks` for its content hashes first: only a print not stored before (no
 			 * `ingest_state`). A live print that later matches a block (a compilation holding a page of a
@@ -223,19 +275,17 @@ const failedPlan = (
  */
 const planAnalysis = Effect.fn('planAnalysis')(function* (
 	id: string,
-	text: string,
+	clean: CleanRecord,
 	sourceUrl: string,
 	previous: IngestState | null,
 	options: IngestOptions,
 	archive: string | null,
 	pre?: Predecoded
 ): Effect.fn.Return<IngestPlan, StorageError> {
-	const { contentSha256, favorites } = yield* fingerprint(id, text).pipe(
-		Effect.catch(() => Effect.succeed({ contentSha256: 'unparseable', favorites: 0 }))
-	);
-	const key = rawKeyOfText(id, text);
+	const { contentSha256, favorites } = clean;
+	const key = rawKeyOf(id, clean.value);
 	const analysed = yield* Effect.gen(function* () {
-		const { record, decoded } = yield* decodePayload(id, text, options, pre);
+		const { record, decoded } = yield* decodePayload(id, clean.value, options, pre);
 		const base = yield* Effect.try({ try: () => analyzePrint(decoded), catch: (cause) => new AnalyzeError({ cause }) });
 		return { record, decoded, base };
 	}).pipe(Effect.result);
@@ -263,13 +313,13 @@ const planAnalysis = Effect.fn('planAnalysis')(function* (
 		id,
 		archive,
 		viewerFiles: viewerFresh ? null : yield* buildViewerFilesEffect(id, decoded),
-		doc: JSON.stringify(toPrintDoc(id, sourceUrl, record, analysis)),
+		doc: toPrintDoc(id, sourceUrl, record, analysis),
 		checkBlocks: previous === null,
 		print: {
 			id,
 			sourceUrl,
 			rawKey: key,
-			rawSha256: yield* sha256(text),
+			rawSha256: yield* sha256(clean.text),
 			contentSha256,
 			record,
 			analysis,
@@ -301,7 +351,7 @@ export const planIngest = Effect.fn('planIngest')(function* (
 	pre?: Predecoded
 ): Effect.fn.Return<IngestPlan, RecordParseError | StorageError> {
 	const clean = yield* sanitizeRaw(id, text, options.sourceRecord === true);
-	const { contentSha256, favorites } = yield* fingerprint(id, clean);
+	const { contentSha256, favorites } = clean;
 	const same = state?.contentSha256 === contentSha256;
 	if (state && same && !options.force) {
 		if (state.status === 'failed' && !options.retryFailed && !retryable(state.reason)) {
@@ -313,24 +363,30 @@ export const planIngest = Effect.fn('planIngest')(function* (
 			const staleViewer = state.viewerVersion !== VIEWER_VERSION;
 			// Only false when the loader knows (getState, loadIngestStates); a record without its identity rows gets them once.
 			if (staleViewer || state.identified === false) {
-				const payload = yield* decodePayload(id, clean, options, pre).pipe(Effect.result);
+				const payload = yield* decodePayload(id, clean.value, options, pre).pipe(Effect.result);
 				if (payload._tag === 'Success') {
 					if (staleViewer) viewerFiles = yield* buildViewerFilesEffect(id, payload.success.decoded);
 					if (state.identified === false) identity = yield* identityOf(id, payload.success.record, payload.success.decoded, pre);
-				} else if (staleViewer) return failedPlan(id, null, contentSha256, favorites, payload.failure, rawKeyOfText(id, clean));
+				} else if (staleViewer) return failedPlan(id, null, contentSha256, favorites, payload.failure, rawKeyOf(id, clean.value));
 				// A print the site shows never leaves it for want of identity rows (e.g. under a smaller decode cap).
 			}
 			const favoritesChanged = state.favorites !== favorites;
 			const staleIndex: Reindex | null =
 				state.indexVersion === INDEX_VERSION
 					? null
-					: { text: clean, sourceUrl, rawSha256: yield* sha256(clean), contentSha256, maxInflatedBytes: options.maxInflatedBytes };
+					: {
+							text: clean.text,
+							sourceUrl,
+							rawSha256: yield* sha256(clean.text),
+							contentSha256,
+							maxInflatedBytes: options.maxInflatedBytes
+						};
 			if (viewerFiles === null && !favoritesChanged && staleIndex === null && identity === null) return { kind: 'unchanged', id };
 			return { kind: 'refresh', id, favorites: favoritesChanged ? favorites : null, viewerFiles, reindex: staleIndex, identity };
 		}
 	}
 	// The archived copy only needs rewriting when the content changed (favourites live in D1).
-	return yield* planAnalysis(id, clean, sourceUrl, state, options, same ? null : clean, pre);
+	return yield* planAnalysis(id, clean, sourceUrl, state, options, same ? null : clean.text, pre);
 });
 
 /**
@@ -339,12 +395,12 @@ export const planIngest = Effect.fn('planIngest')(function* (
  */
 export const planFailure = Effect.fn('planFailure')(function* (id: string, text: string, state: IngestState | null, reason: string) {
 	const clean = yield* sanitizeRaw(id, text);
-	const { contentSha256, favorites } = yield* fingerprint(id, clean);
+	const { contentSha256, favorites } = clean;
 	const plan: IngestPlan = {
 		kind: 'failed',
 		id,
-		archive: state?.contentSha256 === contentSha256 ? null : clean,
-		rawKey: rawKeyOfText(id, clean),
+		archive: state?.contentSha256 === contentSha256 ? null : clean.text,
+		rawKey: rawKeyOf(id, clean.value),
 		failure: { id, contentSha256, reason, favorites }
 	};
 	return plan;
@@ -484,8 +540,8 @@ export const applyPlan = Effect.fn('applyPlan')(function* (
 			// The fold its row has now goes into the document's first write; `fold` puts right what changed. So do
 			// its sources, as they will be once the upsert's batch writes this record's row.
 			const sources = identity ? withSourceRow(id, current.sources, identity.source) : current.sources;
-			const doc = withSources(withFold(withAuthorName(plan.doc, authorName), current.fold), docSourcesOf(id, sources));
-			yield* raw.put(analysisKey(id), doc);
+			const doc = docWithSources(docWithFold(docWithAuthorName(plan.doc, authorName), current.fold), docSourcesOf(id, sources));
+			yield* raw.put(analysisKey(id), JSON.stringify(doc));
 			const stored = yield* upsertUnlessRemoved({ ...plan.print, authorName }, options.extra?.() ?? []);
 			if (stored.removed) return yield* forgetWrites(id, plan.archive === null ? null : plan.print.rawKey);
 			yield* fold(id, options);
@@ -594,11 +650,17 @@ const reindex = Effect.fn('reindex')(function* (
 	const raw = yield* RawStore;
 	const doc = parsePrintDoc(yield* raw.get(analysisKey(id)));
 	if (!doc || doc.analysis.analyzerVersion !== ANALYZER_VERSION || doc.analysis.gameDataVersion !== gameData.gameVersion) {
-		const plan = yield* planAnalysis(id, r.text, r.sourceUrl, null, { maxInflatedBytes: r.maxInflatedBytes }, null);
+		const plan = yield* planAnalysis(id, yield* archivedRecord(r.text), r.sourceUrl, null, { maxInflatedBytes: r.maxInflatedBytes }, null);
 		// A live print: never refused for a block (see `checkBlocks`).
 		return yield* applyPlan(plan.kind === 'analysed' ? { ...plan, checkBlocks: false } : plan, options);
 	}
-	const record = yield* decodeRecord(id, r.text).pipe(Effect.mapError((cause) => new StorageError({ op: `reindex ${id}`, cause })));
+	const { value, record } = yield* Effect.try({
+		try: () => JSON.parse(r.text) as unknown,
+		catch: (cause) => new RecordParseError({ id, cause })
+	}).pipe(
+		Effect.flatMap((value) => Effect.map(decodeRecord(id, value), (record) => ({ value, record }))),
+		Effect.mapError((cause) => new StorageError({ op: `reindex ${id}`, cause }))
+	);
 	const viewerFiles = viewer ? yield* putViewerFiles(id, viewer) : 0;
 	const authorName = (yield* resolveAuthorName(record)) ?? doc.print.author_name;
 	if (favorites !== null || authorName !== doc.print.author_name) {
@@ -609,7 +671,7 @@ const reindex = Effect.fn('reindex')(function* (
 		{
 			id,
 			sourceUrl: r.sourceUrl,
-			rawKey: rawKeyOfText(id, r.text),
+			rawKey: rawKeyOf(id, value),
 			rawSha256: r.rawSha256,
 			contentSha256: r.contentSha256,
 			record,
@@ -638,12 +700,8 @@ export const processRaw = Effect.fn('processRaw')(function* (
 	previous: IngestState | null,
 	options: IngestOptions = {}
 ): Effect.fn.Return<IngestOutcome, StorageError, PrintRepository | RawStore> {
-	return yield* applyPlan(yield* planAnalysis(id, text, sourceUrl, previous, options, null));
+	return yield* applyPlan(yield* planAnalysis(id, yield* archivedRecord(text), sourceUrl, previous, options, null));
 });
-
-/** `stripPrivateFields` as an Effect: drop `favorites`, `image.deletehash` (and an untrusted `source`) before anything is stored. */
-export const sanitizeRaw = (id: string, text: string, keepSource = false) =>
-	Effect.try({ try: () => stripPrivateFields(text, keepSource), catch: (cause) => new RecordParseError({ id, cause }) });
 
 /**
  * sanitize → (skip if unchanged) → archive raw → parse → decode → analyze → store: `planIngest`,
