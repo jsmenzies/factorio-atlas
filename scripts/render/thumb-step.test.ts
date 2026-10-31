@@ -38,7 +38,8 @@ test('makes, keeps, renews and clears thumbnails; uploads each print after its r
 			uploadPrint: async (id: string) => {
 				events.push(`upload ${id}`);
 				return true;
-			}
+			},
+			uploading: () => new Map()
 		} as unknown as ThumbUploader;
 		const progress: { done: number; of: number }[] = [];
 		const step = (planOnly = false) => {
@@ -80,8 +81,8 @@ test('makes, keeps, renews and clears thumbnails; uploads each print after its r
 		// By site (here by the id's letter), as the run's stages count it.
 		expect(first.progressBy((id) => id)).toEqual(
 			new Map([
-				['a', { done: 0, of: 1, pagesMade: 0, pagesOf: 0, waitingUpload: 0 }],
-				['b', { done: 0, of: 1, pagesMade: 0, pagesOf: 0, waitingUpload: 0 }]
+				['a', { done: 0, of: 1, pagesMade: 0, pagesOf: 0, waitingUpload: 0, filesUp: 0, filesOf: 0 }],
+				['b', { done: 0, of: 1, pagesMade: 0, pagesOf: 0, waitingUpload: 0, filesUp: 0, filesOf: 0 }]
 			])
 		);
 		// Offered again while being worked on: looked at once more afterwards, never twice at once.
@@ -89,7 +90,15 @@ test('makes, keeps, renews and clears thumbnails; uploads each print after its r
 		await first.drain();
 		// Prints, not offers: `a` counts once, and is done only after its second look.
 		expect(progress.at(-1)).toEqual({ done: 2, of: 2 });
-		expect(first.progressBy(() => 'all').get('all')).toEqual({ done: 2, of: 2, pagesMade: 4, pagesOf: 4, waitingUpload: 0 });
+		expect(first.progressBy(() => 'all').get('all')).toEqual({
+			done: 2,
+			of: 2,
+			pagesMade: 4,
+			pagesOf: 4,
+			waitingUpload: 0,
+			filesUp: 0,
+			filesOf: 0
+		});
 		expect(progress.every((p) => p.of === 2 && p.done <= 2)).toBe(true);
 		expect(progress.length).toBe(3);
 		expect(first.stats).toMatchObject({ prints: 3, current: 1, pages: 4, failed: 0 });
@@ -147,30 +156,62 @@ const noisy = (w: number, h: number, seed: number) =>
 		.avif()
 		.toBuffer();
 
-test('pages made of those to make, and prints waiting on their render upload, per key', async () => {
+test('pages made of those to make, prints waiting on their render upload, and files going up, per key', async () => {
 	const tmp = mkdtempSync(join(tmpdir(), 'thumb-step-'));
 	try {
 		const renders = join(tmp, 'renders');
 		await render(renders, 'a', '0123456789');
 		let release = () => {};
 		const held = new Promise<void>((r) => (release = r));
+		let finishUpload = () => {};
+		const uploadHeld = new Promise<void>((r) => (finishUpload = r));
+		const uploading = new Map<string, { done: number; of: number }>();
+		const uploader = {
+			uploadPrint: async (id: string) => {
+				uploading.set(id, { done: 3, of: 7 });
+				await uploadHeld;
+				uploading.delete(id);
+				return true;
+			},
+			uploading: () => uploading
+		} as unknown as ThumbUploader;
 		const step = createThumbStep({
 			rendersDir: renders,
 			thumbsDir: join(tmp, 'thumbs'),
 			concurrency: 1,
 			planOnly: false,
 			log: () => {},
-			upload: { uploader: { uploadPrint: async () => true } as unknown as ThumbUploader, renderFilesSettled: () => held },
+			upload: { uploader, renderFilesSettled: () => held },
 			stopped: () => false
 		});
 		step.offer('a');
 		// Made, then waiting for its render files.
 		while (!step.progressBy(() => 'all').get('all')?.waitingUpload) await new Promise((r) => setTimeout(r, 5));
-		expect(step.progressBy(() => 'all').get('all')).toEqual({ done: 0, of: 1, pagesMade: 2, pagesOf: 2, waitingUpload: 1 });
+		expect(step.progressBy(() => 'all').get('all')).toEqual({
+			done: 0,
+			of: 1,
+			pagesMade: 2,
+			pagesOf: 2,
+			waitingUpload: 1,
+			filesUp: 0,
+			filesOf: 0
+		});
 		await new Promise((r) => setTimeout(r, 20));
 		release();
+		// Its files going up: the uploader's count of them.
+		while (!uploading.size) await new Promise((r) => setTimeout(r, 5));
+		expect(step.progressBy(() => 'all').get('all')).toMatchObject({ done: 0, waitingUpload: 0, filesUp: 3, filesOf: 7 });
+		finishUpload();
 		await step.drain();
-		expect(step.progressBy(() => 'all').get('all')).toEqual({ done: 1, of: 1, pagesMade: 2, pagesOf: 2, waitingUpload: 0 });
+		expect(step.progressBy(() => 'all').get('all')).toEqual({
+			done: 1,
+			of: 1,
+			pagesMade: 2,
+			pagesOf: 2,
+			waitingUpload: 0,
+			filesUp: 0,
+			filesOf: 0
+		});
 		// The time it waited is summed for the run's last line.
 		expect(step.stats.waitingMs).toBeGreaterThan(10);
 	} finally {

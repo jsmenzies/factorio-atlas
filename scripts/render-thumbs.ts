@@ -198,6 +198,8 @@ async function runUpload(target: 'local' | 'prod') {
 			ids: list,
 			graceMs,
 			concurrency: Math.min(jobs, 16),
+			// up to 16 prints at once here, so fewer files each: ≤ 64 puts in flight
+			fileConcurrency: 4,
 			removed: guard.removed
 		});
 		if (guard.skipped.size) console.log(`not uploaded: ${guard.skipped.size} prints the ${target} stage deleted or removed`);

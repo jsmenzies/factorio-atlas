@@ -105,7 +105,7 @@ export function snapshot(o: SnapshotInput): RenderStages {
 				plan: { prints: 0, pages: 0, queued: 0, unchanged: 0, skipped: 0, failed: 0 },
 				draw: { drawn: 0, failed: 0, left: 0, printsDone: 0, printsDrawn: 0 },
 				upload: o.upload ? { pages: 0, files: 0, bytes: 0, waiting: 0, failing: 0, printsUp: 0 } : null,
-				thumbs: o.thumbs ? { done: 0, of: 0, pagesMade: 0, pagesOf: 0, waitingUpload: 0 } : null
+				thumbs: o.thumbs ? { done: 0, of: 0, pagesMade: 0, pagesOf: 0, waitingUpload: 0, filesUp: 0, filesOf: 0 } : null
 			};
 			sites.set(site, s);
 		}

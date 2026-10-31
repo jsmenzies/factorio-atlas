@@ -130,13 +130,30 @@ export interface ThumbUploaderOptions {
 	/** The thumbs folder (THUMBS_DIR). */
 	dir: string;
 	graceMs: number;
+	/** Due deletions at once, and (`render:thumbs --upload`) prints at once. */
 	concurrency?: number;
+	/** One print's files put at once (FILE_CONCURRENCY). */
+	fileConcurrency?: number;
+	/** How often a print's upload logs how far it got, while it takes longer than that (ms; PROGRESS_LOG_MS). */
+	progressLogMs?: number;
 	now?: () => number;
 	log?: (line: string) => void;
 	/** Checked between prints and files: true stops the uploader (what's left goes up next time). */
 	stopped?: () => boolean;
 	/** Whether the target's stage deleted or blocked the print (removed-guard.ts): its thumbnails never go up. */
 	removed?: (id: string) => Promise<boolean>;
+}
+
+/** A print's thumbnail files put at once: a 657-page book has ≈ 2,000 small files. A render run uploads up to
+ * ≈ `--workers` prints at once once drawing is over, so ≈ 64 puts in flight with 8 workers. */
+export const FILE_CONCURRENCY = 8;
+/** A print's upload logs `thumbnails: uploading <id> N of M files` this often while it lasts. */
+export const PROGRESS_LOG_MS = 30_000;
+
+/** A print's thumbnail files uploaded so far, of those its upload puts. */
+export interface ThumbFilesProgress {
+	done: number;
+	of: number;
 }
 
 const readIndex = async (file: string): Promise<ThumbsIndex | null> => {
@@ -171,6 +188,8 @@ export async function createThumbUploader(opts: ThumbUploaderOptions) {
 		failed: 0
 	};
 	const uploaded = await db.uploaded(target);
+	/** Prints whose files are going up now: files put of those to put. */
+	const inFlight = new Map<string, ThumbFilesProgress>();
 	/** Set when the store refuses us (401, 403): the remaining prints are left for the next run. */
 	let broken: string | null = null;
 
@@ -199,6 +218,47 @@ export async function createThumbUploader(opts: ThumbUploaderOptions) {
 		stats.kept += keep.length;
 	};
 
+	/**
+	 * Put a print's files, `fileConcurrency` at a time. After a failure or a stop no new file starts and
+	 * those in flight finish; then it throws the first error, or answers false for the stop.
+	 */
+	const putFiles = async (id: string, rels: string[]): Promise<boolean> => {
+		if (!rels.length) return true;
+		const progress: ThumbFilesProgress = { done: 0, of: rels.length };
+		inFlight.set(id, progress);
+		const every = opts.progressLogMs ?? PROGRESS_LOG_MS;
+		let loggedAt = Date.now();
+		let error: { e: unknown } | null = null;
+		let halted = false;
+		try {
+			await mapPool(rels, opts.fileConcurrency ?? FILE_CONCURRENCY, async (rel) => {
+				if (error || halted) return;
+				if (stopped()) {
+					halted = true;
+					return;
+				}
+				try {
+					const body = new Uint8Array(await readFile(join(dir, id, rel)));
+					await withRetries(() => store.put(`${id}/${rel}`, body, 'image/avif', renderCacheControl(rel)));
+					stats.files++;
+					stats.bytes += body.byteLength;
+					progress.done++;
+				} catch (e) {
+					error ??= { e };
+					return;
+				}
+				if (Date.now() - loggedAt >= every && progress.done < progress.of) {
+					loggedAt = Date.now();
+					log(`thumbnails: uploading ${id} ${progress.done} of ${progress.of} files`);
+				}
+			});
+		} finally {
+			inFlight.delete(id);
+		}
+		if (error) throw (error as { e: unknown }).e;
+		return !halted;
+	};
+
 	/** Bring one print's thumbnails in the bucket in line with its thumbs.json on disk. False when it failed. */
 	const uploadPrint = async (id: string): Promise<boolean> => {
 		if (broken || stopped()) return false;
@@ -217,13 +277,7 @@ export async function createThumbUploader(opts: ThumbUploaderOptions) {
 				target,
 				[...thumbKeys(plan.index)].map((k) => `${id}/${k}`)
 			);
-			for (const rel of plan.put) {
-				if (stopped()) return false;
-				const body = new Uint8Array(await readFile(join(dir, id, rel)));
-				await withRetries(() => store.put(`${id}/${rel}`, body, 'image/avif', renderCacheControl(rel)));
-				stats.files++;
-				stats.bytes += body.byteLength;
-			}
+			if (!(await putFiles(id, plan.put))) return false;
 			const json = new TextEncoder().encode(JSON.stringify(plan.index));
 			await withRetries(() => store.put(`${id}/${THUMBS_INDEX}`, json, 'application/json', renderCacheControl(THUMBS_INDEX)));
 			const t = now();
@@ -253,6 +307,10 @@ export async function createThumbUploader(opts: ThumbUploaderOptions) {
 		stats,
 		processDue,
 		uploadPrint,
+		/** Prints whose files are going up now, with files put of those to put (a live view: copy what you keep). */
+		uploading(): ReadonlyMap<string, ThumbFilesProgress> {
+			return inFlight;
+		},
 		get broken() {
 			return broken;
 		}

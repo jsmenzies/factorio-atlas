@@ -355,6 +355,24 @@ describe('render per source', () => {
 		expect(said(cellOf(f, 'fprints', 'thumbs'))).toBe('part · 35 of 41 prints');
 	});
 
+	test('Thumbnails: while a print’s files go up, "N of M files uploading" leads, the pages line last (to the tooltip when the cell is full)', () => {
+		const s = stages();
+		s.sites.codex!.thumbs = { done: 49, of: 50, pagesMade: 657, pagesOf: 657, waitingUpload: 0, filesUp: 900, filesOf: 1937 };
+		const live = flowOf({ run: inRender(), phase: 'running', liveRender: renderRow({ options: { phase: 'thumbnails', stages: s } }) });
+		const c = cellOf(live, 'codex', 'thumbs');
+		expect(said(c)).toBe('part · 900 of 1,937 files uploading · 49 of 50 prints · 657 of 657 pages');
+		expect(live.renderNow?.sentence).toBe('Making and uploading thumbnails: 88 of 95 prints. Uploading 900 of 1,937 files.');
+		// With prints waiting too, still three lines: the pages line goes to the tooltip. None uploading: as before.
+		s.sites.codex!.thumbs = { ...s.sites.codex!.thumbs, waitingUpload: 2 };
+		const full = cellOf(flowOf({ run: inRender(), phase: 'running', liveRender: renderRow({}, s) }), 'codex', 'thumbs');
+		expect(said(full)).toBe('part · 900 of 1,937 files uploading · 49 of 50 prints · 2 waiting on upload');
+		expect(full.tip).toContain('Also: 657 of 657 pages.');
+		s.sites.codex!.thumbs = { ...s.sites.codex!.thumbs, waitingUpload: 0, filesUp: 0, filesOf: 0 };
+		expect(said(cellOf(flowOf({ run: inRender(), phase: 'running', liveRender: renderRow({}, s) }), 'codex', 'thumbs'))).toBe(
+			'part · 657 of 657 pages · 49 of 50 prints'
+		);
+	});
+
 	test('a render run from before this step isn’t this update’s', () => {
 		const f = flowOf({ run: inRender(), phase: 'running', liveRender: renderRow({ started_at: 900_000 }) });
 		expect(cellOf(f, 'codex', 'plan').kind).toBe('wait');

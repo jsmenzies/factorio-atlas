@@ -15,7 +15,7 @@
  * browser-safe.
  */
 import type { RenderRun } from '#lib/server/admin/render.js';
-import { stageTotals, type RenderStages, type SiteStages } from '#lib/render-stages.js';
+import { stageTotals, type RenderStages, type SiteStages, type ThumbsStage } from '#lib/render-stages.js';
 import type { LogProgress } from '#lib/sync-progress.js';
 import { recordsSeen } from '#lib/sync-progress.js';
 import { SOURCE_SITES } from '#lib/sources.js';
@@ -520,6 +520,18 @@ const unstaged = (step: SyncStep): Cell | null =>
 			)
 		: null;
 
+/**
+ * The Thumbnails cell's lines: pages made, prints done, prints waiting on their render upload; while a print's
+ * files go up, "N of M files uploading" comes first and the pages line (made by then) goes last, so fitCell
+ * moves it to the tooltip.
+ */
+function thumbFacts(t: ThumbsStage, live: boolean): Fact[] {
+	const pages: Fact[] = t.pagesOf ? [{ n: `${int(t.pagesMade ?? 0)} of ${int(t.pagesOf)}`, text: 'pages' }] : [];
+	const rest: Fact[] = [{ n: `${int(t.done)} of ${int(t.of)}`, text: 'prints' }, ...fact(t.waitingUpload, 'waiting on upload')];
+	if (!live || !t.filesOf) return [...pages, ...rest];
+	return [{ n: `${int(t.filesUp ?? 0)} of ${int(t.filesOf)}`, text: 'files uploading' }, ...rest, ...pages];
+}
+
 function renderCells(
 	mode: BoardMode,
 	run: SyncRun | null,
@@ -598,14 +610,11 @@ function renderCells(
 		: thumbs.of
 			? cell(
 					live && (thumbs.done < thumbs.of || more) ? 'part' : 'done',
-					[
-						...(thumbs.pagesOf ? [{ n: `${int(thumbs.pagesMade ?? 0)} of ${int(thumbs.pagesOf)}`, text: 'pages' }] : []),
-						{ n: `${int(thumbs.done)} of ${int(thumbs.of)}`, text: 'prints' },
-						...fact(thumbs.waitingUpload, 'waiting on upload')
-					],
+					thumbFacts(thumbs, live),
 					'Made (and uploaded) per print once its pages are final. x of y pages: thumbnail pages made of those to make (counted as ' +
 						'each print is looked at; prints already up to date have none); x of y prints: prints done; waiting on upload: prints ' +
-						'whose thumbnails are made, waiting for their render files to go up first.'
+						'whose thumbnails are made, waiting for their render files to go up first; files uploading: the thumbnail files of ' +
+						'the prints going up now.'
 				)
 			: more
 				? cell('wait', [], 'Made per print once its pages are final.')
@@ -717,7 +726,8 @@ export function renderNow(r: RenderRun | null): RenderNow {
 			const label = r.upload_target ? 'Making and uploading thumbnails' : 'Making thumbnails';
 			const t = r.options.stages ? stageTotals(r.options.stages) : null;
 			if (!t?.thumbsOf) return now('thumbnails', `${label}.`);
-			return now('thumbnails', `${label}: ${int(t.thumbsDone)} of ${int(t.thumbsOf)} prints.`, t.thumbsDone, t.thumbsOf);
+			const files = t.thumbFilesOf ? ` Uploading ${int(t.thumbFilesUp)} of ${int(t.thumbFilesOf)} files.` : '';
+			return now('thumbnails', `${label}: ${int(t.thumbsDone)} of ${int(t.thumbsOf)} prints.${files}`, t.thumbsDone, t.thumbsOf);
 		}
 		case 'uploads': {
 			const left = r.uploads_pending;

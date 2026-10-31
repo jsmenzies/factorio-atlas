@@ -56,13 +56,19 @@ export interface ThumbStepStats {
 	waitingMs: number;
 }
 
-/** One key's (site's) thumbnails: prints done of those offered, pages made of those to make (known once a print is planned), prints made and waiting on their render upload. */
+/**
+ * One key's (site's) thumbnails: prints done of those offered, pages made of those to make (known once a print
+ * is planned), prints made and waiting on their render upload, and the files of the prints uploading now (put
+ * of those to put; both 0 when none is).
+ */
 export interface ThumbProgress {
 	done: number;
 	of: number;
 	pagesMade: number;
 	pagesOf: number;
 	waitingUpload: number;
+	filesUp: number;
+	filesOf: number;
 }
 
 export function createThumbStep(opts: ThumbStepOptions) {
@@ -214,12 +220,18 @@ export function createThumbStep(opts: ThumbStepOptions) {
 			for (const id of offered) {
 				const k = keyOf(id);
 				let p = out.get(k);
-				if (!p) out.set(k, (p = { done: 0, of: 0, pagesMade: 0, pagesOf: 0, waitingUpload: 0 }));
+				if (!p) out.set(k, (p = { done: 0, of: 0, pagesMade: 0, pagesOf: 0, waitingUpload: 0, filesUp: 0, filesOf: 0 }));
 				p.of++;
 				if (!queued.has(id) && !working.has(id)) p.done++;
 				p.pagesMade += pagesMade.get(id) ?? 0;
 				p.pagesOf += pagesOf.get(id) ?? 0;
 				if (waitingUpload.has(id)) p.waitingUpload++;
+			}
+			for (const [id, f] of opts.upload?.uploader.uploading() ?? []) {
+				const p = out.get(keyOf(id));
+				if (!p) continue;
+				p.filesUp += f.done;
+				p.filesOf += f.of;
 			}
 			return out;
 		},

@@ -66,6 +66,12 @@ export interface ThumbsStage {
 	pagesMade?: number;
 	pagesOf?: number;
 	waitingUpload?: number;
+	/**
+	 * Files of the thumbnails going up right now: put, of those to put, over the prints uploading. 0 (or missing,
+	 * in older snapshots) when none is.
+	 */
+	filesUp?: number;
+	filesOf?: number;
 }
 
 export interface SiteStages {
@@ -129,6 +135,9 @@ export interface StageTotals {
 	failing: number;
 	thumbsDone: number;
 	thumbsOf: number;
+	/** Thumbnail files going up now, put of those to put. */
+	thumbFilesUp: number;
+	thumbFilesOf: number;
 }
 
 export function stageTotals(s: RenderStages): StageTotals {
@@ -148,7 +157,9 @@ export function stageTotals(s: RenderStages): StageTotals {
 		waiting: 0,
 		failing: 0,
 		thumbsDone: 0,
-		thumbsOf: 0
+		thumbsOf: 0,
+		thumbFilesUp: 0,
+		thumbFilesOf: 0
 	};
 	for (const x of Object.values(s.sites)) {
 		if (!x) continue;
@@ -168,6 +179,8 @@ export function stageTotals(s: RenderStages): StageTotals {
 		t.failing += x.upload?.failing ?? 0;
 		t.thumbsDone += x.thumbs?.done ?? 0;
 		t.thumbsOf += x.thumbs?.of ?? 0;
+		t.thumbFilesUp += x.thumbs?.filesUp ?? 0;
+		t.thumbFilesOf += x.thumbs?.filesOf ?? 0;
 	}
 	return t;
 }
