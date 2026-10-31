@@ -9,6 +9,7 @@ import { isFactorioprintsId } from '#lib/print-id.js';
 import { IMGUR_ID } from '#lib/screenshots.js';
 import { listClone } from '#lib/server/pipeline/mirror-clone.js';
 import type { Wanted } from './state.js';
+import { mapInChunks } from '../map-in-chunks.js';
 
 /** A record's image, or null when it has none (or an id that isn't an Imgur id). */
 export const imageOf = (record: unknown): { id: string; type: string | null } | null => {
@@ -49,12 +50,8 @@ const readImage = async (print: string, file: string): Promise<PrintImage> => {
 };
 
 /** In chunks, so 18k files aren't all open at once. */
-async function readAll(items: { print: string; file: string }[]): Promise<PrintImage[]> {
-	const out: PrintImage[] = [];
-	for (let i = 0; i < items.length; i += 256)
-		out.push(...(await Promise.all(items.slice(i, i + 256).map((x) => readImage(x.print, x.file)))));
-	return out;
-}
+const readAll = (items: { print: string; file: string }[]): Promise<PrintImage[]> =>
+	mapInChunks(items, 256, (x) => readImage(x.print, x.file));
 
 export const readClone = async (dir: string) => readAll((await listClone(dir)).map((e) => ({ print: e.id, file: join(dir, e.path) })));
 

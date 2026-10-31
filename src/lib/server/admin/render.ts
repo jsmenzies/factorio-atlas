@@ -14,6 +14,7 @@ import {
 	type RenderRunRow
 } from '#lib/server/render-queue.js';
 import type { RenderStages } from '#lib/render-stages.js';
+import { countOf as count } from '../d1-batch.js';
 import { intParam, runControlActions } from './pipeline.js';
 import { parseScopes, scopeStatements } from './render-scope.js';
 
@@ -89,7 +90,6 @@ class Reads {
 }
 
 const rows = <T>(r: D1Result | undefined) => (r?.results ?? []) as T[];
-const count = (r: D1Result | undefined) => (r?.results[0] as { n: number } | undefined)?.n ?? 0;
 
 /** The run to show first: the newest one whose heartbeat is fresh, else the newest one at all. */
 const pickCurrent = (live: RenderRun[], latest: RenderRun | null, now: number) => live.find((r) => isFresh(r, now)) ?? latest;

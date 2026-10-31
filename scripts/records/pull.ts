@@ -4,7 +4,7 @@
  * records are fetched; records the site no longer lists leave the store. Pure apart from the store's
  * files; tested in pull.test.ts.
  */
-import type { SourceRecord } from '#lib/server/pipeline/source-record.js';
+import { fromPipelineText, type SourceRecord } from '#lib/server/pipeline/source-record.js';
 import { dropRecord, putRecord, readIndex, writeIndex, type StoreIndex, type StoreSite } from './store';
 import { errorText } from '#lib/error-text.js';
 
@@ -22,6 +22,15 @@ export interface StoreAdapter {
 	site: StoreSite;
 	list(): Promise<Listed[]>;
 	fetch(siteId: string): Promise<SourceRecord | null>;
+}
+
+/** A record the stage archived in RAW as pipeline text at `key`, or null when it isn't there; `what` names it in the error. */
+export async function archivedRecord(raw: R2Bucket, key: string, what: string): Promise<SourceRecord | null> {
+	const obj = await raw.get(key);
+	if (!obj) return null;
+	const record = fromPipelineText(await obj.text());
+	if (!record) throw new Error(`${key} is not ${what}`);
+	return record;
 }
 
 export interface PullPlan {

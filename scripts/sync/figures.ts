@@ -9,6 +9,7 @@
 import { existsSync } from 'node:fs';
 import { printIdFor, siteOfPrintIdSql, type Site } from '#lib/print-id.js';
 import { ANALYZER_VERSION } from '#lib/server/pipeline/analyze.js';
+import { countOf as count } from '#lib/server/d1-batch.js';
 import { POLLED_SITES, type SourceFigures, type SyncFigures } from '#lib/sync.js';
 import { recordsDir } from '../records/store';
 import { openStage } from '../stage-command';
@@ -18,7 +19,6 @@ import { readR2Storage } from './r2-storage';
 
 const ROOT = new URL('../..', import.meta.url).pathname;
 
-const count = (r: D1Result) => Number((r.results[0] as { n: number } | undefined)?.n ?? 0);
 const byKey = (r: D1Result) => Object.fromEntries((r.results as { k: string | number; n: number }[]).map((x) => [String(x.k), x.n]));
 
 /** Prints by the site they are credited to. Screenshots and ingest_state are joined by primary key. */

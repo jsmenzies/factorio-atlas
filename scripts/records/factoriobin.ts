@@ -8,8 +8,8 @@
  * print as another source has no print of its own, so nothing to render. The revision is when we first
  * saw it: posts are never edited.
  */
-import { fromPipelineText, rawKeyFor } from '#lib/server/pipeline/source-record.js';
-import type { StoreAdapter } from './pull';
+import { rawKeyFor } from '#lib/server/pipeline/source-record.js';
+import { archivedRecord, type StoreAdapter } from './pull';
 
 export interface FactoriobinEnv {
 	readonly DB: D1Database;
@@ -26,11 +26,5 @@ export const factoriobinStoreAdapter = (env: FactoriobinEnv): StoreAdapter => ({
 		const rows = (await env.DB.prepare(LIVE_FACTORIOBIN_SQL).all<{ site_id: string; first_seen: number }>()).results;
 		return rows.map((r) => ({ siteId: r.site_id, rev: String(r.first_seen) }));
 	},
-	async fetch(siteId) {
-		const obj = await env.RAW.get(rawKeyFor('factoriobin', siteId));
-		if (!obj) return null;
-		const record = fromPipelineText(await obj.text());
-		if (!record) throw new Error(`${rawKeyFor('factoriobin', siteId)} is not a factoriobin record`);
-		return record;
-	}
+	fetch: (siteId) => archivedRecord(env.RAW, rawKeyFor('factoriobin', siteId), 'a factoriobin record')
 });

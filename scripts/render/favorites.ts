@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import { loadRemovedPrintIds } from '#lib/server/removal-blocks.js';
 import { fileStamp } from './source.js';
 import { inBatches, retrying } from './queue.js';
+import { mapInChunks } from '../map-in-chunks.js';
 
 export interface FavoriteRow {
 	print_id: string;
@@ -127,31 +128,26 @@ export async function readFavorites(
 	const counts = new Map<string, number>();
 	const next: Cache = {};
 	let parsed = 0;
-	for (let i = 0; i < ids.length; i += 64) {
-		const chunk = ids.slice(i, i + 64);
-		const got = await Promise.all(
-			chunk.map(async (id) => {
-				const path = file(id);
-				const stamp = await fileStamp(path);
-				if (stamp === null) return null;
-				const hit = cache[id];
-				if (hit && hit[0] === stamp) return [stamp, hit[1]] as [string, number];
-				try {
-					const favs = favoritesOf(await readFile(path, 'utf8'));
-					parsed++;
-					return [stamp, favs] as [string, number];
-				} catch {
-					return null;
-				}
-			})
-		);
-		chunk.forEach((id, j) => {
-			const g = got[j];
-			if (!g) return;
-			counts.set(id, g[1]);
-			next[id] = g;
-		});
-	}
+	const got = await mapInChunks(ids, 64, async (id) => {
+		const path = file(id);
+		const stamp = await fileStamp(path);
+		if (stamp === null) return null;
+		const hit = cache[id];
+		if (hit && hit[0] === stamp) return [stamp, hit[1]] as [string, number];
+		try {
+			const favs = favoritesOf(await readFile(path, 'utf8'));
+			parsed++;
+			return [stamp, favs] as [string, number];
+		} catch {
+			return null;
+		}
+	});
+	ids.forEach((id, j) => {
+		const g = got[j];
+		if (!g) return;
+		counts.set(id, g[1]);
+		next[id] = g;
+	});
 	await mkdir(dirname(cacheFile), { recursive: true });
 	await writeFile(`${cacheFile}.tmp`, JSON.stringify(next));
 	await rename(`${cacheFile}.tmp`, cacheFile);
@@ -166,15 +162,12 @@ export async function changedSources(
 	const ids = [...seen.keys()];
 	const changed: { print_id: string; stamp: string | null }[] = [];
 	let gone = 0;
-	for (let i = 0; i < ids.length; i += 64) {
-		const chunk = ids.slice(i, i + 64);
-		const got = await Promise.all(chunk.map((id) => stamp(id)));
-		chunk.forEach((id, j) => {
-			if (got[j] === seen.get(id)) return;
-			if (got[j] === null) gone++;
-			changed.push({ print_id: id, stamp: got[j] });
-		});
-	}
+	const got = await mapInChunks(ids, 64, stamp);
+	ids.forEach((id, j) => {
+		if (got[j] === seen.get(id)) return;
+		if (got[j] === null) gone++;
+		changed.push({ print_id: id, stamp: got[j] });
+	});
 	return { changed, gone };
 }
 

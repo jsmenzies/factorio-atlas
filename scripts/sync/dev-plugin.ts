@@ -22,7 +22,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:f
 import { join } from 'node:path';
 import { loadEnv, type Plugin } from 'vite';
 import { rendersDir } from '#lib/server/renders-dir.js';
-import { findBun, json, jsonBody, runToEnd } from '../render/dev-plugin.js';
+import { fileTail as tail, findBun, json, jsonBody, runToEnd } from '../render/dev-plugin.js';
 import { foldProgress, progressFileOf } from '#lib/sync-progress.js';
 import { lastJsonLine } from './output.js';
 import { errorText } from '#lib/error-text.js';
@@ -30,8 +30,6 @@ import { errorText } from '#lib/error-text.js';
 const ROOT = join(import.meta.dirname, '..', '..');
 const LOG_NAME = /^sync-[0-9TZ-]+\.log$/;
 const CONSOLE_LOG = 'sync-console.log';
-
-const tail = (file: string, lines: number) => readFileSync(file, 'utf8').slice(-200_000).split('\n').slice(-lines).join('\n');
 
 const errorOf = (r: { code: number | null; stdout: string; stderr: string }) =>
 	(r.stderr || r.stdout).trim().split('\n').slice(-6).join('\n') || `exit code ${r.code}`;

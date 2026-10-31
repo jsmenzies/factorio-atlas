@@ -7,8 +7,8 @@
  * The revision is the source row's `updated_at`. Read-only on the stage.
  */
 import { SITE_PREFIX } from '#lib/print-id.js';
-import { fromPipelineText, rawKeyFor } from '#lib/server/pipeline/source-record.js';
-import type { StoreAdapter } from './pull';
+import { rawKeyFor } from '#lib/server/pipeline/source-record.js';
+import { archivedRecord, type StoreAdapter } from './pull';
 import type { StoreSite } from './store';
 
 export interface PolledStoreEnv {
@@ -30,11 +30,5 @@ export const polledStoreAdapter = (env: PolledStoreEnv, site: Exclude<StoreSite,
 		).results;
 		return rows.map((r) => ({ siteId: r.site_id, rev: String(r.updated_at ?? 0) }));
 	},
-	async fetch(siteId) {
-		const obj = await env.RAW.get(rawKeyFor(site, siteId));
-		if (!obj) return null;
-		const record = fromPipelineText(await obj.text());
-		if (!record) throw new Error(`${rawKeyFor(site, siteId)} is not a ${site} record`);
-		return record;
-	}
+	fetch: (siteId) => archivedRecord(env.RAW, rawKeyFor(site, siteId), `a ${site} record`)
 });

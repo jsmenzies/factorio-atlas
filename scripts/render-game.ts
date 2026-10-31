@@ -196,6 +196,7 @@ import { deleteGraceMs, openStore } from './render/target.js';
 import { createUploader, DELETE_GRACE_MS, hasUploadWork, planPrint, type Uploader, type UploadRow } from './render/upload.js';
 import { thumbsDir } from '#lib/server/renders-dir.js';
 import { mebibytes as mb } from '#lib/format.js';
+import { mapInChunks } from './map-in-chunks.js';
 import { createThumbStep, THUMB_STEP_MB, type ThumbStep } from './render/thumb-step.js';
 import { createThumbUploader, thumbUploadDb } from './render/thumbs-upload.js';
 import { FLAGS_TIMEOUT_MS, needsPageBump, runStageFlags, withDeadline } from './render/stage-flags.js';
@@ -1270,11 +1271,8 @@ async function pickBatch(ids: string[], b: BatchRecord): Promise<number> {
 	const t0 = Date.now();
 	const rows = byPrint(await queue.allJobs());
 	const seen = await queue.seenPrints();
-	for (let i = 0; i < ids.length; i += 64) {
-		const chunk = ids.slice(i, i + 64);
-		const got = await Promise.all(chunk.map((id) => source.stamp(id)));
-		chunk.forEach((id, j) => stamps.set(id, got[j]));
-	}
+	const got = await mapInChunks(ids, 64, (id) => source.stamp(id));
+	ids.forEach((id, j) => stamps.set(id, got[j]));
 	const { candidates, unseen } = batchCandidates(ids, {
 		rows,
 		seen,

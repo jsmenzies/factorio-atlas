@@ -259,11 +259,10 @@ const latestLog = () => {
 	}
 };
 
-const tail = (file: string, lines: number) => {
-	const text = readFileSync(join(LOG_DIR, file), 'utf8');
-	// Long runs write a lot; the end is what matters.
-	return text.slice(-200_000).split('\n').slice(-lines).join('\n');
-};
+/** A log's last `lines` lines (long runs write a lot; the end is what matters). Shared with scripts/sync/dev-plugin.ts. */
+export const fileTail = (path: string, lines: number) => readFileSync(path, 'utf8').slice(-200_000).split('\n').slice(-lines).join('\n');
+/** A run log's (in LOG_DIR). */
+const tail = (file: string, lines: number) => fileTail(join(LOG_DIR, file), lines);
 
 export function renderControl(): Plugin {
 	let env: Record<string, string> = {};

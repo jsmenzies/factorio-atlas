@@ -8,9 +8,8 @@
  * not on the site, so not listed; one deleted or taken down has no row (its purge deletes it), or a
  * tombstone, and leaves the store at the next pull.
  */
-import { fromPipelineText } from '#lib/server/pipeline/source-record.js';
 import { recordKey, siteIdOf } from '#lib/server/uploads/uploads.js';
-import type { StoreAdapter } from './pull';
+import { archivedRecord, type StoreAdapter } from './pull';
 
 export interface UploadsEnv {
 	readonly DB: D1Database;
@@ -30,11 +29,5 @@ export const uploadsStoreAdapter = (env: UploadsEnv): StoreAdapter => ({
 		const rows = (await env.DB.prepare(LIVE_UPLOADS_SQL).all<{ print_id: string; updated_at: number; shown_name: string }>()).results;
 		return rows.map((r) => ({ siteId: siteIdOf(r.print_id), rev: uploadRev(r) }));
 	},
-	async fetch(siteId) {
-		const obj = await env.RAW.get(recordKey(siteId));
-		if (!obj) return null;
-		const record = fromPipelineText(await obj.text());
-		if (!record) throw new Error(`${recordKey(siteId)} is not an upload's record`);
-		return record;
-	}
+	fetch: (siteId) => archivedRecord(env.RAW, recordKey(siteId), "an upload's record")
 });

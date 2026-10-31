@@ -21,13 +21,12 @@ import { identicalCopiesStatement, toIdenticalCopies, type IdenticalCopy } from 
 import { syncFold } from './pipeline/pipeline.js';
 import { RawStoreR2 } from './pipeline/raw-store.js';
 import { PrintRepositoryD1 } from './pipeline/repository.js';
+import { randomBase62 } from './random-id.js';
 import { TakedownError, takedownPrint, type PurgeList, type TakedownEnv, type TakedownResult } from './takedown.js';
 import { errorText } from '#lib/error-text.js';
 
-const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-
-/** 16 random base62 characters. */
-export const newReportId = () => [...crypto.getRandomValues(new Uint8Array(16))].map((b) => ALPHABET[b % 62]).join('');
+/** 16 random base62 characters, each equally likely. */
+export const newReportId = () => randomBase62(16);
 
 export interface NewReport {
 	readonly kind: ReportKind;

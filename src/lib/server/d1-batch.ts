@@ -2,6 +2,9 @@
 export const chunks = <T>(xs: readonly T[], n: number): T[][] =>
 	Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 
+/** The `n` column of a result's first row (`SELECT count(*) AS n …`), 0 when there is none. */
+export const countOf = (r: D1Result | undefined) => Number((r?.results[0] as { n: number } | undefined)?.n ?? 0);
+
 /** Rows written by a batch's statements. */
 export const rowsWritten = (results: readonly D1Result[]) => results.reduce((n, r) => n + (r.meta?.rows_written ?? 0), 0);
 

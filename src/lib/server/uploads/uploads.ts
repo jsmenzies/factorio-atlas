@@ -19,6 +19,7 @@ import { sha256Hex } from '../hash.js';
 import { bumpPageVersion } from '../page-cache.js';
 import { analysisKey, withAuthorName } from '../pipeline/print-doc.js';
 import { fromPipelineText, rawKeyFor, toPipelineText, type SourceRecord } from '../pipeline/source-record.js';
+import { randomBase62 } from '../random-id.js';
 import type { GateOutcome, PurgeExtras, Suggestion, UploadGate } from './gate.js';
 import { errorText } from '#lib/error-text.js';
 
@@ -37,18 +38,8 @@ export const PROCESSING_ATTEMPTS = 3;
 export const PROCESSING_MAX = 5;
 const DAY_MS = 86_400_000;
 
-const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
-
-/** 10 base62 characters from crypto randomness (bytes ≥ 248 are skipped, so every character is equally likely). */
-export const newSiteId = () => {
-	let out = '';
-	while (out.length < 10) {
-		for (const b of crypto.getRandomValues(new Uint8Array(16))) {
-			if (b < 248 && out.length < 10) out += BASE62[b % 62];
-		}
-	}
-	return out;
-};
+/** 10 random base62 characters, each equally likely. */
+export const newSiteId = () => randomBase62(10);
 
 export const printIdOf = (siteId: string) => printIdFor('upload', siteId);
 export const siteIdOf = (printId: string) => printId.slice(printId.indexOf('-') + 1);
