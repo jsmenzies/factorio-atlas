@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SourceRecord } from '#lib/server/pipeline/source-record.js';
-import { foldProgress, logProgress, SYNC_PROGRESS_ENV } from '#lib/sync-progress.js';
+import { foldProgress, SYNC_PROGRESS_ENV } from '#lib/sync-progress.js';
 import {
 	admissionWork,
 	applyPoll,
@@ -99,7 +99,7 @@ const fetchOnce = async (
 const many = (n: number) => new Map([...Array(n)].map((_, i) => [String(i + 1), 100 + i] as [string, number]));
 
 describe('polled sites: fetch', () => {
-	test('each record read gives the Update tab the same live count as its log line did', async () => {
+	test('each record read gives the Update tab a live count', async () => {
 		const events = join(inbox, 'progress.jsonl');
 		process.env[SYNC_PROGRESS_ENV] = events;
 		try {
@@ -114,9 +114,13 @@ describe('polled sites: fetch', () => {
 			version.v = 2;
 			await fetchOnce(site, { log, maxChange: 1 }); // changed, same text, gone, failed again
 			const text = await readFile(events, 'utf8');
-			const fromLog = logProgress(`== Fetch new prints\n${lines.join('\n')}\n`);
-			expect(new Set(Object.keys(fromLog.sites.codex))).toEqual(new Set(['new', 'failed', 'changed', 'same', 'gone']));
-			expect(foldProgress(`{"t":"step","step":"fetch"}\n${text}`)).toEqual(fromLog);
+			expect(foldProgress(`{"t":"step","step":"fetch"}\n${text}`)).toEqual({
+				step: 'fetch',
+				sites: { codex: { new: 6, failed: 2, same: 4, changed: 1, gone: 1 } },
+				toAdmit: {},
+				shots: { toCopy: null, bySite: {}, last: null },
+				command: null
+			});
 		} finally {
 			delete process.env[SYNC_PROGRESS_ENV];
 		}

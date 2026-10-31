@@ -4,25 +4,18 @@
  * a step runs. Only the current step's part is counted (after its last `step` event). Browser-safe; the reading is
  * pure.
  *
- * Since 2026-10-31 the update keeps these as typed events, one JSON object a line, in a file beside its log
+ * The update keeps these as typed events, one JSON object a line, in a file beside its log
  * (`progressFileOf`; scripts/sync/progress.ts writes them, to the file named in SYNC_PROGRESS_ENV): `step` and
  * `command` from the runner (scripts/sync/runner.ts), `record` per polled site's record in the fetch
  * (scripts/sync/polled.ts applyPoll) and through the gate (scripts/polled.ts), `admit` the admission's total
  * (scripts/polled.ts), `shots` and `shot` for other sites' images (scripts/screenshots/sites.ts). foldProgress
- * reads them; the log's wording is for people only.
- *
- * Updates from before then have no such file: logProgress reads their logs, by these lines (never change it):
- * - `codex/494: new`, `fprints/<uuid>: undecodable (…)`, `codex/323: failed (…)`, `codex/12: ✗ …`: a record;
- * - `prod ← codex inbox …: 431 records to admit, 0 gone from the site`: the admission's total;
- * - `screenshots: 749 images from other sites shown in prod: … to copy 716 → …`: other sites' images to copy, and
- *   `screenshots: codex.<hex> (<print>): fetched` or `: failed (…)` per image;
- * - `$ bun scripts/screenshots.ts --from-sites prod --json`: the command the step runs now.
- * The render step's progress isn't read here: the render run writes it to its row (`options.stages`).
+ * reads them; the log's wording is for people only. An update without the file (one from before 2026-10-31) shows
+ * no live counts. The render step's progress isn't read here: the render run writes it to its row (`options.stages`).
  */
 import { SYNC_STEPS, type SyncStepId } from './sync.js';
 
 export interface LogProgress {
-	/** The step whose part of the log was counted (its `== <label>` header), or null before the first. */
+	/** The step whose events were counted (its last `step` event), or null before the first. */
 	step: SyncStepId | null;
 	/** Per site, its records' outcomes in that part: `new`, `changed`, `same`, `joined`, `failed`, `undecodable`, … */
 	sites: Record<string, Record<string, number>>;
@@ -93,43 +86,6 @@ export function foldProgress(text: string): LogProgress {
 		else if (e?.t === 'admit') out.toAdmit[e.site] = e.records;
 		else if (e?.t === 'shots') out.shots.toCopy = e.toCopy;
 		else if (e?.t === 'shot') countShot(out, e.site, e.outcome);
-	}
-	return out;
-}
-
-const HEADER = /^== (.+)$/;
-const RECORD = /^([a-z]+)\/[^\s:]+: (✗|[a-z]+)/;
-const TO_ADMIT = /^\S+ ← ([a-z]+) inbox .*: ([\d,]+) records to admit/;
-const SHOTS_TO_COPY = /^screenshots: [\d,]+ images from other sites shown in \S+: .*to copy ([\d,]+)/;
-const SHOT = /^screenshots: ([a-z]+)\.[0-9a-f]+ \([^)]*\): (fetched|failed)/;
-const COMMAND = /^\$ bun (.+)$/;
-
-const num = (s: string) => Number(s.replace(/,/g, ''));
-
-/** Counts the current step's part of a log written before progress files (its tail is enough when it holds that step's header). */
-export function logProgress(text: string): LogProgress {
-	const lines = text.split('\n');
-	let start = 0;
-	let step: SyncStepId | null = null;
-	for (let i = lines.length - 1; i >= 0; i--) {
-		const m = HEADER.exec(lines[i]);
-		if (!m) continue;
-		start = i + 1;
-		step = SYNC_STEPS.find((s) => s.label === m[1].trim())?.id ?? null;
-		break;
-	}
-	const out = empty(step);
-	for (let i = start; i < lines.length; i++) {
-		const line = lines[i];
-		let m = RECORD.exec(line);
-		if (m) {
-			countRecord(out, m[1], m[2] === '✗' ? 'failed' : m[2]);
-			continue;
-		}
-		if ((m = COMMAND.exec(line))) out.command = m[1];
-		else if ((m = TO_ADMIT.exec(line))) out.toAdmit[m[1]] = num(m[2]);
-		else if ((m = SHOTS_TO_COPY.exec(line))) out.shots.toCopy = num(m[1]);
-		else if ((m = SHOT.exec(line))) countShot(out, m[1], m[2] as 'fetched' | 'failed');
 	}
 	return out;
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { RenderStages } from '#lib/render-stages.js';
 import type { RenderRun } from '#lib/server/admin/render.js';
-import { logProgress } from '#lib/sync-progress.js';
+import { foldProgress, type ProgressEvent } from '#lib/sync-progress.js';
 import { DEFAULT_SETTINGS, GROUP, ROW, type SourcePlan, type SyncPlan, type SyncRun, type SyncStep } from '#lib/sync.js';
 import { buildFlow, CELL_LINES, COLUMNS, fitCell, heroBar, nowSentence, renderNow, type Cell, type Flow } from './flow';
 import finished from './flow.fixture.json';
@@ -44,6 +44,8 @@ const flowOf = (o: Partial<Parameters<typeof buildFlow>[0]>) =>
 		clock: () => '01:14',
 		...o
 	});
+/** The live counts a step's progress events give. */
+const fold = (...events: ProgressEvent[]) => foldProgress(events.map((e) => JSON.stringify(e)).join('\n'));
 const row = (f: Flow, site: string) => f.rows.find((r) => r.site === site)!;
 const cellOf = (f: Flow, site: string, col: (typeof COLUMNS)[number]) => row(f, site).cells[col];
 /** A cell as "kind: fact · fact", for short assertions. */
@@ -172,15 +174,17 @@ describe('screenshots per source', () => {
 		const imgur = flowOf({
 			run: r,
 			phase: 'running',
-			progress: logProgress('== Copy screenshots\n$ bun scripts/screenshots.ts --from-clone x --json\n')
+			progress: fold({ t: 'step', step: 'screenshots' }, { t: 'command', command: 'scripts/screenshots.ts --from-clone x --json' })
 		});
 		expect(running(imgur)).toEqual(['factorioprints shots']);
 		const sites = flowOf({
 			run: r,
 			phase: 'running',
-			progress: logProgress(
-				'== Copy screenshots\n$ bun scripts/screenshots.ts --from-sites prod --json\n' +
-					'screenshots: codex.2cc33feefb7dd975 (codex-34): fetched\nscreenshots: fprints.0f688ce08ceec6a7 (fprints-1): fetched\n'
+			progress: fold(
+				{ t: 'step', step: 'screenshots' },
+				{ t: 'command', command: 'scripts/screenshots.ts --from-sites prod --json' },
+				{ t: 'shot', site: 'codex', outcome: 'fetched' },
+				{ t: 'shot', site: 'fprints', outcome: 'fetched' }
 			)
 		});
 		expect(running(sites)).toEqual(['fprints shots']);
@@ -190,7 +194,7 @@ describe('screenshots per source', () => {
 		const sizing = flowOf({
 			run: r,
 			phase: 'running',
-			progress: logProgress('== Copy screenshots\n$ bun scripts/screenshots.ts --upload prod --json\n')
+			progress: fold({ t: 'step', step: 'screenshots' }, { t: 'command', command: 'scripts/screenshots.ts --upload prod --json' })
 		});
 		expect(sizing.shared.sizing.kind).toBe('run');
 		expect(nowSentence(sizing, { plan: BEFORE, phase: 'running' })).toBe('Sizing the new screenshots and putting them in the bucket.');
@@ -215,7 +219,10 @@ describe('the board while an update runs', () => {
 	};
 
 	test('fetch: the site reading now counts up from the log, against what its plan said; one running cell', () => {
-		const progress = logProgress(`== Fetch new prints\n${'fprints/a: new\n'.repeat(180)}`);
+		const progress = fold(
+			{ t: 'step', step: 'fetch' },
+			...Array.from({ length: 180 }, (): ProgressEvent => ({ t: 'record', site: 'fprints', outcome: 'new' }))
+		);
 		const f = flowOf({ run: mid(), phase: 'running', progress });
 		expect(said(cellOf(f, 'codex', 'changes'))).toBe('done · 431 read');
 		expect(cellOf(f, 'fprints', 'changes')).toMatchObject({ kind: 'run', bar: 44, facts: [{ n: '180 of 407', text: 'read' }] });
@@ -238,9 +245,12 @@ describe('the board while an update runs', () => {
 					? { id: s.id, status: 'pending' }
 					: s
 		);
-		const progress = logProgress(
-			"== Update the site's prints\nprod ← codex inbox x: 431 records to admit, 0 gone from the site\n" +
-				'codex/1: new\ncodex/2: joined (-Abc)\ncodex/3: failed (remote /d1)\n'
+		const progress = fold(
+			{ t: 'step', step: 'ingest' },
+			{ t: 'admit', site: 'codex', records: 431 },
+			{ t: 'record', site: 'codex', outcome: 'new' },
+			{ t: 'record', site: 'codex', outcome: 'joined' },
+			{ t: 'record', site: 'codex', outcome: 'failed' }
 		);
 		const f = flowOf({ run: r, phase: 'running', progress });
 		expect(cellOf(f, 'codex', 'added')).toMatchObject({ kind: 'run', facts: [{ n: '3 of 431', text: 'added' }] });
@@ -248,8 +258,13 @@ describe('the board while an update runs', () => {
 		expect(running(f)).toEqual(['codex added']);
 		expect(nowSentence(f, { plan: BEFORE, phase: 'running' })).toBe('Adding codex prints through the gate: 3 of 431.');
 		// Once fprints' admission starts, codex's is over (its figures come at the step's end).
-		const later = logProgress(
-			`== Update the site's prints\nprod ← codex inbox x: 2 records to admit\ncodex/1: new\ncodex/2: failed (x)\nprod ← fprints inbox y: 9 records to admit\nfprints/a: new\n`
+		const later = fold(
+			{ t: 'step', step: 'ingest' },
+			{ t: 'admit', site: 'codex', records: 2 },
+			{ t: 'record', site: 'codex', outcome: 'new' },
+			{ t: 'record', site: 'codex', outcome: 'failed' },
+			{ t: 'admit', site: 'fprints', records: 9 },
+			{ t: 'record', site: 'fprints', outcome: 'new' }
 		);
 		const g = flowOf({ run: r, phase: 'running', progress: later });
 		expect(said(cellOf(g, 'codex', 'added'))).toBe('warn · 1 new · 1 failed');

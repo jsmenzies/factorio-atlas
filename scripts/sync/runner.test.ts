@@ -19,7 +19,7 @@ import {
 import { liveUpdateBesides } from './local-db';
 import { SYNC_RUN_ENV } from '#lib/server/sync.js';
 import { SHARED_STAGE_ENV } from '../backfill/stage';
-import { foldProgress, logProgress, SYNC_PROGRESS_ENV } from '#lib/sync-progress.js';
+import { foldProgress, SYNC_PROGRESS_ENV } from '#lib/sync-progress.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const T = 1_800_000_000_000;
@@ -283,8 +283,8 @@ describe('SyncRunner', () => {
 		await r.finish();
 	});
 
-	test("the progress file names each step and command as the log's header and `$ bun` line did; a step's process adds to it", async () => {
-		const { r, log } = runner('progress');
+	test("the progress file names each step and command; a step's process adds to it", async () => {
+		const { r } = runner('progress');
 		const events = join(dir, 'progress.progress.jsonl');
 		writeFileSync(events, '');
 		writeFileSync(
@@ -305,7 +305,6 @@ describe('SyncRunner', () => {
 			]);
 			const p = foldProgress(readFileSync(events, 'utf8'));
 			expect(p).toMatchObject({ step: 'fetch', sites: { codex: { new: 2 } }, command: join(dir, 'record.js') });
-			expect(p).toEqual(logProgress(log()));
 		} finally {
 			delete process.env[SYNC_PROGRESS_ENV];
 		}

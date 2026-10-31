@@ -248,7 +248,6 @@ try {
 					break;
 				}
 				if (attempt === TRIES) break;
-				// Indented, so sync-progress.ts's RECORD line doesn't read it as an outcome.
 				say(`  ${site}/${siteId}: try ${attempt} of ${TRIES} failed (${note}), trying again`);
 				await new Promise((r) => setTimeout(r, 500 * attempt + Math.random() * 500));
 			}

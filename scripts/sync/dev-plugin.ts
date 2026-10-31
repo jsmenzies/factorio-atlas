@@ -11,8 +11,8 @@
  *   POST /admin/__sync/start     {"stage"?: "prod"|"local"}: starts `bun scripts/sync.ts --stage S --yes`
  *                                detached, so the update outlives a dev server restart
  *   GET  /admin/__sync/log       `?file=sync-….log&lines=N[&progress=1]`: the end of an update's log, and with
- *                                `progress` the current step's live counts: from its progress file, or from the
- *                                log for an update from before those (#lib/sync-progress.js)
+ *                                `progress` the current step's live counts, from its progress file
+ *                                (#lib/sync-progress.js; none for an update from before those)
  *
  * Stop is the page's own form action (it sets sync_runs.control). The update writes its own log;
  * what it prints goes to <logs>/sync-console.log, read back when it exits at once.
@@ -23,7 +23,7 @@ import { join } from 'node:path';
 import { loadEnv, type Plugin } from 'vite';
 import { rendersDir } from '#lib/server/renders-dir.js';
 import { findBun, json, jsonBody, runToEnd } from '../render/dev-plugin.js';
-import { foldProgress, logProgress, progressFileOf } from '#lib/sync-progress.js';
+import { foldProgress, progressFileOf } from '#lib/sync-progress.js';
 import { lastJsonLine } from './output.js';
 
 const ROOT = join(import.meta.dirname, '..', '..');
@@ -136,15 +136,10 @@ export function syncControl(): Plugin {
 						if (!LOG_NAME.test(name) || !existsSync(join(logDir, name))) return json(res, 404, { error: 'no such log' });
 						const lines = Math.min(200, Math.max(1, Number(url.searchParams.get('lines')) || 20));
 						const file = join(logDir, name);
-						// The current step's live counts: its progress events, else (an older update) its part of the log, whose
-						// last 4 MB hold it (a render step's per-page lines are the longest part, and it needs none of them).
+						// The current step's live counts: its progress events (an update from before those has none).
 						const events = join(logDir, progressFileOf(name));
 						const progress =
-							url.searchParams.get('progress') !== '1'
-								? undefined
-								: existsSync(events)
-									? foldProgress(readFileSync(events, 'utf8'))
-									: logProgress(readFileSync(file, 'utf8').slice(-4_000_000));
+							url.searchParams.get('progress') === '1' && existsSync(events) ? foldProgress(readFileSync(events, 'utf8')) : undefined;
 						return json(res, 200, { log: name, tail: tail(file, lines), ...(progress ? { progress } : {}) });
 					}
 					return json(res, 404, { error: 'not found' });
