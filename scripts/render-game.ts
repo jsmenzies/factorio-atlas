@@ -157,7 +157,7 @@ import {
 	type RecordedOptions,
 	type RenderArgs
 } from './render/args.js';
-import { readSidecar, removePage, sweepTiles, writeIndex, writePageData } from './render/files.js';
+import { indexDiffers, indexWriter, readSidecar, removePage, sweepTiles, writeIndex, writePageData } from './render/files.js';
 import { childWorkerd, stopOrphanedWorkerd } from './render/orphans.js';
 import { admit, maxWorkers, memEstimateMb, pagePeakMb, readMeminfo, type Admission, type WorkerMemory } from './render/memory.js';
 import { createPool, type Outcome, type Pool, type Slot } from './render/pool.js';
@@ -578,6 +578,8 @@ let noPagesLeftOut = 0;
 const preModernFavorites = { prints: 0, pages: 0 };
 /** Pages rendered before page data existed (or an older PAGE_DATA_VERSION) that got it now, without redrawing. */
 let pageDataWritten = 0;
+/** Prints whose index.json listed other pages or stamps than their done rows, rewritten (a plan-only run only counts them). */
+let indexesRepaired = 0;
 
 const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
 
@@ -842,6 +844,8 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 	let indexStale = false;
 	let queued = 0;
 	let doneHere = 0;
+	/** The print's pages that stay drawn: its done rows once these writes are in, unless indexStale. */
+	const drawn: { path: string; stamp: string; overview: string }[] = [];
 	for (const page of pages) {
 		const old = existing.get(page.path);
 		existing.delete(page.path);
@@ -884,6 +888,7 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 			run.unchanged++;
 			tally.page(id, 'unchanged');
 			doneHere++;
+			drawn.push({ path: page.path, stamp: sc.stamp, overview: sc.overview.file });
 			if (sc.pageData !== PAGE_DATA_VERSION) {
 				// Rendered before its page data existed: write that now, no redraw. Buckets holding the
 				// page need the new files: marked first, so a crash in between only re-sends them. A plan-only run counts it.
@@ -944,13 +949,18 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 	// run keeps them, their files and index.json as they are: it writes only the rows of what it found.
 	const gone = [...existing.values()];
 	if (queued) remaining.set(id, queued);
+	if (gone.length || (doneHere && !existsSync(join(OUT_DIR, id, 'index.json')))) indexStale = true;
+	// An index.json out of step with the done rows (an earlier run's page writes could land out of order): rewritten.
+	if (!indexStale && doneHere && (await indexDiffers(OUT_DIR, id, drawn))) {
+		indexStale = true;
+		indexesRepaired++;
+	}
 	if (planOnly) {
 		await queue.writeJobs(writes);
 		return { taken: true, queued, modern };
 	}
 	await queue.writeJobs(writes, gone);
 	for (const g of gone) if (g.status === 'done') await removePage(OUT_DIR, id, g.path);
-	if (gone.length || (doneHere && !existsSync(join(OUT_DIR, id, 'index.json')))) indexStale = true;
 	if (indexStale || (!queued && writes.length)) await writeIndex(OUT_DIR, id, await queue.donePages(id));
 	return { taken: true, queued, modern };
 }
@@ -1004,13 +1014,21 @@ async function pageJson(w: Work): Promise<Prepared | null> {
 	return found;
 }
 
+/** index.json of a print as its pages finish: one write at a time, each from the done rows as they are then. */
+const indexes = indexWriter(
+	(id) => queue.donePages(id),
+	(id, done) => writeIndex(OUT_DIR, id, done)
+);
+
 /** One of the print's queued pages reached a final state. `open`: its pending or rendering pages, when the caller read them. */
 async function finishPrint(id: string, open?: number) {
 	const left = (remaining.get(id) ?? 1) - 1;
 	remaining.set(id, left);
 	if (left > 0) return;
 	remaining.delete(id);
-	// Every queued page is final: thumbnails from its overviews (after the index.json written above).
+	// Every queued page is final: index.json once more from every done row, after the writes before it.
+	if (renderedPrints.has(id)) await indexes.update(id);
+	// Thumbnails from its overviews (the thumb step plans from that index.json).
 	thumbStep?.offer(id);
 	if (printsTracked.has(id)) printsFinished.add(id);
 	if (!renderedPrints.has(id) || (open ?? (await queue.openJobs(id)))) return;
@@ -1050,7 +1068,7 @@ async function complete(w: Work, o: Outcome) {
 		run.bytes += r.bytes;
 		progress.completed(w, t);
 		renderedPrints.add(w.id);
-		await writeIndex(OUT_DIR, w.id, finished.done);
+		await indexes.update(w.id);
 		uploader?.schedule(w.id);
 		log(
 			`  ${w.id} ${pageBase(w.path).padEnd(6)} ${String(w.entities).padStart(6)} ents  ${r.summary}, ${mb(r.bytes)}, ${r.files} files ` +
@@ -1400,6 +1418,7 @@ try {
 				: '') +
 			(topPicked.length ? `\n  top list: ${topPicked.length} prints first in the selection` : '') +
 			(pageDataWritten ? `; page data ${planOnly ? 'to write' : 'written'} for ${pageDataWritten} pages rendered before it existed` : '') +
+			(indexesRepaired ? `; ${indexesRepaired} index.json out of step with the done rows ${planOnly ? 'to rewrite' : 'rewritten'}` : '') +
 			(batch ? `\n  batch: ${batch.picked.length} of ${batch.next} prints picked; about ${batch.left} prints may have work after it` : '') +
 			(uploader ? `\n  ${uploader.pending} rendered pages to upload so far` : '')
 	);

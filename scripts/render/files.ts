@@ -59,6 +59,48 @@ export async function writeIndex(outDir: string, id: string, done: IndexPage[]) 
 }
 
 /**
+ * Whether index.json on disk (missing counts) lists other pages, or other stamps, than these done pages
+ * would: an index an earlier run left behind (e.g. one written from an older list of done pages).
+ */
+export async function indexDiffers(outDir: string, id: string, done: IndexPage[]): Promise<boolean> {
+	const want = buildIndex(done)?.pages ?? {};
+	let got: RenderIndex['pages'];
+	try {
+		got = (JSON.parse(await readFile(join(outDir, id, 'index.json'), 'utf8')) as RenderIndex).pages ?? {};
+	} catch {
+		return Object.keys(want).length > 0;
+	}
+	const paths = Object.keys(want);
+	return paths.length !== Object.keys(got).length || paths.some((p) => got[p]?.stamp !== want[p].stamp);
+}
+
+/**
+ * index.json writes of each print, one at a time: pages of a print finish together, and each write
+ * reads the print's done pages just before it writes, so the last write always lists the newest set
+ * (an index written from an older list can't land after a newer one). A failed write rejects its own
+ * promise only; the next one still runs.
+ */
+export function indexWriter(readDone: (id: string) => Promise<IndexPage[]>, write: (id: string, done: IndexPage[]) => Promise<void>) {
+	const chains = new Map<string, Promise<void>>();
+	return {
+		/** Rewrite the print's index.json after any write already waiting. */
+		update(id: string): Promise<void> {
+			const link = (chains.get(id) ?? Promise.resolve()).then(async () => write(id, await readDone(id)));
+			const tail = link.catch(() => {});
+			chains.set(id, tail);
+			void tail.then(() => {
+				if (chains.get(id) === tail) chains.delete(id);
+			});
+			return link;
+		},
+		/** Prints with a write waiting or running. */
+		get busy() {
+			return chains.size;
+		}
+	};
+}
+
+/**
  * Give a page rendered before page data existed (or with an older PAGE_DATA_VERSION) its page
  * data, without redrawing: the data file, then the sidecar marked with the version. Only for
  * pages no worker is rendering. Returns the bytes written.
