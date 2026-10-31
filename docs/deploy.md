@@ -649,8 +649,7 @@ cell is a status and the update's own figures, live while a step runs (the rende
 its row as it goes; the other steps' counts come from the log). Before an update the board shows what the last check
 found; the seven steps above it open to one line on each and every figure it recorded; Start, Stop and the log are at
 the top. `/admin` is the Overview: what the site has by source, what needs a look (open removal requests, upload
-screenshots to approve, accounts being deleted), render coverage and past updates. `/admin/settings`
-redirects to the Update tab.
+screenshots to approve, accounts being deleted), render coverage and past updates.
 
 ## Admin page (`/admin`, `/admin/pipeline`, `/admin/render`, `/admin/reports`)
 

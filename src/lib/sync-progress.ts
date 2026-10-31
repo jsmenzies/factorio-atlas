@@ -57,7 +57,7 @@ export function logProgress(text: string): LogProgress {
 		const line = lines[i];
 		let m = RECORD.exec(line);
 		if (m) {
-			const outcome = m[2] === '✗' ? 'failed' : m[2] === 'same' ? 'same' : m[2];
+			const outcome = m[2] === '✗' ? 'failed' : m[2];
 			const site = (out.sites[m[1]] ??= {});
 			site[outcome] = (site[outcome] ?? 0) + 1;
 			continue;

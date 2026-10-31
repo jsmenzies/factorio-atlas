@@ -290,7 +290,6 @@ try {
 						const entry: StateEntry = {
 							...(before ?? { id: image, prints: [print], labelled: null, attempts: 0 }),
 							status: 'removed',
-							by: 'request',
 							reason: `print ${print} taken down`,
 							at: new Date().toISOString()
 						};

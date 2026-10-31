@@ -160,7 +160,6 @@ export function codexRecord(b: CodexBlueprint): Fetched {
 
 export const codexSite: PolledSite = {
 	site: 'codex',
-	kind: 'factoriocodex.com API',
 	version: CODEX_RECORD_VERSION,
 	async listPage(page: number, http: PoliteHttp, signal?: AbortSignal): Promise<ListPage> {
 		const url = `${CODEX_API}/blueprints?sort=updated_at&page=${page}&per_page=${PER_PAGE}`;

@@ -27,26 +27,16 @@ const RENDER_COLUMNS = `id, host, source, state, control, total, done, rendered,
 	uploads_pending, upload_failed, upload_error, upload_deletes_pending, prints_total, prints_done, prints_rendered,
 	upload_rate_bytes, upload_rate_files, upload_rate_pages`;
 
-const RENDER_SELECT = `SELECT ${RENDER_COLUMNS}, json_extract(options, '$.phase') AS phase, json_extract(options, '$.thumbs') AS thumbs,
+const RENDER_SELECT = `SELECT ${RENDER_COLUMNS}, json_extract(options, '$.phase') AS phase,
 	json_extract(options, '$.stages') AS stages FROM render_runs`;
 
-type LatestRenderRow = Omit<RenderRunRow, 'options'> & { phase: string | null; thumbs: string | null; stages: string | null };
-
-const json = <T>(v: string | null): T | null => {
-	if (v === null) return null;
-	try {
-		return JSON.parse(v) as T;
-	} catch {
-		return null;
-	}
-};
+type LatestRenderRow = Omit<RenderRunRow, 'options'> & { phase: string | null; stages: string | null };
 
 /** A render run with only the options the Update tab reads. */
-const renderOf = ({ phase, thumbs, stages, ...row }: LatestRenderRow): RenderRun => ({
+const renderOf = ({ phase, stages, ...row }: LatestRenderRow): RenderRun => ({
 	...row,
 	options: {
 		phase: (phase as RenderRunPhase | null) ?? null,
-		thumbs: json<{ done: number; of: number }>(thumbs),
 		stages: parseStages(stages)
 	}
 });

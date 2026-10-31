@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { parseArgs, UsageError } from './args.js';
 import type { StateEntry } from './state.js';
-import { isUploadEntry, planUploadImages, uploadEntry, type ApprovedImage } from './uploads.js';
+import { planUploadImages, uploadEntry, type ApprovedImage } from './uploads.js';
 
 // A 3 × 2 PNG header (IHDR) is all the entry reads.
 const PNG = new Uint8Array([
@@ -48,8 +48,6 @@ describe('--from-uploads', () => {
 			height: 2,
 			prints: ['up-AbCdEfGhIj']
 		});
-		expect(isUploadEntry(e)).toBe(true);
-		expect(isUploadEntry({ id: 'AbCd123' })).toBe(false);
 	});
 
 	test('bytes that aren’t what the upload recorded, or no image at all, fail', () => {

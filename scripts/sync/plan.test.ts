@@ -17,9 +17,9 @@ const level = (site: string, id: string): SourcePlan => ({
 });
 
 describe('the plan the fetch step saves', () => {
-	test('a source whose plan failed stays in it, with its kind and error, so the Overview never calls it up to date', () => {
-		const codex = failedPlan({ site: 'codex', kind: 'factoriocodex.com API', polled: true }, 'HTTP 522');
-		expect(codex).toMatchObject({ site: 'codex', kind: 'factoriocodex.com API', polled: true, error: 'HTTP 522', added: 0 });
+	test('a source whose plan failed stays in it, with its error, so the Overview never calls it up to date', () => {
+		const codex = failedPlan({ site: 'codex', polled: true }, 'HTTP 522');
+		expect(codex).toMatchObject({ site: 'codex', polled: true, error: 'HTTP 522', added: 0 });
 		const plans = [level('factorioprints', 'abc'), level('uploads', 'none'), codex];
 		const sources: SourceRun[] = [
 			{ site: 'codex', from: null, to: null, polled: true },

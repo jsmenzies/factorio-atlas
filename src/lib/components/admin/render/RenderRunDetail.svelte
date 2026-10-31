@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { parseStages, stageTotals } from '#lib/render-stages.js';
 	import type { RenderRun } from '#lib/server/admin/render.js';
 	import { bytes, clock, duration, elapsed, eta, int, isLiveState, percent, shownState } from '../metrics.js';
 	import OutcomeList from '../OutcomeList.svelte';
@@ -61,7 +62,11 @@
 	const prints = $derived(printProgress(run));
 	// After the last page (options written by the heartbeat): what the run does before it ends, and its thumbnails.
 	const phase = $derived(run.options.phase ?? null);
-	const thumbs = $derived(run.options.thumbs?.of ? run.options.thumbs : null);
+	const thumbs = $derived.by(() => {
+		const stages = parseStages(run.options.stages);
+		const t = stages ? stageTotals(stages) : null;
+		return t?.thumbsOf ? { done: t.thumbsDone, of: t.thumbsOf } : null;
+	});
 	const PHASE = {
 		thumbnails: 'Every page drawn; making thumbnails',
 		uploads: 'Uploading the last pages',

@@ -21,11 +21,14 @@ import { recordsSeen } from '#lib/sync-progress.js';
 import { SOURCE_SITES } from '#lib/sources.js';
 import type { Site } from '#lib/print-id.js';
 import {
+	GROUP,
+	groupOf,
 	POLLED_SITES,
-	SITE_SHOTS_GROUP,
+	ROW,
 	sourceMoved,
 	stepLabel,
 	SYNC_STEPS,
+	valueOf,
 	type DetailGroup,
 	type PolledSiteId,
 	type SourcePlan,
@@ -105,7 +108,7 @@ export interface Flow {
 	shared: Shared;
 	/** Render workers the update asks for (null: the runner's default). */
 	threads: number | null;
-	/** While the render step runs: its run's phase and progress, for the step's line and the sentence. */
+	/** While the render step runs: its run's phase and progress, for the sentence and the top box's bar. */
 	renderNow: RenderNow | null;
 	/** Prints the gate made new on the site in this (or the last) update, as far as recorded. */
 	newPrints: number;
@@ -162,12 +165,6 @@ export function fitCell(c: Cell, lines = CELL_LINES): Cell {
 
 const stepOf = (run: SyncRun | null, id: SyncStepId) => run?.steps.find((s) => s.id === id);
 const stepNo = (id: SyncStepId) => SYNC_STEPS.findIndex((s) => s.id === id) + 1;
-const groupOf = (step: SyncStep | undefined, match: (title: string) => boolean): DetailGroup | undefined =>
-	step?.details?.find((g) => g.title !== undefined && match(g.title));
-const valueOf = (g: DetailGroup | undefined, label: string): number | undefined => {
-	const v = g?.rows.find((r) => r.label === label)?.value;
-	return typeof v === 'number' ? v : undefined;
-};
 /** A group's rows as facts (zeros and muted rows left out). */
 const factsOf = (g: DetailGroup | undefined, skip: string[] = [], rename: Record<string, string> = {}): Fact[] =>
 	(g?.rows ?? []).filter((r) => !r.muted && !skip.includes(r.label)).flatMap((r) => fact(r.value, rename[r.label] ?? r.label, r.tone));
@@ -255,7 +252,7 @@ function changesCell(
 		}
 		const onSite = valueOf(
 			groupOf(fetch, (t) => t === site),
-			'prints on the site'
+			ROW.printsOnSite
 		);
 		return settled(
 			[
@@ -284,13 +281,13 @@ function changesCell(
 	}
 	if (entry.ingestsItself)
 		return settled(
-			factsOf(g, ['waiting', 'oldest waiting'], { 'failed, tried again next update': 'failed', 'still processing': 'processing' }),
+			factsOf(g, [ROW.waiting, ROW.oldestWaiting], { [ROW.failedRetried]: 'failed', [ROW.stillProcessing]: 'processing' }),
 			'Uploads are admitted on the site as they’re posted; the fetch admits any left waiting.'
 		);
 	// The mirror: a git fetch, then the backfill reads the clone.
 	if (entry.to && entry.from?.id === entry.to.id)
 		return cell('done', [], `GitHub mirror already at its latest (${shortCommit(entry.to.id)}): nothing new.`);
-	return settled(factsOf(g, ['position']), `GitHub mirror ${shortCommit(entry.from?.id)} → ${shortCommit(entry.to?.id)}.`);
+	return settled(factsOf(g, [ROW.position]), `GitHub mirror ${shortCommit(entry.from?.id)} → ${shortCommit(entry.to?.id)}.`);
 }
 
 /** How a site's records went through the one gate: the backfill (factorioprints), or the polled admission's outcome. */
@@ -304,10 +301,10 @@ function addedCell(mode: BoardMode, run: SyncRun | null, site: string, progress:
 		if (g)
 			return settled(
 				[
-					...fact(valueOf(g, 'analysed'), 'analysed'),
-					...fact(valueOf(g, 're-indexed'), 're-indexed'),
-					...fact(valueOf(g, 'copies folded'), 'folded'),
-					...fact(valueOf(g, 'failed'), 'failed', 'bad')
+					...fact(valueOf(g, ROW.analysed), 'analysed'),
+					...fact(valueOf(g, ROW.reindexed), 're-indexed'),
+					...fact(valueOf(g, ROW.folded), 'folded'),
+					...fact(valueOf(g, ROW.failed), 'failed', 'bad')
 				],
 				`The backfill over the mirror clone: ${rowsText(g) || 'nothing to do'}.`
 			);
@@ -319,20 +316,20 @@ function addedCell(mode: BoardMode, run: SyncRun | null, site: string, progress:
 				: cell('run', [{ text: 'analysing' }], 'The backfill reads the mirror clone and puts new and edited prints through the gate.');
 		return notRun(ingest);
 	}
-	const g = groupOf(ingest, (t) => t === `${site}: through the gate`);
+	const g = groupOf(ingest, (t) => t === GROUP.gate(site));
 	if (g) {
-		const of = valueOf(g, 'records to admit') ?? 0;
+		const of = valueOf(g, ROW.toAdmit) ?? 0;
 		if (!of) return cell('done', [], 'Nothing to add.');
-		const updated = (valueOf(g, 'updated') ?? 0) + (valueOf(g, 'unchanged') ?? 0);
-		const suggest = valueOf(g, 'new, with suggestions to look at');
+		const updated = (valueOf(g, ROW.updated) ?? 0) + (valueOf(g, ROW.unchanged) ?? 0);
+		const suggest = valueOf(g, ROW.suggestions);
 		return settled(
 			[
-				...fact(valueOf(g, 'new prints'), 'new'),
-				...fact(valueOf(g, 'joined an existing print'), 'matched'),
+				...fact(valueOf(g, ROW.newPrints), 'new'),
+				...fact(valueOf(g, ROW.joined), 'matched'),
 				...fact(updated, 'updated'),
-				...fact(valueOf(g, 'blocked'), 'blocked', 'warn'),
-				...fact(valueOf(g, 'unreadable'), 'unreadable', 'warn'),
-				...fact(valueOf(g, 'failed, tried again next update'), 'failed', 'bad')
+				...fact(valueOf(g, ROW.blocked), 'blocked', 'warn'),
+				...fact(valueOf(g, ROW.unreadable), 'unreadable', 'warn'),
+				...fact(valueOf(g, ROW.failedRetried), 'failed', 'bad')
 			],
 			`${int(of)} records through the gate${suggest ? `, ${int(suggest)} new with suggestions` : ''}. ${MATCH_TIP}`
 		);
@@ -373,14 +370,14 @@ function authorsCell(mode: BoardMode, run: SyncRun | null, site: string): Cell {
 	if (site !== 'factorioprints') return cell('na', [], AUTHORS_NA[site] ?? 'Not this source: names come with its records.');
 	const a = stepOf(run, 'authors');
 	if (waiting(mode, a)) return notYet('authors');
-	const tip = 'Names looked up on Firebase for new author ids, at most the settings’ limit an update; each answer kept.';
+	const tip = 'Names from their records first, then Firebase for every new author id, each answer kept.';
 	if (a.status === 'running') return cell('run', [], tip);
 	if (a.status === 'skipped' || a.status === 'stopped') return notRun(a);
-	const named = /([\d,]+) (?:prints?|authors?) (?:named|to name)/.exec(a.summary ?? '')?.[1];
+	const g = groupOf(a, (t) => t === GROUP.authors);
 	return cell(
 		a.status === 'failed' ? 'bad' : a.status === 'warning' ? 'warn' : 'done',
-		fact(named, 'named'),
-		`${tip} ${a.summary ?? ''}`.trim()
+		fact(valueOf(g, ROW.authorsNamed), 'named'),
+		`${tip}${g ? ` ${rowsText(g)}.` : a.summary ? ` ${a.summary}` : ''}`
 	);
 }
 
@@ -423,36 +420,34 @@ function shotsCell(mode: BoardMode, run: SyncRun | null, site: string, progress:
 		return cell('wait', [], 'Waiting its turn: Imgur, then uploads, then other sites’ images.');
 	}
 	if (part === 'imgur') {
-		const g = groupOf(step, (t) => t === 'On this machine');
+		const g = groupOf(step, (t) => t === GROUP.onThisMachine);
 		if (g)
 			return settled(
 				[
-					...fact(valueOf(g, 'fetched'), 'copied'),
-					...fact(valueOf(g, 'newly dead'), 'dead on Imgur', 'warn'),
-					...fact(valueOf(g, 'failed'), 'failed', 'bad')
+					...fact(valueOf(g, ROW.fetched), 'copied'),
+					...fact(valueOf(g, ROW.newlyDead), 'dead on Imgur', 'warn'),
+					...fact(valueOf(g, ROW.failed), 'failed', 'bad')
 				],
-				`Imgur: ${rowsText(g, ['already copied', 'dead on Imgur', 'to fetch'])}.`
+				`Imgur: ${rowsText(g, [ROW.alreadyCopied, ROW.deadOnImgur, ROW.toFetch])}.`
 			);
 	} else if (part === 'uploads') {
-		const g = groupOf(step, (t) => t === 'From uploads');
+		const g = groupOf(step, (t) => t === GROUP.fromUploads);
 		if (g)
 			return settled(
-				[...fact(valueOf(g, 'copied from RAW'), 'copied'), ...fact(valueOf(g, 'failed'), 'failed', 'bad')],
-				`Approved upload screenshots: ${rowsText(g, ['approved', 'already up', 'sized'])}.`
+				[...fact(valueOf(g, ROW.copiedFromRaw), 'copied'), ...fact(valueOf(g, ROW.failed), 'failed', 'bad')],
+				`Approved upload screenshots: ${rowsText(g, [ROW.approved, ROW.alreadyUp, ROW.sized])}.`
 			);
 	} else {
-		const g = groupOf(step, (t) => t === `${SITE_SHOTS_GROUP}${site}`);
+		const g = groupOf(step, (t) => t === GROUP.siteShots(site));
 		if (g)
 			return settled(
 				[
-					...fact(valueOf(g, 'copied now'), 'copied'),
-					...fact(valueOf(g, 'gone at the source'), 'gone', 'warn'),
-					...fact(valueOf(g, 'failed, tried again next update'), 'failed', 'bad')
+					...fact(valueOf(g, ROW.copiedNow), 'copied'),
+					...fact(valueOf(g, ROW.goneAtSource), 'gone', 'warn'),
+					...fact(valueOf(g, ROW.failedRetried), 'failed', 'bad')
 				],
-				`${site}’s own images for its prints: ${rowsText(g, ['images shown', 'already copied', 'answered 404 once (asked again next update)'])}.`
+				`${site}’s own images for its prints: ${rowsText(g, [ROW.imagesShown, ROW.alreadyCopied, ROW.maybeDead])}.`
 			);
-		if (groupOf(step, (t) => t === 'From other sites'))
-			return cell('done', [], 'This update counted other sites’ images together: see the step’s figures.');
 	}
 	if (step.status === 'skipped' || step.status === 'stopped' || step.status === 'failed') return notRun(step);
 	return cell('done', [], 'Nothing to copy.');
@@ -467,11 +462,11 @@ function sizingCell(mode: BoardMode, run: SyncRun | null, progress: LogProgress 
 		return shotPart(progress?.step === 'screenshots' ? progress.command : null) === 'sizing'
 			? cell('run', [], tip, { label })
 			: cell('wait', [], `After the copies. ${tip}`, { label });
-	const bucket = groupOf(step, (t) => t.endsWith(' bucket'));
+	const bucket = groupOf(step, GROUP.isBucket);
 	if (!bucket) return { ...notRun(step), label };
-	const put = bucket.rows.find((r) => r.label === 'files put')?.value;
+	const put = bucket.rows.find((r) => r.label === ROW.filesPut)?.value;
 	const m = typeof put === 'string' ? /^([\d,]+) \((.+)\)$/.exec(put) : null;
-	const cards = groupOf(step, (t) => t === 'Search cards');
+	const cards = groupOf(step, (t) => t === GROUP.searchCards);
 	return {
 		...settled(
 			[
@@ -481,9 +476,9 @@ function sizingCell(mode: BoardMode, run: SyncRun | null, progress: LogProgress 
 							{ n: m[2], text: '' }
 						]
 					: fact(typeof put === 'number' ? put : null, 'files')),
-				...fact(valueOf(bucket, 'failed'), 'failed', 'bad')
+				...fact(valueOf(bucket, ROW.failed), 'failed', 'bad')
 			],
-			`${tip} ${rowsText(bucket, ['already up', 'sizes made', 'deleted'])}${cards ? ` · cards: ${rowsText(cards)}` : ''}.`
+			`${tip} ${rowsText(bucket, [ROW.alreadyUp, ROW.sizesMade, ROW.deleted])}${cards ? ` · cards: ${rowsText(cards)}` : ''}.`
 		),
 		label
 	};
@@ -526,11 +521,10 @@ function renderCells(
 		return retrying ? [{ ...c, tip: `${c.tip} It will retry failed pages (this update only).` }, c, c, c] : four(c);
 	}
 	const live = step.status === 'running';
-	if (!stages) {
-		if (live) return four(cell('wait', [], 'Picking the prints with work: the top list, then records changed since they were drawn.'));
-		if (step.status === 'skipped' || step.status === 'stopped' || step.status === 'failed') return four(notRun(step));
-		return four(cell('done', [], 'This run wasn’t counted per source (it ran before the stages were recorded): see the step’s figures.'));
-	}
+	if (!stages)
+		return four(
+			live ? cell('wait', [], 'Picking the prints with work: the top list, then records changed since they were drawn.') : notRun(step)
+		);
 	const s: SiteStages | undefined = stages.sites[stageKey(site)];
 	const queueing = live && row?.state === 'starting';
 	if (!s)
@@ -641,12 +635,7 @@ function sharedRender(
 			flags: cell('wait', [], `Not run yet: step ${stepNo('render')}, last. ${flagsTip}`, { label: flagsLabel })
 		};
 	if (!stages) {
-		const c =
-			step.status === 'running'
-				? cell('wait', [], 'Not run yet.')
-				: step.status === 'done' || step.status === 'warning'
-					? cell('done', [], 'Not counted for this run: see the step’s figures.')
-					: notRun(step);
+		const c = step.status === 'running' ? cell('wait', [], 'Not run yet.') : notRun(step);
 		return { summary, cleanup: { ...c, label: cleanupLabel }, flags: { ...c, label: flagsLabel } };
 	}
 	const c = stages.cleanup;
@@ -682,76 +671,51 @@ function sharedRender(
 	return { summary, cleanup: { ...cleanup, label: cleanupLabel }, flags: { ...flags, label: flagsLabel } };
 }
 
-/** What the render step is doing now, and how far it is: the step's line and the sentence. */
+/** What the render step is doing now, and how far it is: the sentence at the top and its bar. */
 export interface RenderNow {
 	phase: 'picking' | 'queueing' | 'drawing' | 'thumbnails' | 'uploads' | 'deletions' | 'flags';
-	/** "Drawing prints", "Making thumbnails", … */
-	label: string;
-	/** Its count, when it has one ("37 of 50 prints"). */
+	sentence: string;
+	/** Its count, when it has one (37 of 50 prints). */
 	value: number | null;
 	of: number | null;
-	unit: string;
-	/** The pages so far: "451 pages drawn", "451 uploaded", "2 failed". */
-	figures: string[];
-	/** The sentence at the top. */
-	sentence: string;
-	/** `--flags` failed: the step goes on to end with a warning. */
-	warn: boolean;
 }
 
-/** The render step's phase, from its render run's row (options.phase, thumbs and stages), or picking before it starts. */
+/** The render step's phase, from its render run's row (options.phase and stages), or picking before it starts. */
 export function renderNow(r: RenderRun | null): RenderNow {
-	const base = { value: null, of: null, unit: '', warn: false };
-	if (!r)
-		return { ...base, phase: 'picking', label: 'Picking the prints with work', figures: [], sentence: 'Picking the prints to render.' };
-	const figures = [
-		...(r.rendered ? [`${int(r.rendered)} pages drawn`] : []),
-		...(r.uploaded ? [`${int(r.uploaded)} uploaded`] : []),
-		...(r.failed ? [`${int(r.failed)} failed`] : [])
-	];
-	const words = (phase: RenderNow['phase'], label: string, sentence = `${label}.`): RenderNow => ({
-		...base,
+	const now = (phase: RenderNow['phase'], sentence: string, value: number | null = null, of: number | null = null): RenderNow => ({
 		phase,
-		label,
-		figures,
-		sentence
+		sentence,
+		value,
+		of
 	});
-	if (r.state === 'starting') return words('queueing', 'Queueing the prints with work', 'Queueing the prints to render.');
+	if (!r) return now('picking', 'Picking the prints to render.');
+	if (r.state === 'starting') return now('queueing', 'Queueing the prints to render.');
 	switch (r.options.phase ?? null) {
 		case 'thumbnails': {
-			const t = r.options.thumbs;
 			const label = r.upload_target ? 'Making and uploading thumbnails' : 'Making thumbnails';
-			if (!t) return words('thumbnails', label);
-			return { ...words('thumbnails', label, `${label}: ${int(t.done)} of ${int(t.of)} prints.`), value: t.done, of: t.of, unit: 'prints' };
+			const t = r.options.stages ? stageTotals(r.options.stages) : null;
+			if (!t?.thumbsOf) return now('thumbnails', `${label}.`);
+			return now('thumbnails', `${label}: ${int(t.thumbsDone)} of ${int(t.thumbsOf)} prints.`, t.thumbsDone, t.thumbsOf);
 		}
 		case 'uploads': {
 			const left = r.uploads_pending;
-			return words(
-				'uploads',
-				'Uploading the last pages',
-				left ? `Uploading the last ${int(left)} page${left === 1 ? '' : 's'}.` : undefined
-			);
+			return now('uploads', left ? `Uploading the last ${int(left)} page${left === 1 ? '' : 's'}.` : 'Uploading the last pages.');
 		}
 		case 'deletions':
-			return words('deletions', 'Removing replaced files', 'Removing replaced files from the bucket.');
+			return now('deletions', 'Removing replaced files from the bucket.');
 		case 'flags': {
 			const f = r.options.stages?.flags;
 			const stage = f?.stage ?? r.upload_target ?? 'the stage';
-			if (f?.state !== 'failed') return words('flags', `Setting the search flags on ${stage}`);
-			return {
-				...words('flags', `Search flags on ${stage} failed`, `Setting the search flags on ${stage} failed: run render:flags by hand.`),
-				warn: true
-			};
+			return now(
+				'flags',
+				f?.state === 'failed'
+					? `Setting the search flags on ${stage} failed: run render:flags by hand.`
+					: `Setting the search flags on ${stage}.`
+			);
 		}
 		default:
-			if (!r.prints_total) return words('picking', 'Picking the prints with work', 'Picking the prints to render.');
-			return {
-				...words('drawing', 'Drawing prints', `Drawing prints: ${int(r.prints_done)} of ${int(r.prints_total)}.`),
-				value: r.prints_done,
-				of: r.prints_total,
-				unit: 'prints',
-				figures: [...figures, ...(r.eta_seconds ? [`≈ ${duration(r.eta_seconds * 1000)} left`] : [])]
-			};
+			if (!r.prints_total) return now('picking', 'Picking the prints to render.');
+			return now('drawing', `Drawing prints: ${int(r.prints_done)} of ${int(r.prints_total)}.`, r.prints_done, r.prints_total);
 	}
 }
 
@@ -813,7 +777,7 @@ export function buildFlow(o: {
 			...[addedCell(mode, run, name, progress), authorsCell(mode, run, name), shotsCell(mode, run, name, progress)].map((c) => fitCell(c)),
 			...renderCells(mode, run, name, stages, row, retrying).map((c) => fitCell(c))
 		];
-		const gate = groupOf(stepOf(run, 'ingest'), (t) => t === `${name}: through the gate`);
+		const gate = groupOf(stepOf(run, 'ingest'), (t) => t === GROUP.gate(name));
 		return {
 			site: name,
 			tip:
@@ -827,7 +791,7 @@ export function buildFlow(o: {
 			held,
 			cells: byColumn(cells),
 			reach: reachOf(cells),
-			newPrints: valueOf(gate, 'new prints') ?? (live && progress?.step === 'ingest' ? (progress.sites[name]?.new ?? 0) : 0)
+			newPrints: valueOf(gate, ROW.newPrints) ?? (live && progress?.step === 'ingest' ? (progress.sites[name]?.new ?? 0) : 0)
 		};
 	});
 	// A site only the render run drew (factoriobin: added by hand) gets a row of its own, render cells only.
@@ -943,5 +907,3 @@ export function heroBar(flow: Flow, progress: LogProgress | null): number | null
 	}
 	return null;
 }
-
-export const STEP_IDS = SYNC_STEPS.map((s) => s.id);

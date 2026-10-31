@@ -123,7 +123,6 @@ export function fprintsRecord(uuid: string, row: FprintsRow): Fetched {
 
 export const fprintsSite: PolledSite = {
 	site: 'fprints',
-	kind: 'fprints.xyz sitemap',
 	version: FPRINTS_RECORD_VERSION,
 	listsAll: true,
 	async listPage(page: number, http: PoliteHttp, signal?: AbortSignal): Promise<ListPage> {

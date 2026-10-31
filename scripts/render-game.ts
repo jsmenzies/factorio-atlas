@@ -395,11 +395,10 @@ const runOptions = {
 	args,
 	batch,
 	/**
-	 * After the last page is drawn, what the run is doing before it ends (null while drawing, and once over),
-	 * and the thumb step's prints done of those offered: for /admin/render and the Update tab.
+	 * After the last page is drawn, what the run is doing before it ends (null while drawing, and once over):
+	 * for /admin/render and the Update tab. Thumbnails done are in the stages.
 	 */
 	phase: null as RenderRunPhase | null,
-	thumbs: null as { done: number; of: number } | null,
 	/**
 	 * Plan, Draw, Upload and Thumbnails per source, then Clean up and Search flags (#lib/render-stages.js), from
 	 * the `tally` counted beside the run's own counters: the Update tab's board.
@@ -598,7 +597,6 @@ const deferred: DeferredUpdate[] = [];
 
 /** Options (a batch's picks change as it goes) and upload counts into the run row. */
 function syncRun() {
-	runOptions.thumbs = thumbStep && !planOnly ? thumbStep.progress : null;
 	runOptions.stages = snapshot({
 		at: Date.now(),
 		tally,
@@ -1395,7 +1393,7 @@ try {
 		await heartbeat();
 		if (todo.length) await renderAll();
 	}
-	// After the last page: each phase says so in the log (the Update tab's progress reads these lines) and in the run's options.
+	// After the last page: each phase is logged for people and set in the run's options.phase, which the Update tab reads.
 	if (thumbStep) {
 		if (!stopping && thumbStep.pending) {
 			log(`rendering done; bringing ${thumbStep.pending} prints' thumbnails up to date`);

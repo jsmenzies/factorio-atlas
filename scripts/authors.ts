@@ -15,10 +15,10 @@
  *
  *   --stage S     local = the miniflare state `bun run dev` uses; prod = the deployed stage
  *   --db N        D1 generation for prod (default: DATABASES.<stage>.bound in infra/databases.ts)
- *   --limit N     ask Firebase about at most N authors this run
  *   --rate R      Firebase lookups per second, at most 10 (default 5)
  *   --dry-run     show what would happen; no lookups, nothing written
  *   --yes         don't ask before writing to prod
+ *   --json        end with one JSON line of the figures (AuthorsResult), for the update's authors step
  *
  * Prod is reached through the backfill's remote bindings (scripts/backfill/stage.ts), so it needs
  * `wrangler login` and Node on PATH, and the stage must be deployed with migration 0017.
@@ -37,15 +37,24 @@ import {
 } from '#lib/server/pipeline/authors.js';
 import { confirmProd, fail, n, openStage, parseStageArgs, requireSchema, runOn } from './stage-command';
 
-const USAGE = 'usage: bun run authors --stage local|prod [--db N] [--limit N] [--rate R] [--dry-run] [--yes]';
+const USAGE = 'usage: bun run authors --stage local|prod [--db N] [--rate R] [--dry-run] [--yes] [--json]';
 const CACHE = join(import.meta.dirname, '..', '.cache', 'authors', 'firebase.json');
 
+/** `--json`'s last line: authors named this run (by their records or Firebase), Firebase lookups, prints named, writes. */
+export interface AuthorsResult {
+	named: number;
+	asked: number;
+	prints: number;
+	documents: number;
+	rows: number;
+	/** Authors still to ask (a stopped run). */
+	left: number;
+}
+
 const { flags, stage, generation } = parseStageArgs(USAGE, {
-	limit: { type: 'string' },
-	rate: { type: 'string', default: '5' }
+	rate: { type: 'string', default: '5' },
+	json: { type: 'boolean' }
 });
-const limit = flags.limit === undefined ? Infinity : Number(flags.limit);
-if (!(limit === Infinity || (Number.isInteger(limit) && limit >= 0))) fail('--limit must be a whole number');
 const rate = Number(flags.rate);
 if (!(rate > 0 && rate <= 10)) fail('--rate must be more than 0 and at most 10');
 
@@ -72,7 +81,7 @@ await runOn(target, async () => {
 	const seeded = recordNames(state);
 	const unknown = unknownAuthors(state);
 	const cached = unknown.filter((id) => cache.has(id));
-	const toAsk = unknown.filter((id) => !cache.has(id)).slice(0, limit === Infinity ? undefined : limit);
+	const toAsk = unknown.filter((id) => !cache.has(id));
 	const authorCount = new Set(state.prints.map((p) => p.author_id)).size;
 	const unnamed = state.prints.filter((p) => !p.author_name).length;
 	console.log(
@@ -81,8 +90,7 @@ await runOn(target, async () => {
 	);
 	console.log(
 		`  ${n(seeded.length)} named by their own records, ${n(cached.length)} answered by Firebase before (cache), ` +
-			`${n(unknown.length - cached.length)} to ask Firebase` +
-			(toAsk.length < unknown.length - cached.length ? ` (${n(toAsk.length)} this run, --limit)` : '') +
+			`${n(toAsk.length)} to ask Firebase` +
 			(toAsk.length ? `: about ${Math.ceil(toAsk.length / rate / 60)} min at ${rate}/s` : '')
 	);
 	if (flags['dry-run']) {
@@ -152,5 +160,16 @@ await runOn(target, async () => {
 			`✓ ${n(done.docsWritten)} documents and ${n(done.rowsWritten)} D1 rows written` +
 				(left ? `; ${n(left)} authors still to ask (run again)` : '; every author has been asked')
 		);
+		if (flags.json)
+			console.log(
+				JSON.stringify({
+					named: seeded.length + named,
+					asked,
+					prints: fixes.length,
+					documents: done.docsWritten,
+					rows: done.rowsWritten,
+					left
+				} satisfies AuthorsResult)
+			);
 	}
 });

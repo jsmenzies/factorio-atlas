@@ -46,5 +46,3 @@ export function renderProgress(windowMs = RATE_WINDOW_MS) {
 		}
 	};
 }
-
-export type RenderProgress = ReturnType<typeof renderProgress>;

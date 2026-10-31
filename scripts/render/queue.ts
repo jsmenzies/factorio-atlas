@@ -460,5 +460,3 @@ export function renderQueue(db: D1Database) {
 			)
 	};
 }
-
-export type RenderQueue = ReturnType<typeof renderQueue>;

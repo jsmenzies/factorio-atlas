@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { RenderStages } from '#lib/render-stages.js';
 import type { RenderRun } from '#lib/server/admin/render.js';
 import { logProgress } from '#lib/sync-progress.js';
-import { DEFAULT_SETTINGS, SITE_SHOTS_GROUP, type SourcePlan, type SyncPlan, type SyncRun, type SyncStep } from '#lib/sync.js';
+import { DEFAULT_SETTINGS, GROUP, ROW, type SourcePlan, type SyncPlan, type SyncRun, type SyncStep } from '#lib/sync.js';
 import { buildFlow, CELL_LINES, COLUMNS, fitCell, heroBar, nowSentence, renderNow, type Cell, type Flow } from './flow';
 import finished from './flow.fixture.json';
 
@@ -121,10 +121,10 @@ describe('the board after the update of 2026-10-30', () => {
 		expect(f.newPrints).toBe(733);
 	});
 
-	test('Screenshots: Imgur under factorioprints, uploads under uploads; an update before per-site groups says so', () => {
+	test('Screenshots: Imgur under factorioprints, each site its own, uploads under uploads', () => {
 		expect(said(cellOf(f, 'factorioprints', 'shots'))).toBe('done');
 		expect(cellOf(f, 'factorioprints', 'shots').tip).toBe('Imgur: already copied 18,111 · dead on Imgur 2 · to fetch 0.');
-		expect(cellOf(f, 'codex', 'shots').tip).toContain('counted other sites’ images together');
+		expect(said(cellOf(f, 'codex', 'shots'))).toBe('warn · 356 copied · 30 failed');
 		expect(said(f.shared.sizing)).toBe('done · 4,653 files · 1348.0 MB');
 	});
 
@@ -137,34 +137,14 @@ describe('the board after the update of 2026-10-30', () => {
 });
 
 describe('screenshots per source', () => {
-	const withSites = (): SyncRun => {
-		const r = structuredClone(RUN);
-		const shots = r.steps.find((s) => s.id === 'screenshots')!;
-		shots.details!.push(
-			{
-				title: `${SITE_SHOTS_GROUP}codex`,
-				rows: [
-					{ label: 'images shown', value: 400 },
-					{ label: 'copied now', value: 356 },
-					{ label: 'failed, tried again next update', value: 30, tone: 'bad' }
-				]
-			},
-			{
-				title: `${SITE_SHOTS_GROUP}fprints`,
-				rows: [
-					{ label: 'images shown', value: 349 },
-					{ label: 'copied now', value: 330 }
-				]
-			}
-		);
-		return r;
-	};
+	// The update of 2026-10-30 recorded each site's own group (SITE_SHOTS_GROUP).
+	const withSites = (): SyncRun => structuredClone(RUN);
 
 	test('each polled site’s own copies; failures make it a warning', () => {
 		const f = flowOf({ run: withSites(), phase: 'current' });
 		expect(said(cellOf(f, 'codex', 'shots'))).toBe('warn · 356 copied · 30 failed');
 		expect(said(cellOf(f, 'fprints', 'shots'))).toBe('done · 330 copied');
-		expect(cellOf(f, 'fprints', 'shots').tip).toBe('fprints’s own images for its prints: images shown 349.');
+		expect(cellOf(f, 'fprints', 'shots').tip).toBe('fprints’s own images for its prints: images shown 349 · already copied 19.');
 	});
 
 	test('while the step runs: the part its command names runs, one cell at a time', () => {
@@ -307,7 +287,7 @@ describe('render per source', () => {
 			uploads_pending: 1030,
 			upload_target: 'prod',
 			eta_seconds: 600,
-			options: { phase: null, thumbs: { done: 80, of: 86 }, stages: s },
+			options: { phase: null, stages: s },
 			...o
 		}) as RenderRun;
 	const inRender = (): SyncRun => {
@@ -343,7 +323,7 @@ describe('render per source', () => {
 		expect(cellOf(f, 'uploads', 'plan')).toMatchObject({ kind: 'done', facts: [] });
 		expect(cellOf(f, 'uploads', 'plan').tip.startsWith('None in this batch')).toBe(true);
 		expect(row(f, 'codex').reach).toBe(7);
-		// Nothing outside the Render group runs; its header spins instead.
+		// Nothing outside the Render group runs.
 		expect(running(f)).toEqual([]);
 		expect(/^One run · .* so far$/.test(f.shared.summary.title)).toBe(true);
 		expect(f.shared.summary.lines.at(-1)).toBe('103 prints · 3,522 pages drawn · 10 failed');
@@ -369,12 +349,16 @@ describe('render per source', () => {
 	});
 
 	test('after the last page: the run row’s phase names what it does', () => {
-		const thumbs = flowOf({
-			run: inRender(),
-			phase: 'running',
-			liveRender: renderRow({ options: { phase: 'thumbnails', thumbs: { done: 80, of: 103 } } })
+		// Thumbnails: every source's from the stages, 80 of 103 prints.
+		const s = stages();
+		s.sites.fprints!.thumbs = { done: 35, of: 58 };
+		const thumbs = flowOf({ run: inRender(), phase: 'running', liveRender: renderRow({ options: { phase: 'thumbnails', stages: s } }) });
+		expect(thumbs.renderNow).toEqual({
+			phase: 'thumbnails',
+			sentence: 'Making and uploading thumbnails: 80 of 103 prints.',
+			value: 80,
+			of: 103
 		});
-		expect(thumbs.renderNow).toMatchObject({ label: 'Making and uploading thumbnails', value: 80, of: 103 });
 		// The top box's bar: prints finished (thumbnails done) of those picked.
 		expect(heroBar(thumbs, null)).toBe(78);
 		expect(
@@ -387,7 +371,7 @@ describe('render per source', () => {
 		const failed = renderNow(
 			renderRow({ options: { phase: 'flags', stages: stages({ flags: { state: 'failed', stage: 'prod', error: 'x' } }) } })
 		);
-		expect(failed).toMatchObject({ warn: true, sentence: 'Setting the search flags on prod failed: run render:flags by hand.' });
+		expect(failed.sentence).toBe('Setting the search flags on prod failed: run render:flags by hand.');
 		expect(renderNow(renderRow({ state: 'starting' })).phase).toBe('queueing');
 		expect(renderNow(null).sentence).toBe('Picking the prints to render.');
 		// Clean up and search flags run inside the group, so they may spin beside it.
@@ -499,5 +483,34 @@ describe('one size for every cell', () => {
 			for (const c of cells) expect(c.facts.length + (c.label ? 1 : 0) <= CELL_LINES).toBe(true);
 			expect(f.shared.summary.lines.length + 1 <= CELL_LINES).toBe(true);
 		}
+	});
+});
+
+describe('the Authors cell', () => {
+	const withAuthors = (named: number): SyncRun => {
+		const r = structuredClone(RUN);
+		const i = r.steps.findIndex((s) => s.id === 'authors');
+		r.steps[i] = {
+			id: 'authors',
+			status: 'done',
+			summary: `${named} authors named, 9 prints given a name`,
+			details: [
+				{
+					title: GROUP.authors,
+					rows: [
+						{ label: ROW.authorsNamed, value: named },
+						{ label: 'asked Firebase', value: 4 }
+					]
+				}
+			]
+		};
+		return r;
+	};
+	test('"N named" from the step’s figures; a bare ✓ when none', () => {
+		const f = flowOf({ run: withAuthors(6), phase: 'current' });
+		expect(said(cellOf(f, 'factorioprints', 'authors'))).toBe('done · 6 named');
+		expect(cellOf(f, 'factorioprints', 'authors').tip).toContain('authors named 6 · asked Firebase 4');
+		expect(said(cellOf(flowOf({ run: withAuthors(0), phase: 'current' }), 'factorioprints', 'authors'))).toBe('done');
+		expect(cellOf(f, 'codex', 'authors').kind).toBe('na');
 	});
 });

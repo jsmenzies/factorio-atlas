@@ -9,7 +9,6 @@ import {
 	emptyState,
 	PoliteHttp,
 	planPoll,
-	polledSource,
 	readState,
 	type Fetched,
 	type ListedPrint,
@@ -26,7 +25,6 @@ const fakeSite = (
 	const calls: string[] = [];
 	const site: PolledSite = {
 		site: 'codex',
-		kind: 'test',
 		async listPage(page, http) {
 			http.lists++;
 			calls.push(`list ${page}`);
@@ -375,15 +373,6 @@ describe('PoliteHttp', () => {
 			big.get('https://example.com/r?id=3', 'read', undefined, { goneIf: (_s, t) => ((seen = t.length), false) })
 		).rejects.toThrow('HTTP 500');
 		expect(seen).toBe(4096);
-	});
-
-	test('the source carries its kind, for the Overview even when its plan fails', () => {
-		const { site } = fakeSite(new Map());
-		expect(polledSource(site, { recordsDir: inbox, settings: () => ({ on: true }) })).toMatchObject({
-			site: 'codex',
-			kind: 'test',
-			polled: true
-		});
 	});
 
 	test('a site whose one page lists everything has a full listing every time: a deletion is noticed at once', async () => {

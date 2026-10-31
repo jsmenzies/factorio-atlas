@@ -39,9 +39,8 @@ export interface RenderRunOptions {
 	topList?: { n: number; source: string; refreshed_at: number; refreshed: boolean; added: number } | null;
 	upload?: string | null;
 	resumedFrom?: string | null;
-	/** After the last page: what the run is doing before it ends; and the thumb step's prints done of those offered. */
+	/** After the last page: what the run is doing before it ends. */
 	phase?: RenderRunPhase | null;
-	thumbs?: { done: number; of: number } | null;
 	/** Plan, Draw, Upload and Thumbnails per source, Clean up and Search flags (runs from before them have none). */
 	stages?: RenderStages | null;
 	[key: string]: unknown;

@@ -8,12 +8,11 @@ import type { SourceAdapter } from './mirror';
 
 const n = (x: number) => x.toLocaleString('en-US');
 
-/** The plan of a source that couldn't be checked: nothing new, its kind kept for the Overview's list, and why. */
-export const failedPlan = (s: Pick<SourceAdapter, 'site' | 'kind' | 'polled' | 'ingestsItself'>, error: string): SourcePlan => {
+/** The plan of a source that couldn't be checked: nothing new, and why. */
+export const failedPlan = (s: Pick<SourceAdapter, 'site' | 'polled' | 'ingestsItself'>, error: string): SourcePlan => {
 	const none: SourceCursor = { id: 'none', date: 0 };
 	return {
 		site: s.site,
-		...(s.kind ? { kind: s.kind } : {}),
 		...(s.polled ? { polled: true } : {}),
 		...(s.ingestsItself ? { ingestsItself: true } : {}),
 		from: none,

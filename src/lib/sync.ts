@@ -31,7 +31,7 @@ export interface SyncSettings {
 	retryFailed: boolean;
 	/** Run the render step (top list, changed records, render and upload); off: the step is skipped. */
 	render: boolean;
-	/** Copy new screenshots from Imgur, upload them and update the stage's screenshot rows. */
+	/** Copy new screenshots (Imgur's, approved uploads', other sites'), size and upload them, and update the stage's screenshot rows. */
 	screenshots: boolean;
 	/** Name new authors: their records first, then Firebase for every author never asked. An old saved `authorLimit` is ignored. */
 	authors: boolean;
@@ -41,8 +41,8 @@ export interface SyncSettings {
 	 * held-back update can be accepted.
 	 */
 	maxChange: number;
-	/** Each polled site (POLLED_SITES): fetched in the fetch step, admitted in the ingest step, when on. */
-	polled: Record<PolledSiteId, PolledSettings>;
+	/** Each polled site (POLLED_SITES): fetched in the fetch step, admitted in the ingest step, when `on` (default). */
+	polled: Record<PolledSiteId, { on: boolean }>;
 }
 
 /**
@@ -54,13 +54,6 @@ export const POLLED_SITES = [
 	{ site: 'fprints', name: 'fprints.xyz' }
 ] as const;
 export type PolledSiteId = (typeof POLLED_SITES)[number]['site'];
-
-export interface PolledSettings {
-	/** Fetch and admit this site's prints in every update. */
-	on: boolean;
-}
-
-export const DEFAULT_POLLED: PolledSettings = { on: true };
 
 /**
  * The hold-back rule, the same for every source the update fetches (the mirror and the polled sites): a source
@@ -123,7 +116,7 @@ export const DEFAULT_SETTINGS: SyncSettings = {
 	screenshots: true,
 	authors: true,
 	maxChange: 0.05,
-	polled: Object.fromEntries(POLLED_SITES.map((p) => [p.site, DEFAULT_POLLED])) as Record<PolledSiteId, PolledSettings>
+	polled: Object.fromEntries(POLLED_SITES.map((p) => [p.site, { on: true }])) as Record<PolledSiteId, { on: boolean }>
 };
 
 /** The render step's own flags from the settings: workers, the memory cap (only when not the default) and retry. */
@@ -175,18 +168,14 @@ export function parseSettings(input: unknown, machine: { ramMb?: number | null }
 	return { settings, errors };
 }
 
-/** Each polled site's settings: a valid field kept, else the default; errors named `polled.<site>.<field>`. Unknown fields (an old `perUpdate`) are ignored. */
-const parsePolled = (input: unknown, errors: string[]): Record<PolledSiteId, PolledSettings> => {
+/** Each polled site's `on`: kept when a boolean, else on (an invalid one named `polled.<site>.on`). Other fields (an old `perUpdate`) are ignored. */
+const parsePolled = (input: unknown, errors: string[]): Record<PolledSiteId, { on: boolean }> => {
 	const all = input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
-	const out = {} as Record<PolledSiteId, PolledSettings>;
+	const out = {} as Record<PolledSiteId, { on: boolean }>;
 	for (const { site } of POLLED_SITES) {
 		const o = all[site] && typeof all[site] === 'object' ? (all[site] as Record<string, unknown>) : {};
-		const field = <K extends keyof PolledSettings>(key: K, v: PolledSettings[K] | undefined): PolledSettings[K] => {
-			if (!(key in o)) return DEFAULT_POLLED[key];
-			if (v === undefined) errors.push(`polled.${site}.${key}`);
-			return v ?? DEFAULT_POLLED[key];
-		};
-		out[site] = { on: field('on', typeof o.on === 'boolean' ? o.on : undefined) };
+		if ('on' in o && typeof o.on !== 'boolean') errors.push(`polled.${site}.on`);
+		out[site] = { on: typeof o.on === 'boolean' ? o.on : true };
 	}
 	return out;
 };
@@ -224,8 +213,79 @@ export interface SyncStep {
 	render?: RenderStages;
 }
 
-/** The screenshots step's group of one site's images (`From other sites: codex`), besides the combined one. */
+/** The screenshots step's group of one site's images (`From other sites: codex`). */
 export const SITE_SHOTS_GROUP = 'From other sites: ';
+
+/**
+ * The detail rows the Update tab reads back from a step's figures (flow.ts, view.ts): the steps write them
+ * (scripts/sync.ts, scripts/sync/*.ts) and the board reads them through these names only, so rewording one
+ * can't silently empty a cell. Rows only shown, never read, keep their words where they are written.
+ */
+export const ROW = {
+	// fetch
+	printsOnSite: 'prints on the site',
+	waiting: 'waiting',
+	oldestWaiting: 'oldest waiting',
+	stillProcessing: 'still processing',
+	position: 'position',
+	// ingest
+	analysed: 'analysed',
+	reindexed: 're-indexed',
+	folded: 'copies folded',
+	failed: 'failed',
+	toAdmit: 'records to admit',
+	newPrints: 'new prints',
+	joined: 'joined an existing print',
+	updated: 'updated',
+	unchanged: 'unchanged',
+	blocked: 'blocked',
+	unreadable: 'unreadable',
+	suggestions: 'new, with suggestions to look at',
+	failedRetried: 'failed, tried again next update',
+	// authors
+	authorsNamed: 'authors named',
+	// screenshots
+	fetched: 'fetched',
+	newlyDead: 'newly dead',
+	alreadyCopied: 'already copied',
+	deadOnImgur: 'dead on Imgur',
+	toFetch: 'to fetch',
+	approved: 'approved',
+	copiedFromRaw: 'copied from RAW',
+	sized: 'sized',
+	alreadyUp: 'already up',
+	imagesShown: 'images shown',
+	copiedNow: 'copied now',
+	goneAtSource: 'gone at the source',
+	maybeDead: 'answered 404 once (asked again next update)',
+	filesPut: 'files put',
+	sizesMade: 'sizes made',
+	deleted: 'deleted'
+} as const;
+
+/** The detail groups the Update tab finds by title. */
+export const GROUP = {
+	/** A polled site's admission in the ingest step. */
+	gate: (site: string) => `${site}: through the gate`,
+	/** Imgur's copies in the screenshots step. */
+	onThisMachine: 'On this machine',
+	fromUploads: 'From uploads',
+	siteShots: (site: string) => `${SITE_SHOTS_GROUP}${site}`,
+	/** The screenshots bucket: "Prod bucket". */
+	bucket: (stage: string) => `${stage[0].toUpperCase()}${stage.slice(1)} bucket`,
+	isBucket: (title: string) => title.endsWith(' bucket'),
+	searchCards: 'Search cards',
+	authors: 'Author names'
+} as const;
+
+/** A step's detail group whose title matches. */
+export const groupOf = (step: SyncStep | undefined, match: (title: string) => boolean): DetailGroup | undefined =>
+	step?.details?.find((g) => g.title !== undefined && match(g.title));
+/** A group's row by label, when its value is a number. */
+export const valueOf = (g: DetailGroup | undefined, label: string): number | undefined => {
+	const v = g?.rows.find((r) => r.label === label)?.value;
+	return typeof v === 'number' ? v : undefined;
+};
 
 /** One figure in a step's details: a label and its value; a long value (a path) is `muted`. */
 export interface DetailRow {
@@ -348,8 +408,6 @@ export const SYNC_STALE_MS = 60_000;
 /** What a fetch would bring from one source (for the mirror: its latest commit against the clone's). */
 export interface SourcePlan {
 	site: string;
-	/** What the source is, for the Overview's list ("GitHub mirror owner/repo"); absent in older plans. */
-	kind?: string;
 	/** Commits (or batches) the source is ahead of this machine; absent in older plans. */
 	behind?: number;
 	/** What this machine has, and what the source has now. */
@@ -391,7 +449,7 @@ export interface SourcePlan {
 	polled?: boolean;
 	/** Turned off in the settings: not checked, nothing fetched. */
 	off?: boolean;
-	/** A polled site's reads left over from the last update (its per-update cap, failed reads), counted in `added`/`edited`; absent in older plans. */
+	/** A polled site's reads left over from the last update (a stop or failed reads), counted in `added`/`edited`; absent in older plans. */
 	left?: number;
 }
 

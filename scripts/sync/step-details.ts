@@ -1,9 +1,10 @@
 /**
- * Figures the Overview shows for the removals step, the fetch step's record store and the render step, built
+ * Figures the Overview shows for the removals step, the fetch step's record store, the authors step and the render step, built
  * from the scripts' `--json` results and the render run's row. Pure, for tests.
  */
 import type { RenderStages } from '#lib/render-stages.js';
-import { detail, type DetailGroup } from '#lib/sync.js';
+import { detail, GROUP, ROW, type DetailGroup } from '#lib/sync.js';
+import type { AuthorsResult } from '../authors';
 import type { RecordsResult } from '../records';
 import type { RemovalsResult } from '../removals';
 
@@ -88,6 +89,21 @@ export function recordStoreFetch(store: RecordsResult, polled: readonly string[]
 	};
 }
 
+/** The authors step's figures (`authors --json`): authors named (the board's Authors cell), lookups and writes. */
+export const authorsDetails = (a: AuthorsResult): DetailGroup[] => [
+	{
+		title: GROUP.authors,
+		rows: [
+			...detail(ROW.authorsNamed, a.named, { always: true }),
+			...detail('asked Firebase', a.asked),
+			...detail('prints given a name', a.prints),
+			...detail('documents rewritten', a.documents),
+			...detail('D1 rows written', a.rows),
+			...detail('authors still to ask', a.left, { tone: 'warn' })
+		]
+	}
+];
+
 /** The render run's row, as the render step reads it. */
 export interface RenderRowCounts {
 	prints_total: number;
@@ -103,7 +119,7 @@ const siteName = (site: string) => (site === 'upload' ? 'uploads' : site);
 
 /**
  * The render step's figures: the run as a whole, then each source's stages, its clean up and search flags
- * (from `options.stages`; rows from before them have only the first group).
+ * (from `options.stages`, which every run writes from its first heartbeat; without them, only the first group).
  */
 export function renderStageDetails(row: RenderRowCounts, stages: RenderStages | null): DetailGroup[] {
 	const any = row.prints_total > 0;

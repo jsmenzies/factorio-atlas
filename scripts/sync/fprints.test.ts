@@ -168,7 +168,7 @@ describe('fprints through the polled framework', () => {
 		const { calls, fetchOnce } = fakeSite(listed, rows);
 
 		const first = await fetchOnce();
-		expect(first.plan).toMatchObject({ site: 'fprints', kind: 'fprints.xyz sitemap', polled: true, prints: 3, added: 3 });
+		expect(first.plan).toMatchObject({ site: 'fprints', polled: true, prints: 3, added: 3 });
 		expect(calls).toEqual(['sitemap', 'read 8', 'read 0', 'read e']);
 		expect(first.counts).toMatchObject({ new: 3, failed: 0 });
 		expect(JSON.parse(await readFile(join(inbox, 'fprints', `${A}.json`), 'utf8'))).toMatchObject({ site: 'fprints', siteId: A });

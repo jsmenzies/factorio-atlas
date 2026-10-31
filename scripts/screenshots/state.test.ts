@@ -84,9 +84,15 @@ test('originalPath', () => {
 });
 
 test('planWork never fetches a removed image again', () => {
-	const removed = entry('rmv', 'removed', { by: 'request', reason: 'taken down on request' });
+	const removed = entry('rmv', 'removed', { reason: 'taken down on request' });
 	const plan = planWork([want('rmv')], new Map([['rmv', removed]]), { recheckDead: true, hasFile: () => false });
 	expect(plan.todo).toEqual([]);
 	expect(plan.removed).toBe(1);
 	expect(parseState(formatEntry(removed)).entries.get('rmv')?.status).toBe('removed');
+});
+
+test('old lines with fields no longer written (a removal’s `by`) still parse', () => {
+	const line = `${JSON.stringify({ id: 'old', status: 'removed', prints: [], labelled: null, attempts: 1, at: '', by: 'imgur' })}\n`;
+	expect(parseState(line).entries.get('old')?.status).toBe('removed');
+	expect(parseState(line).bad).toBe(0);
 });

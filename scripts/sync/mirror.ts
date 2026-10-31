@@ -123,12 +123,6 @@ export interface PlanOptions {
 	signal?: AbortSignal;
 }
 
-/** The clone's origin as the Overview names it: "GitHub mirror owner/repo", else its URL. */
-export const sourceKind = (url: string) => {
-	const m = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(url.trim());
-	return m ? `GitHub mirror ${m[1]}` : `git mirror ${url.trim()}`;
-};
-
 const countPrints = async (clone: string, ref: string, signal?: AbortSignal) =>
 	(await git(clone, ['ls-tree', '-r', '--name-only', ref], signal)).split('\n').filter((p) => idOf(p)).length;
 
@@ -147,11 +141,9 @@ export async function planMirror(clone: string, o: PlanOptions): Promise<SourceP
 	const to = await cursorOf(clone, remoteRef, o.signal);
 	const moved = from.id !== to.id;
 	const prints = await countPrints(clone, remoteRef, o.signal);
-	const kind = sourceKind(await git(clone, ['remote', 'get-url', 'origin'], o.signal));
 	const behind = moved ? Number((await git(clone, ['rev-list', '--count', `HEAD..${remoteRef}`], o.signal)).trim()) : 0;
 	const base = {
 		site: MIRROR_SITE,
-		kind,
 		behind,
 		from,
 		to,
@@ -216,8 +208,6 @@ export const pullMirror = async (clone: string, commit: string, signal?: AbortSi
 /** A print source for the update's fetch step: say what's new (plan), then bring the local copy to it (apply). */
 export interface SourceAdapter {
 	site: string;
-	/** What the source is (SourcePlan.kind), for the Overview's list when its plan couldn't be made. */
-	kind?: string;
 	/** Its apply ingests its records itself (uploads): none of the backfill's work (SourcePlan.ingestsItself). */
 	ingestsItself?: boolean;
 	/** A polled site (scripts/sync/polled.ts): its apply reads records into the inbox, the ingest step admits them. */

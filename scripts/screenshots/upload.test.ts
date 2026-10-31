@@ -165,41 +165,20 @@ describe('syncImage', () => {
 	);
 
 	test(
-		'removed, not on request (an old Imgur recheck line): a removed manifest now, the files after the grace period',
-		inDir(async () => {
-			const e = await fetched('Gone1aa', await png(400, 300));
-			const made = await makeSizes(dir, e.id, 'png', await png(400, 300));
-			const { store, objects } = memoryStore();
-			const held = new Map<string, Held>();
-			let t = 0;
-			const ctx = { dir, store, held, append: () => {}, now: () => t };
-			await syncImage(ctx, e, made);
-			const removed: StateEntry = { ...e, status: 'removed', by: 'imgur' };
-			t = 10;
-			expect(await syncImage(ctx, removed, null)).toMatchObject({ put: 1, deleted: 0 });
-			expect(JSON.parse(new TextDecoder().decode(objects.get(manifestKey(e.id))!.body))).toEqual({ state: 'removed' });
-			t = 10 + DELETE_GRACE_MS;
-			const r = await syncImage(ctx, removed, null);
-			expect(r?.deleted).toBeGreaterThan(0);
-			expect([...objects.keys()]).toEqual([manifestKey(e.id)]);
-		})
-	);
-
-	test(
-		'removed on request: the files go at once; dead: a manifest alone; failed: nothing',
+		'removed (always on request): the files go at once; dead: a manifest alone; failed: nothing',
 		inDir(async () => {
 			const e = await fetched('Req1aaa', await png(400, 300));
 			const made = await makeSizes(dir, e.id, 'png', await png(400, 300));
 			const { store, objects } = memoryStore();
 			const ctx = { dir, store, held: new Map<string, Held>(), append: () => {}, now: () => 5 };
 			await syncImage(ctx, e, made);
-			await syncImage(ctx, { ...e, status: 'removed', by: 'request' }, null);
+			await syncImage(ctx, { ...e, status: 'removed' }, null);
 			expect([...objects.keys()]).toEqual([manifestKey(e.id)]);
 			expect(wantedManifest({ ...e, status: 'dead' }, null)).toEqual({ state: 'dead' });
 			expect(wantedManifest({ ...e, status: 'failed' }, null)).toBeNull();
 			expect(wantedManifest(e, null)).toBeNull();
-			expect(graceFor({ ...e, status: 'removed', by: 'request' })).toBe(0);
-			expect(graceFor({ ...e, status: 'removed', by: 'imgur' })).toBe(DELETE_GRACE_MS);
+			expect(graceFor({ ...e, status: 'removed' })).toBe(0);
+			expect(graceFor(e)).toBe(DELETE_GRACE_MS);
 		})
 	);
 });

@@ -331,24 +331,41 @@
 					]
 				},
 				{
-					"title": "From other sites",
+					"title": "From other sites: codex",
 					"rows": [
 						{
 							"label": "images shown",
-							"value": 749
+							"value": 400
 						},
 						{
 							"label": "already copied",
-							"value": 33
+							"value": 14
 						},
 						{
 							"label": "copied now",
-							"value": 686
+							"value": 356
 						},
 						{
 							"label": "failed, tried again next update",
 							"value": 30,
 							"tone": "bad"
+						}
+					]
+				},
+				{
+					"title": "From other sites: fprints",
+					"rows": [
+						{
+							"label": "images shown",
+							"value": 349
+						},
+						{
+							"label": "already copied",
+							"value": 19
+						},
+						{
+							"label": "copied now",
+							"value": 330
 						}
 					]
 				},

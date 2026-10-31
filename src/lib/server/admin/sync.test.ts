@@ -19,18 +19,11 @@ describe('syncOverview: the render runs', () => {
 			`INSERT INTO render_runs (id, host, source, options, state, started_at, updated_at, finished_at) VALUES (?, 'h', 's', ?, ?, ?, ?, ?)`
 		);
 		const stages = { v: 1, at: 0, sites: {}, cleanup: null, flags: null };
-		run.run(
-			'live',
-			JSON.stringify({ phase: 'thumbnails', thumbs: { done: 1, of: 2 }, stages, batch: { picked: ['x'] } }),
-			'running',
-			now - 60_000,
-			now - 1000,
-			null
-		);
+		run.run('live', JSON.stringify({ phase: 'thumbnails', stages, batch: { picked: ['x'] } }), 'running', now - 60_000, now - 1000, null);
 		run.run('failed', JSON.stringify({}), 'failed', now - 5000, now - 4000, now - 4000);
 		const o = await syncOverview(d1FromSqlite(sqlite), now);
 		expect(o.liveRender?.id).toBe('live');
-		expect(o.liveRender?.options).toEqual({ phase: 'thumbnails', thumbs: { done: 1, of: 2 }, stages });
+		expect(o.liveRender?.options).toEqual({ phase: 'thumbnails', stages });
 		expect(o.latestRender?.id).toBe('failed');
 		// A live row whose heartbeat stopped is no longer live.
 		expect((await syncOverview(d1FromSqlite(sqlite), now + 60_000)).liveRender).toBeNull();

@@ -27,8 +27,8 @@ export function wantedManifest(e: StateEntry, made: Made | null): ShotManifest |
 export const manifestFiles = (id: string, m: ShotManifest): string[] =>
 	m.state === 'copied' ? shotKeys({ id, v: m.v, ext: m.ext, w: m.w, h: m.h } satisfies Shot) : [];
 
-/** How long the files a manifest drops wait: none for a removal on request, else DELETE_GRACE_MS. */
-export const graceFor = (e: StateEntry, graceMs = DELETE_GRACE_MS) => (e.status === 'removed' && e.by === 'request' ? 0 : graceMs);
+/** How long the files a manifest drops wait: none for a removal (always on request), else DELETE_GRACE_MS. */
+export const graceFor = (e: StateEntry, graceMs = DELETE_GRACE_MS) => (e.status === 'removed' ? 0 : graceMs);
 
 export interface SyncContext {
 	dir: string;

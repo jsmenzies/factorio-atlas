@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { stepLabel, SYNC_STEPS, type SyncRun, type SyncStepId } from '#lib/sync.js';
 	import { duration } from '../metrics.js';
-	import StepList from './StepList.svelte';
+	import StepFigures from './StepFigures.svelte';
 	import { STEP_MARK, type PreviewStep } from './view.js';
 
 	/**
@@ -58,7 +58,7 @@
 				{#if s.summary}
 					<p class="mt-0.5 text-xs break-words {s.status === 'failed' ? 'text-rose-300' : s.status === 'warning' ? 'text-amber-200' : 'text-stone-400'}">{s.summary}</p>
 				{/if}
-				{#if s.details?.length}<StepList steps={[s]} {now} bare />{/if}
+				{#if s.details?.length}<StepFigures details={s.details} />{/if}
 			{/if}
 			{#if !live && openStep.plan}
 				<!-- What this step would do in an update started now (the last check and the settings on the page). -->

@@ -34,7 +34,7 @@
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { detail, holdBack, holdLimit, type DetailGroup, type SourcePlan } from '#lib/sync.js';
+import { detail, GROUP, holdBack, holdLimit, ROW, type DetailGroup, type SourcePlan } from '#lib/sync.js';
 import type { SourceRecord } from '#lib/server/pipeline/source-record.js';
 import { dropRecord, putRecord, type StoreSite } from '../records/store';
 import type { PlanOptions, SourceAdapter } from './mirror';
@@ -58,8 +58,6 @@ export type Fetched = { record: SourceRecord } | { gone: string };
 
 export interface PolledSite {
 	site: StoreSite;
-	/** The Overview's name for the source ("factoriocodex.com API"). */
-	kind: string;
 	/**
 	 * Bump when the record builder makes something else from the same answer: the next fetch lists every page
 	 * and reads every print again (its revisions should carry it too, so each one differs).
@@ -413,7 +411,6 @@ export async function planPoll(
 	const pending = Object.keys(state.pending).length;
 	const plan: SourcePlan = {
 		site: site.site,
-		kind: site.kind,
 		polled: true,
 		behind: work.read.length,
 		from,
@@ -605,14 +602,12 @@ export function polledSource(site: PolledSite, o: PolledSourceOptions): SourceAd
 	let planned: { state: PollState; work: PollWork; toId: string; maxChange: number } | null = null;
 	const adapter: SourceAdapter & { lastApply?: string } = {
 		site: site.site,
-		kind: site.kind,
 		polled: true,
 		plan: async (p: PlanOptions): Promise<SourcePlan> => {
 			if (!o.settings().on) {
 				const none = { id: 'off', date: 0 };
 				return {
 					site: site.site,
-					kind: site.kind,
 					polled: true,
 					off: true,
 					from: none,
@@ -675,7 +670,7 @@ export const polledFetchDetails = (p: SourcePlan, counts: Record<string, number>
 		? [{ label: 'off in the settings', value: 'not checked' }]
 		: [
 				...detail('held back', p.blocked, { tone: 'warn' }),
-				...detail('prints on the site', p.prints, { always: true }),
+				...detail(ROW.printsOnSite, p.prints, { always: true }),
 				...detail('new to read', p.added, { always: !p.blocked }),
 				...detail('changed to read', p.edited),
 				...detail('missing from the list', p.deleted.length, { tone: 'warn' }),
@@ -709,17 +704,17 @@ interface AdmitFigures {
 /** The ingest step's rows for a polled site's admission. */
 export const polledIngestDetails = (r: AdmitFigures): DetailGroup[] => [
 	{
-		title: `${r.site}: through the gate`,
+		title: GROUP.gate(r.site),
 		rows: [
-			...detail('records to admit', r.waiting, { always: true }),
-			...detail('new prints', r.counts.new, { always: r.waiting > 0 }),
-			...detail('joined an existing print', r.counts.joined, { always: r.waiting > 0 }),
-			...detail('updated', r.counts.updated),
-			...detail('unchanged', r.counts.unchanged),
-			...detail('new, with suggestions to look at', r.suggestedNew),
-			...detail('blocked', r.counts.blocked, { tone: 'warn' }),
-			...detail('unreadable', r.counts.undecodable, { tone: 'warn' }),
-			...detail('failed, tried again next update', r.counts.failed ?? 0, { always: r.waiting > 0, tone: 'bad' }),
+			...detail(ROW.toAdmit, r.waiting, { always: true }),
+			...detail(ROW.newPrints, r.counts.new, { always: r.waiting > 0 }),
+			...detail(ROW.joined, r.counts.joined, { always: r.waiting > 0 }),
+			...detail(ROW.updated, r.counts.updated),
+			...detail(ROW.unchanged, r.counts.unchanged),
+			...detail(ROW.suggestions, r.suggestedNew),
+			...detail(ROW.blocked, r.counts.blocked, { tone: 'warn' }),
+			...detail(ROW.unreadable, r.counts.undecodable, { tone: 'warn' }),
+			...detail(ROW.failedRetried, r.counts.failed ?? 0, { always: r.waiting > 0, tone: 'bad' }),
 			...detail('gone: purged', r.gone.purged),
 			...detail('gone: kept (another source)', r.gone.kept),
 			...detail('gone: failed', r.gone.failed, { tone: 'bad' }),

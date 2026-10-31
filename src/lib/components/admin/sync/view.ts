@@ -2,7 +2,10 @@ import type { ScopeFigures } from '#lib/server/admin/render-scope.js';
 import {
 	detail,
 	estimateRender,
+	GROUP,
+	groupOf,
 	planTotals,
+	ROW,
 	sourceMoved,
 	SYNC_STALE_MS,
 	type DetailGroup,
@@ -12,7 +15,8 @@ import {
 	type SyncPlan,
 	type SyncRun,
 	type SyncSettings,
-	type SyncStepId
+	type SyncStepId,
+	valueOf
 } from '#lib/sync.js';
 import { int, isLiveState } from '../metrics.js';
 
@@ -55,25 +59,6 @@ export const uncheckedText = (failed: readonly SourcePlan[]) => {
 	const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0];
 	return `${list} couldn’t be checked`;
 };
-
-/** The mirror's plan (the first source today), for the lines that name its commits. */
-export const mirrorPlan = (plan: SyncPlan | null) => plan?.sources[0] ?? null;
-
-/**
- * A source's line in the Overview's list: held back, behind (and by how much), or up to date. A source
- * whose cursor isn't a commit (uploads) says what waits in its own words (`stateText`).
- */
-export const sourceState = (p: SourcePlan): { text: string; tone: 'ok' | 'warn' | 'bad' | 'off' } => {
-	if (p.off) return { text: 'off', tone: 'off' };
-	if (p.error) return { text: 'couldn’t check', tone: 'bad' };
-	if (p.blocked) return { text: 'held back', tone: 'bad' };
-	if (!sourceMoved(p)) return { text: 'up to date', tone: 'ok' };
-	if (p.stateText) return { text: p.stateText, tone: 'warn' };
-	const behind = p.behind ? `${int(p.behind)} commit${p.behind === 1 ? '' : 's'} behind` : 'behind';
-	return { text: `${behind} · ${int(p.added)} new, ${int(p.edited)} edited`, tone: 'warn' };
-};
-
-export { sourceMoved };
 
 /** A mirror check older than this is redone when the Overview opens. */
 export const PLAN_FRESH_MS = 10 * 60_000;
@@ -143,7 +128,9 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 		settings.screenshots
 			? {
 					id: 'screenshots',
-					text: t.backfill ? `copy up to ${int(t.added)} new screenshots from Imgur, upload them` : 'copy any new screenshots from Imgur'
+					text:
+						(t.backfill ? `copy up to ${int(t.added)} new screenshots from Imgur` : 'copy any new screenshots from Imgur') +
+						', approved upload screenshots and other sites’ images; size and upload them'
 				}
 			: { id: 'screenshots', text: 'off in the settings', idle: true },
 		!settings.render
@@ -168,12 +155,12 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 export const previewCost = (plan: SyncPlan | null, union: ScopeFigures, settings: SyncSettings) =>
 	estimateRender(settings.render ? renderWork(plan, union.left, settings) : 0);
 
-const groupOf = (run: SyncRun, step: SyncStepId, match: (title: string) => boolean): DetailGroup | undefined =>
-	run.steps.find((s) => s.id === step)?.details?.find((g) => g.title !== undefined && match(g.title));
-const valueOf = (g: DetailGroup | undefined, label: string) => {
-	const v = g?.rows.find((r) => r.label === label)?.value;
-	return typeof v === 'number' ? v : undefined;
-};
+/** A step's detail group in `run` whose title matches. */
+const groupIn = (run: SyncRun, step: SyncStepId, match: (title: string) => boolean): DetailGroup | undefined =>
+	groupOf(
+		run.steps.find((s) => s.id === step),
+		match
+	);
 
 /**
  * What one update did for one source, for its card on the Update tab: a polled site's reads (from its
@@ -183,19 +170,19 @@ const valueOf = (g: DetailGroup | undefined, label: string) => {
  */
 export function sourceRunRows(run: SyncRun, site: string): DetailRow[] {
 	const entry = run.sources.find((s) => s.site === site);
-	const fetched = groupOf(run, 'fetch', (t) => t === site);
+	const fetched = groupIn(run, 'fetch', (t) => t === site);
 	if (entry?.polled) {
 		const c = entry.counts;
 		if (!c) return [];
-		const gate = groupOf(run, 'ingest', (t) => t === `${site}: through the gate`);
-		const gateFailed = valueOf(gate, 'failed, tried again next update') ?? 0;
+		const gate = groupIn(run, 'ingest', (t) => t === GROUP.gate(site));
+		const gateFailed = valueOf(gate, ROW.failedRetried) ?? 0;
 		return [
 			...detail('read', c['records read'], { always: true }),
 			...detail('new', c.new),
 			...detail('changed', c.changed),
-			...detail('new prints on the site', valueOf(gate, 'new prints')),
-			...detail('joined an existing print', valueOf(gate, 'joined an existing print')),
-			...detail('updated', valueOf(gate, 'updated')),
+			...detail('new prints on the site', valueOf(gate, ROW.newPrints)),
+			...detail('joined an existing print', valueOf(gate, ROW.joined)),
+			...detail('updated', valueOf(gate, ROW.updated)),
 			...detail('gone from the site', c['gone from the site'], { tone: 'warn' }),
 			...detail('failed', (c.failed ?? 0) + gateFailed, { always: true, tone: 'bad' }),
 			...detail('left for the next update', c.left, { always: true, tone: 'warn' })
@@ -204,12 +191,12 @@ export function sourceRunRows(run: SyncRun, site: string): DetailRow[] {
 	if (!fetched) return [];
 	if (entry && !entry.ingestsItself) {
 		// The backfill's group names every site it read ("factorioprints, codex, fprints").
-		const backfill = groupOf(run, 'ingest', (t) => !t.includes(':') && t.split(', ').includes(site));
+		const backfill = groupIn(run, 'ingest', (t) => !t.includes(':') && t.split(', ').includes(site));
 		return [
-			...fetched.rows.filter((r) => r.label !== 'position'),
-			...detail('analysed', valueOf(backfill, 'analysed')),
-			...detail('re-indexed', valueOf(backfill, 're-indexed')),
-			...detail('failed to read', valueOf(backfill, 'failed'), { tone: 'bad' })
+			...fetched.rows.filter((r) => r.label !== ROW.position),
+			...detail('analysed', valueOf(backfill, ROW.analysed)),
+			...detail('re-indexed', valueOf(backfill, ROW.reindexed)),
+			...detail('failed to read', valueOf(backfill, ROW.failed), { tone: 'bad' })
 		];
 	}
 	return fetched.rows;

@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import type { RecordsResult } from '../records';
 import type { RemovalsResult } from '../removals';
 import type { RenderStages } from '#lib/render-stages.js';
-import { recordStoreFetch, removalsDetails, removalsSummary, renderStageDetails } from './step-details';
+import { authorsDetails, recordStoreFetch, removalsDetails, removalsSummary, renderStageDetails } from './step-details';
 
 /** The removals result of update 2026-10-30T11:44:34Z-u3og: nothing to do, 2 tombstones on prod (1 a takedown). */
 const quietRemovals: RemovalsResult = {
@@ -128,7 +128,7 @@ test("a polled site the fetch's record store changed is named", () => {
 
 test('the render step: the run as a whole, then each source, its clean up and its search flags', () => {
 	const row = { prints_total: 3, prints_rendered: 2, rendered: 12, failed: 1, uploaded: 14, uploads_pending: 0 };
-	// Rows from before stages: only the run's own figures, "pages uploaded" (they are pages, not files).
+	// A run that wrote no stages (it failed before its first heartbeat): only its own figures, "pages uploaded" (pages, not files).
 	const old = renderStageDetails(row, null);
 	expect(old.length).toBe(1);
 	expect(old[0].rows.map((r) => [r.label, r.value])).toEqual([
@@ -184,4 +184,16 @@ test('the render step: the run as a whole, then each source, its clean up and it
 	]);
 	const failed = renderStageDetails(row, { ...stages, flags: { state: 'failed', stage: 'prod', error: 'remote /d1: lost' } });
 	expect(failed.at(-1)!.rows).toEqual([{ label: 'failed', value: 'remote /d1: lost', tone: 'bad' }]);
+});
+
+test('the authors step: authors named first (the board reads it), then the lookups and writes', () => {
+	const [g] = authorsDetails({ named: 6, asked: 4, prints: 9, documents: 9, rows: 18, left: 0 });
+	expect(g.title).toBe('Author names');
+	expect(g.rows.map((r) => [r.label, r.value])).toEqual([
+		['authors named', 6],
+		['asked Firebase', 4],
+		['prints given a name', 9],
+		['documents rewritten', 9],
+		['D1 rows written', 18]
+	]);
 });

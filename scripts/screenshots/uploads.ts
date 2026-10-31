@@ -14,7 +14,7 @@ import { appendFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { isUploadImage, uploadImageId } from '#lib/screenshots.js';
+import { uploadImageId } from '#lib/screenshots.js';
 import { IMAGE_TYPES, imageKey, type ImageExt } from '#lib/server/uploads/uploads.js';
 import { openTarget } from '../backfill/stage.js';
 import type { ShotArgs } from './args.js';
@@ -54,9 +54,6 @@ export function planUploadImages(
 	}
 	return plan;
 }
-
-/** Whether a run state entry is an upload image's (not Imgur's): never asked of Imgur. */
-export const isUploadEntry = (e: Pick<StateEntry, 'id'>) => isUploadImage(e.id);
 
 /** The run state entry for an original copied from RAW, or why it can't be used. */
 export function uploadEntry(a: ApprovedImage, bytes: Uint8Array, at: string): StateEntry {

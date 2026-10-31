@@ -80,7 +80,8 @@ import {
 	withoutRetry,
 	sourceDigest,
 	sourceMoved,
-	SITE_SHOTS_GROUP,
+	GROUP,
+	ROW,
 	type DetailGroup,
 	type SourcePlan,
 	type SourceRun,
@@ -92,6 +93,7 @@ import {
 import { STAGES, type Stage } from './backfill/stage';
 import { defaultAssets } from './render/assets-dir';
 import { favoritesCacheFile, rankFavorites, readFavorites } from './render/favorites';
+import type { AuthorsResult } from './authors';
 import type { RecordsResult } from './records';
 import { recordsDir } from './records/store';
 import { scanStorePrints, STORE_SCOPE_CACHE } from './render/store-scope';
@@ -110,7 +112,14 @@ import type { UploadRunResult } from './screenshots/run';
 import type { FromUploadsResult } from './screenshots/uploads';
 import type { FromSitesResult } from './screenshots/sites';
 import { screenshotBucketDetails } from './sync/screenshot-details';
-import { recordStoreFetch, removalsDetails, removalsSummary, renderStageDetails, type RenderRowCounts } from './sync/step-details';
+import {
+	authorsDetails,
+	recordStoreFetch,
+	removalsDetails,
+	removalsSummary,
+	renderStageDetails,
+	type RenderRowCounts
+} from './sync/step-details';
 import type { RemovalsResult } from './removals';
 import {
 	backfillComplete,
@@ -201,12 +210,6 @@ const SOURCES: SourceAdapter[] = [
 ];
 
 /**
- * Where the steps read print records: the mirror clone, and with `store` the record store too (the
- * render steps: uploads and later other sites are drawn like the mirror's prints). The backfill and
- * screenshots read the mirror alone: uploads are ingested by the Worker (or the uploads source), and
- * their screenshots come from the stage. Moving a step to the store changes only this.
- */
-/**
  * The record store's prints with a 2.0+ page and their stamps (sync_meta 'store-prints'), so the Update tab's
  * estimate counts those waiting to render (src/lib/server/admin/sync.ts). Never fails the caller.
  */
@@ -221,6 +224,12 @@ const saveStorePrints = async () => {
 	}
 };
 
+/**
+ * Where the steps read print records: the mirror clone, and with `store` the record store too (the
+ * render steps: uploads and other sites' prints are drawn like the mirror's prints). The backfill and
+ * screenshots read the mirror alone: uploads are ingested by the Worker (or the uploads source), and
+ * their screenshots come from the stage. Moving a step to the store changes only this.
+ */
 const recordSourceArgs = (o: { store?: boolean } = {}) => ['--from-clone', clone, ...(o.store ? ['--records', records] : [])];
 
 const short = (id: string | null | undefined) => id?.slice(0, 7) ?? '?';
@@ -425,15 +434,15 @@ const backfillStep = async (): Promise<Outcome> => {
 					.map((s) => s.site)
 					.join(', ') || undefined,
 			rows: [
-				...detail('re-indexed', result.reindexed),
+				...detail(ROW.reindexed, result.reindexed),
 				...detail('viewer files rebuilt', result.viewer),
 				...detail('favourite counts updated', result.favorites),
-				...detail('analysed', result.analysed, { always: true }),
-				...detail('failed', result.failed, { always: true, tone: 'bad' }),
+				...detail(ROW.analysed, result.analysed, { always: true }),
+				...detail(ROW.failed, result.failed, { always: true, tone: 'bad' }),
 				...Object.entries(result.failures).flatMap(([k, v]) => detail(`${k} failures`, v, { tone: 'bad' })),
 				...detail('known failures skipped', result.skipped),
 				...detail('unchanged', result.unchanged),
-				...detail('copies folded', result.folded),
+				...detail(ROW.folded, result.folded),
 				...detail('copies unfolded', result.unfolded)
 			]
 		}
@@ -603,18 +612,18 @@ const steps: StepDef[] = [
 						return {
 							title: p.site,
 							rows: [
-								...detail('waiting', p.added, { always: true }),
+								...detail(ROW.waiting, p.added, { always: true }),
 								...detail(
-									'oldest waiting',
+									ROW.oldestWaiting,
 									p.added ? new Date(p.to.date).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : null
 								),
 								...detail('admitted', c.admitted),
 								...detail('refused as duplicates', c.duplicate),
 								...detail('blocked', c.blocked, { tone: 'warn' }),
 								...detail('unreadable', c.unreadable, { tone: 'warn' }),
-								...detail('failed, tried again next update', c.failed ?? 0, { always: true, tone: 'bad' }),
+								...detail(ROW.failedRetried, c.failed ?? 0, { always: true, tone: 'bad' }),
 								...detail(`gave up (${PROCESSING_ATTEMPTS} tries)`, c['gave up'], { tone: 'bad' }),
-								...detail('still processing', c.left ?? p.added, { always: true }),
+								...detail(ROW.stillProcessing, c.left ?? p.added, { always: true }),
 								...detail('new names put on uploads', c.renamed),
 								...detail('names still to put on uploads', c['names left'], { tone: 'warn' }),
 								...detail('accounts being deleted', c.deleting, { tone: 'warn' })
@@ -624,7 +633,7 @@ const steps: StepDef[] = [
 					return {
 						title: p.site,
 						rows: [
-							{ label: 'position', value: to && to.id !== p.from.id ? `${short(p.from.id)} → ${short(to.id)}` : short(p.from.id) },
+							{ label: ROW.position, value: to && to.id !== p.from.id ? `${short(p.from.id)} → ${short(to.id)}` : short(p.from.id) },
 							...detail('held back', p.blocked, { tone: 'warn' }),
 							...detail('commits fetched', p.blocked ? 0 : p.behind),
 							...detail('new prints', p.added, { always: !p.blocked }),
@@ -651,8 +660,17 @@ const steps: StepDef[] = [
 		needs: ['ingest'],
 		gate: () => (!settings.authors ? 'turned off in the settings' : !hasSource(MIRROR_SITE) ? 'factorioprints prints only' : null),
 		async run(): Promise<Outcome> {
-			const r = await script(['scripts/authors.ts', '--stage', stage, '--yes']);
-			return r.code === 0 ? outcomeOf(r, lastLine(r.tail)) : failed(r);
+			const r = await script(['scripts/authors.ts', '--stage', stage, '--yes', '--json']);
+			if (r.code !== 0) return failed(r);
+			const a = lastJsonLine<AuthorsResult>(r.tail);
+			if (!a) return outcomeOf(r, lastLine(r.tail));
+			return {
+				...outcomeOf(
+					r,
+					`${n(a.named)} authors named, ${n(a.prints)} prints given a name${a.left ? `; ${n(a.left)} authors still to ask` : ''}`
+				),
+				details: authorsDetails(a)
+			};
 		}
 	},
 	{
@@ -677,14 +695,14 @@ const steps: StepDef[] = [
 			const details: DetailGroup[] = [];
 			if (copy)
 				details.push({
-					title: 'On this machine',
+					title: GROUP.onThisMachine,
 					rows: [
-						...detail('already copied', copy.alreadyCopied, { always: true }),
-						...detail('dead on Imgur', copy.dead, { always: true }),
-						...detail('to fetch', copy.toFetch, { always: true }),
-						...detail('fetched', copy.fetched),
-						...detail('newly dead', copy.newlyDead, { tone: 'warn' }),
-						...detail('failed', copy.failed, { always: copy.toFetch > 0, tone: 'bad' }),
+						...detail(ROW.alreadyCopied, copy.alreadyCopied, { always: true }),
+						...detail(ROW.deadOnImgur, copy.dead, { always: true }),
+						...detail(ROW.toFetch, copy.toFetch, { always: true }),
+						...detail(ROW.fetched, copy.fetched),
+						...detail(ROW.newlyDead, copy.newlyDead, { tone: 'warn' }),
+						...detail(ROW.failed, copy.failed, { always: copy.toFetch > 0, tone: 'bad' }),
 						...detail('folder', copy.dir, { muted: true })
 					]
 				});
@@ -724,31 +742,18 @@ const steps: StepDef[] = [
 						(sites.newlyDead ? `, ${n(sites.newlyDead)} gone at the source` : '') +
 						(sites.failed ? `, failed ${n(sites.failed)}` : '')
 				);
-			if (sites)
-				details.push({
-					title: 'From other sites',
-					rows: [
-						...detail('images shown', sites.shown, { always: true }),
-						...detail('already copied', sites.alreadyCopied),
-						...detail('copied now', sites.fetched),
-						...detail('gone at the source', sites.dead + sites.newlyDead, { tone: 'warn' }),
-						...detail('answered 404 once (asked again next update)', sites.maybeDead),
-						...detail('removed', sites.removed),
-						...detail('failed, tried again next update', sites.failed, { tone: 'bad' })
-					]
-				});
-			// Each site's own, for the Update tab's per-source Screenshots cells (SITE_SHOTS_GROUP).
+			// Each site's own group, for the Update tab's per-source Screenshots cells.
 			for (const [site, c] of Object.entries(sites?.bySite ?? {}))
 				details.push({
-					title: `${SITE_SHOTS_GROUP}${site}`,
+					title: GROUP.siteShots(site),
 					rows: [
-						...detail('images shown', c.shown, { always: true }),
-						...detail('already copied', c.alreadyCopied),
-						...detail('copied now', c.fetched),
-						...detail('gone at the source', c.dead + c.newlyDead, { tone: 'warn' }),
-						...detail('answered 404 once (asked again next update)', c.maybeDead),
+						...detail(ROW.imagesShown, c.shown, { always: true }),
+						...detail(ROW.alreadyCopied, c.alreadyCopied),
+						...detail(ROW.copiedNow, c.fetched),
+						...detail(ROW.goneAtSource, c.dead + c.newlyDead, { tone: 'warn' }),
+						...detail(ROW.maybeDead, c.maybeDead),
 						...detail('removed', c.removed),
-						...detail('failed, tried again next update', c.failed, { tone: 'bad' })
+						...detail(ROW.failedRetried, c.failed, { tone: 'bad' })
 					]
 				});
 			if (stopping()) return { status: 'stopped', summary: parts.join(' · '), details };
@@ -766,7 +771,7 @@ const steps: StepDef[] = [
 			parts.push(lastLine(flagged.tail));
 			// `✓ 89 D1 rows written; cached pages purged`, or `already in sync; nothing written`.
 			const written = Number(/([\d,]+) D1 rows written/.exec(flagged.tail)?.[1]?.replace(/,/g, '') ?? 0);
-			details.push({ title: 'Search cards', rows: [{ label: 'rows written', value: written }] });
+			details.push({ title: GROUP.searchCards, rows: [{ label: 'rows written', value: written }] });
 			return { status: warning ? 'warning' : 'done', summary: parts.filter(Boolean).join(' · '), details };
 		}
 	},

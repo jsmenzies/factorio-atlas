@@ -3,7 +3,7 @@
  * rest (Imgur copies) in the stage's bucket group. `screenshots --upload --json` counts both in its totals and
  * the upload images again under `uploads`, so the bucket group takes those out: each file counts once.
  */
-import { detail, type DetailGroup } from '#lib/sync.js';
+import { detail, GROUP, ROW, type DetailGroup } from '#lib/sync.js';
 import type { UploadRunResult } from '../screenshots/run';
 import type { FromUploadsResult } from '../screenshots/uploads';
 
@@ -14,28 +14,28 @@ export function screenshotBucketDetails(stage: string, uploaded: FromUploadsResu
 	const u = bucket?.uploads;
 	if (uploaded)
 		details.push({
-			title: 'From uploads',
+			title: GROUP.fromUploads,
 			rows: [
-				...detail('approved', uploaded.approved, { always: true }),
-				...detail('copied from RAW', uploaded.fetched),
-				...detail('sized', u?.made ?? 0, { always: uploaded.toFetch > 0 }),
-				...detail('already up', u?.alreadyUp ?? 0),
-				{ label: 'files put', value: filesPut(u?.put ?? 0, u?.bytes ?? 0) },
-				...detail('deleted', u?.deleted ?? 0),
-				...detail('failed', uploaded.failed + (u?.failed ?? 0), { always: true, tone: 'bad' })
+				...detail(ROW.approved, uploaded.approved, { always: true }),
+				...detail(ROW.copiedFromRaw, uploaded.fetched),
+				...detail(ROW.sized, u?.made ?? 0, { always: uploaded.toFetch > 0 }),
+				...detail(ROW.alreadyUp, u?.alreadyUp ?? 0),
+				{ label: ROW.filesPut, value: filesPut(u?.put ?? 0, u?.bytes ?? 0) },
+				...detail(ROW.deleted, u?.deleted ?? 0),
+				...detail(ROW.failed, uploaded.failed + (u?.failed ?? 0), { always: true, tone: 'bad' })
 			]
 		});
 	if (bucket) {
 		// Without `uploaded` the upload images have no group of their own, so they stay in the bucket's.
 		const less = (key: keyof UploadRunResult['uploads']) => bucket[key] - (uploaded ? (u?.[key] ?? 0) : 0);
 		details.push({
-			title: `${stage[0].toUpperCase()}${stage.slice(1)} bucket`,
+			title: GROUP.bucket(stage),
 			rows: [
-				...detail('already up', less('alreadyUp'), { always: true }),
-				...detail('sizes made', less('made')),
-				{ label: 'files put', value: filesPut(less('put'), less('bytes')) },
-				{ label: 'deleted', value: less('deleted') },
-				...detail('failed', less('failed'), { always: true, tone: 'bad' })
+				...detail(ROW.alreadyUp, less('alreadyUp'), { always: true }),
+				...detail(ROW.sizesMade, less('made')),
+				{ label: ROW.filesPut, value: filesPut(less('put'), less('bytes')) },
+				{ label: ROW.deleted, value: less('deleted') },
+				...detail(ROW.failed, less('failed'), { always: true, tone: 'bad' })
 			]
 		});
 	}

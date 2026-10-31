@@ -30,11 +30,6 @@ export interface StateEntry {
 	height?: number | null;
 	/** For `dead`, `failed` and `removed`. */
 	reason?: string;
-	/**
-	 * For `removed`: who removed it. 'imgur': marked deleted on Imgur by the old recheck (removed), kept so
-	 * older lines still read; such files go after the delete grace period, a request's at once.
-	 */
-	by?: 'imgur' | 'request';
 	attempts: number;
 	/** ISO time. */
 	at: string;
