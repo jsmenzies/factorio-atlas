@@ -199,7 +199,7 @@ import { createThumbStep, THUMB_STEP_MB, type ThumbStep } from './render/thumb-s
 import { createThumbUploader, thumbUploadDb } from './render/thumbs-upload.js';
 import { FLAGS_TIMEOUT_MS, needsPageBump, runStageFlags, withDeadline } from './render/stage-flags.js';
 import { snapshot, stageTally } from './render/stages.js';
-import { stageMismatch, stageSite, type CleanupStage, type FlagsStage, type RenderStages } from '#lib/render-stages.js';
+import { stageSite, type CleanupStage, type FlagsStage, type RenderStages } from '#lib/render-stages.js';
 
 /** Decoded pages kept between enqueueing and rendering, so small runs decode each print once. */
 const PAGE_CACHE_BYTES = 256 * 1024 * 1024;
@@ -412,11 +412,11 @@ const runOptions = {
 	phase: null as RenderRunPhase | null,
 	/**
 	 * Plan, Draw, Upload and Thumbnails per source, then Clean up and Search flags (#lib/render-stages.js), from
-	 * the `tally` counted beside the run's own counters: the Update tab's board.
+	 * the `tally` the run row's page columns are summed from: the Update tab's board.
 	 */
 	stages: null as RenderStages | null
 };
-/** The run's counts by source (scripts/render/stages.ts): counted wherever a run.* page count changes. */
+/** The run's page counts by source (scripts/render/stages.ts): the run row's page columns are their sums. */
 const tally = stageTally();
 /** Clean up and Search flags, once per run: what `options.stages` says of them. */
 let cleanup: CleanupStage | null = null;
@@ -427,12 +427,25 @@ const run: RunnerRun = {
 	source: source.label,
 	options: JSON.stringify(runOptions),
 	state: 'starting',
-	total: 0,
-	done: 0,
-	rendered: 0,
-	unchanged: 0,
-	skipped: 0,
-	failed: 0,
+	// The page columns are the tally's sums, so they and options.stages can't disagree.
+	get total() {
+		return tally.runCounts().total;
+	},
+	get done() {
+		return tally.runCounts().done;
+	},
+	get rendered() {
+		return tally.runCounts().rendered;
+	},
+	get unchanged() {
+		return tally.runCounts().unchanged;
+	},
+	get skipped() {
+		return tally.runCounts().skipped;
+	},
+	get failed() {
+		return tally.runCounts().failed;
+	},
 	files: 0,
 	bytes: 0,
 	rate: null,
@@ -801,9 +814,6 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 	const existing = new Map((withRows.has(id) ? await queue.jobsOf(id) : []).map((r) => [r.path, r]));
 	if (!record) {
 		await queue.writeJobs([failedRow(id, null, 'missing', `no record in ${source.label}`, t, existing.get(''))]);
-		run.total++;
-		run.done++;
-		run.failed++;
 		tally.page(id, 'planFailed');
 		return { taken: true, queued: 0, modern: true };
 	}
@@ -818,9 +828,6 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		await queue.writeJobs([
 			{ ...failedRow(id, record.title, 'undecodable', `undecodable: ${why}`, t, existing.get('')), status: 'skipped' }
 		]);
-		run.total++;
-		run.done++;
-		run.skipped++;
 		tally.page(id, 'skipped');
 		return { taken: true, queued: 0, modern: true };
 	}
@@ -868,10 +875,7 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 			stamp: old?.stamp ?? null,
 			queued_at: old?.queued_at ?? t
 		};
-		run.total++;
 		if (reason) {
-			run.done++;
-			run.skipped++;
 			tally.page(id, 'skipped');
 			if (old?.status === 'done') indexStale = true;
 			if (!(old?.status === 'skipped' && old.input_key === key && old.reason === reason))
@@ -884,8 +888,6 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		// A drawn page is measured against the assets that drew it, not the current ones (drawnKey).
 		const kept = sc && sc.assets.id !== assets.id ? drawnKey(prep.json, sc.assets.id, assets) : key;
 		if (sc && sc.inputKey === kept) {
-			run.done++;
-			run.unchanged++;
 			tally.page(id, 'unchanged');
 			doneHere++;
 			drawn.push({ path: page.path, stamp: sc.stamp, overview: sc.overview.file });
@@ -920,8 +922,6 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		}
 		if (old && !forced && !retryFailed && gaveUp(old, key)) {
 			// Failed every attempt at this input: left as it is, not drawn again until the key changes.
-			run.done++;
-			run.failed++;
 			tally.page(id, 'planFailed');
 			continue;
 		}
@@ -938,9 +938,6 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 	if (!pages.length) {
 		const old = existing.get('');
 		existing.delete('');
-		run.total++;
-		run.done++;
-		run.skipped++;
 		tally.page(id, 'skipped');
 		if (!(old?.status === 'skipped' && old.reason === NO_PAGES))
 			writes.push({ ...failedRow(id, record.title, 'no-pages', NO_PAGES, t, old), status: 'skipped' });
@@ -1061,8 +1058,6 @@ async function complete(w: Work, o: Outcome) {
 			// The bucket holds an older version, if any.
 			uploaded_at: null
 		});
-		run.done++;
-		run.rendered++;
 		tally.page(w.id, 'drawn');
 		run.files += r.files;
 		run.bytes += r.bytes;
@@ -1096,8 +1091,6 @@ async function complete(w: Work, o: Outcome) {
 	}
 	log(`  ${w.id} ${pageBase(w.path)} failed after ${w.attempts} attempts (${o.kind}): ${why}`);
 	await queue.updateJob(w.id, w.path, { status: 'failed', reason: why, attempts: w.attempts, run_id: run.id, finished_at: t });
-	run.done++;
-	run.failed++;
 	tally.page(w.id, 'drawFailed');
 	progress.completed(w, t);
 	// An older version of the page in the bucket leaves its index.
@@ -1215,8 +1208,6 @@ async function renderAll() {
 		if (prep === null || inputKey(prep.json, assets) !== w.key) {
 			// The record changed under the run; the next run queues it afresh.
 			await queue.updateJob(w.id, w.path, { status: 'failed', reason: 'the record changed during the run', finished_at: Date.now() });
-			run.done++;
-			run.failed++;
 			tally.page(w.id, 'drawFailed');
 			if (uploadsAtStart.get(w.id)?.some((u) => u.path === w.path)) uploader?.schedule(w.id, uploader.pendingOf(w.id));
 			await finishPrint(w.id);
@@ -1502,9 +1493,6 @@ try {
 	await flushSeen().catch(() => undefined);
 	syncRun();
 	await queue.writeRun(run).catch((e: unknown) => console.error(`could not write the run's final state: ${e}`));
-	// The per-source figures must add up to the run's own: a missed tally shows here (never fatal).
-	const off = runOptions.stages ? stageMismatch(runOptions.stages, run) : [];
-	if (off.length) log(`stages: the per-source figures don't add up to the run's: ${off.join(', ')}`);
 	await guardTarget?.dispose().catch(() => undefined);
 	await proxy.dispose();
 	if (guard?.skipped.size) log(`not uploaded: ${guard.skipped.size} prints the ${args.upload} stage deleted or removed`);

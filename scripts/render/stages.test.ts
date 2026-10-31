@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { parseStages, stageMismatch, stageSite, stageTotals, type RunCounts } from '#lib/render-stages.js';
-import { snapshot, stageTally } from './stages.js';
+import { parseStages, stageSite, stageTotals } from '#lib/render-stages.js';
+import { snapshot, stageTally, type PageCount, type RunPageCounts } from './stages.js';
 
 const FP = '-LI0gc-a-2_VLWR-tx1d';
 const FP2 = '-KYpTULTDIvDOsJfgjeS';
@@ -104,44 +104,59 @@ describe('render stages per source', () => {
 		expect(snap({ finished: [] }).sites.fprints?.upload?.printsUp).toBe(0);
 	});
 
-	test('the sites add up to the run row; a missed tally shows', () => {
+	test('the sites add up', () => {
 		const s = snap();
-		const row: RunCounts = {
-			total: 10,
-			unchanged: 2,
-			skipped: 1,
-			failed: 2,
-			rendered: 4,
-			prints_total: 3,
-			prints_done: 2,
-			prints_rendered: 3,
-			uploaded: 4,
-			upload_files: 47,
-			upload_bytes: 4700,
-			uploads_pending: 1,
-			upload_failed: 1
-		};
 		expect(stageTotals(s)).toMatchObject({ pages: 10, queued: 6, drawn: 4, failed: 2, uploaded: 4, thumbsDone: 1, thumbsOf: 2 });
-		expect(stageMismatch(s, row)).toEqual([]);
-		expect(stageMismatch(s, { ...row, rendered: 5, upload_bytes: 1 })).toEqual(['drawn 4 ≠ rendered 5', 'bytes 4700 ≠ upload_bytes 1']);
+		expect(stageTally().runCounts()).toEqual({ total: 0, done: 0, rendered: 0, unchanged: 0, skipped: 0, failed: 0 });
 	});
 
-	test('no upload, no thumbnails: those stages are null, and upload counts aren’t compared', () => {
+	test('no upload, no thumbnails: those stages are null', () => {
 		const s = snap({ upload: null, thumbs: null, cleanup: null, flags: null });
 		expect(s.sites.codex?.upload).toBeNull();
 		expect(s.sites.codex?.thumbs).toBeNull();
-		expect(
-			stageMismatch(s, {
-				total: 10,
-				unchanged: 2,
-				skipped: 1,
-				failed: 2,
-				rendered: 4,
-				prints_total: 3,
-				prints_done: 2,
-				prints_rendered: 3
-			} as RunCounts)
-		).toEqual([]);
+	});
+
+	test('the run row’s page columns from the tally equal the counters the runner used to keep beside it', () => {
+		// The run.* increments that went with each tally call in scripts/render-game.ts before the columns were derived.
+		const old: Record<PageCount, (keyof RunPageCounts)[]> = {
+			planFailed: ['total', 'done', 'failed'],
+			skipped: ['total', 'done', 'skipped'],
+			unchanged: ['total', 'done', 'unchanged'],
+			queued: ['total'],
+			drawn: ['done', 'rendered'],
+			drawFailed: ['done', 'failed']
+		};
+		const kinds = Object.keys(old) as PageCount[];
+		const ids = [FP, FP2, CODEX, FPRINTS, 'fbin-abc123', 'up-AbCdEf1234', 'nobody-knows'];
+		let seed = 12345;
+		const rand = (n: number) => {
+			seed = (seed * 1103515245 + 12345) % 2 ** 31;
+			return seed % n;
+		};
+		for (let sequence = 0; sequence < 500; sequence++) {
+			const tally = stageTally();
+			const counters: RunPageCounts = { total: 0, done: 0, rendered: 0, unchanged: 0, skipped: 0, failed: 0 };
+			const steps = rand(400);
+			for (let i = 0; i < steps; i++) {
+				const what = kinds[rand(kinds.length)];
+				tally.page(ids[rand(ids.length)], what);
+				for (const c of old[what]) counters[c]++;
+				if (rand(7) === 0) tally.up(ids[rand(ids.length)], rand(50), rand(5000));
+				if (rand(50) === 0) expect(tally.runCounts()).toEqual(counters);
+			}
+			expect(tally.runCounts()).toEqual(counters);
+			// And the snapshot's sums say the same as the columns (what stageMismatch used to check).
+			const t = stageTotals(
+				snapshot({ at: 0, tally, tracked: [], finished: [], drawnPrints: [], upload: null, thumbs: null, cleanup: null, flags: null })
+			);
+			expect([t.pages, t.unchanged, t.skipped, t.failed, t.drawn]).toEqual([
+				counters.total,
+				counters.unchanged,
+				counters.skipped,
+				counters.failed,
+				counters.rendered
+			]);
+		}
 	});
 
 	test('the snapshot round-trips through the row’s JSON; rows from before stages have none', () => {

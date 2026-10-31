@@ -1,6 +1,6 @@
 /**
- * The render runner's per-source counts (#lib/render-stages.js): `stageTally()` is counted beside each of
- * the run row's own counters (scripts/render-game.ts), by the print's site, and `snapshot()` turns it, with
+ * The render runner's per-source counts (#lib/render-stages.js): `stageTally()` counts each page by the
+ * print's site, the run row's page counts are its sums (`runCounts`, scripts/render-game.ts), and `snapshot()` turns it, with
  * what the run holds in memory (the prints it tracks, the uploader's waiting pages, the thumb step's
  * progress), into the `options.stages` the heartbeat writes. Additive only: nothing here is read back by
  * the run, so no input key or queue decision depends on it. Pure apart from the tally's own state.
@@ -17,6 +17,16 @@ import {
 
 /** A page's fate at queueing, or in drawing. */
 export type PageCount = 'queued' | 'unchanged' | 'skipped' | 'planFailed' | 'drawn' | 'drawFailed';
+
+/** The run row's page columns (render_runs). */
+export interface RunPageCounts {
+	total: number;
+	done: number;
+	rendered: number;
+	unchanged: number;
+	skipped: number;
+	failed: number;
+}
 
 interface SiteTally {
 	pages: number;
@@ -68,6 +78,22 @@ export function stageTally() {
 			t.upPages++;
 			t.upFiles += files;
 			t.upBytes += bytes;
+		},
+		/**
+		 * The run row's page columns, summed over the sites: every page looked at in queueing is in `total`; it is
+		 * `done` once final (unchanged, skipped or failed then, or drawn or failed in drawing); `failed` is both kinds.
+		 */
+		runCounts(): RunPageCounts {
+			const c: RunPageCounts = { total: 0, done: 0, rendered: 0, unchanged: 0, skipped: 0, failed: 0 };
+			for (const t of sites.values()) {
+				c.total += t.pages;
+				c.done += t.unchanged + t.skipped + t.planFailed + t.drawn + t.drawFailed;
+				c.rendered += t.drawn;
+				c.unchanged += t.unchanged;
+				c.skipped += t.skipped;
+				c.failed += t.planFailed + t.drawFailed;
+			}
+			return c;
 		},
 		/** The counts so far, by site (a copy). */
 		get sites(): ReadonlyMap<StageSite, Readonly<SiteTally>> {

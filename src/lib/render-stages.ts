@@ -3,8 +3,8 @@
  * heartbeat (scripts/render/stages.ts): Plan, Draw, Upload and Thumbnails for each site whose prints the run
  * looked at, then the run's Clean up and Search flags, done once. The Update tab's board shows them
  * (src/lib/components/admin/sync/flow.ts), and the update's render step keeps the last snapshot
- * (`SyncStep.render`). Every per-site figure is counted where the run counts its own totals, so the sites
- * add up to the run row (`stageMismatch`). Browser-safe and pure.
+ * (`SyncStep.render`). The run row's page columns are the sites' sums (the runner derives them from the same
+ * tally), so the two always agree. Browser-safe and pure.
  */
 import { siteOfPrintId, type Site } from './print-id.js';
 
@@ -117,7 +117,7 @@ export interface RenderStages {
 	flags: FlagsStage | null;
 }
 
-/** Every site's figures added up: what the run row should say. */
+/** Every site's figures added up (the run row's page columns are these sums). */
 export interface StageTotals {
 	prints: number;
 	pages: number;
@@ -183,47 +183,6 @@ export function stageTotals(s: RenderStages): StageTotals {
 		t.thumbFilesOf += x.thumbs?.filesOf ?? 0;
 	}
 	return t;
-}
-
-/** The run row's counts the sites must add up to. */
-export interface RunCounts {
-	total: number;
-	unchanged: number;
-	skipped: number;
-	failed: number;
-	rendered: number;
-	prints_total: number;
-	prints_done: number;
-	prints_rendered: number;
-	uploaded: number;
-	upload_files: number;
-	upload_bytes: number;
-	uploads_pending: number;
-	upload_failed: number;
-}
-
-/** Where the sites' sums differ from the run row ("drawn 12 ≠ rendered 13"); empty when they agree. */
-export function stageMismatch(s: RenderStages, run: RunCounts): string[] {
-	const t = stageTotals(s);
-	const pairs: [string, number, string, number][] = [
-		['pages', t.pages, 'total', run.total],
-		['unchanged', t.unchanged, 'unchanged', run.unchanged],
-		['skipped', t.skipped, 'skipped', run.skipped],
-		['failed', t.failed, 'failed', run.failed],
-		['drawn', t.drawn, 'rendered', run.rendered],
-		['prints', t.prints, 'prints_total', run.prints_total],
-		['prints done', t.printsDone, 'prints_done', run.prints_done],
-		['prints drawn', t.printsDrawn, 'prints_rendered', run.prints_rendered]
-	];
-	if (s.cleanup)
-		pairs.push(
-			['uploaded', t.uploaded, 'uploaded', run.uploaded],
-			['files', t.files, 'upload_files', run.upload_files],
-			['bytes', t.bytes, 'upload_bytes', run.upload_bytes],
-			['waiting', t.waiting, 'uploads_pending', run.uploads_pending],
-			['failing', t.failing, 'upload_failed', run.upload_failed]
-		);
-	return pairs.filter(([, a, , b]) => a !== b).map(([x, a, y, b]) => `${x} ${a} ≠ ${y} ${b}`);
 }
 
 /** Reads `options.stages` from a run row's options (or the JSON of it); null for rows from before stages. */
