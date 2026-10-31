@@ -194,18 +194,10 @@ export const sourceMetaOfRecord = (r: SourceRecord): SourceMeta => ({
 	updatedAt: r.updatedAt
 });
 
-/** The archive key for a pipeline record's text, read without the schema (so failed records land in the right place). */
-export const rawKeyOfText = (printId: string, text: string): string => {
-	let value: unknown;
-	try {
-		value = JSON.parse(text);
-	} catch {
-		// Not JSON: archived under the print's own key, as before.
-	}
-	return rawKeyOf(printId, value);
-};
-
-/** `rawKeyOfText` for the value parsed from the text (undefined when it isn't JSON). */
+/**
+ * The archive key for a pipeline record's parsed value (undefined when its text isn't JSON), read without the schema
+ * (so failed records land in the right place).
+ */
 export const rawKeyOf = (printId: string, value: unknown): string => {
 	const s = value == null ? undefined : (value as { source?: { site?: unknown; siteId?: unknown } }).source;
 	if (s && typeof s.site === 'string' && typeof s.siteId === 'string' && s.site !== 'factorioprints') {
