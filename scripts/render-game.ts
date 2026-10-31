@@ -187,6 +187,8 @@ import { thumbsDir } from '#lib/server/renders-dir.js';
 import { createThumbStep, THUMB_STEP_MB, type ThumbStep } from './render/thumb-step.js';
 import { createThumbUploader, thumbUploadDb } from './render/thumbs-upload.js';
 import { needsPageBump, runStageFlags } from './render/stage-flags.js';
+import { snapshot, stageTally } from './render/stages.js';
+import { stageMismatch, stageSite, type CleanupStage, type FlagsStage, type RenderStages } from '#lib/render-stages.js';
 
 /** Decoded pages kept between enqueueing and rendering, so small runs decode each print once. */
 const PAGE_CACHE_BYTES = 256 * 1024 * 1024;
@@ -394,12 +396,21 @@ const runOptions = {
 	batch,
 	/**
 	 * After the last page is drawn, what the run is doing before it ends (null while drawing, and once over),
-	 * and the thumb step's prints done of those offered: for /admin/render. The Update tab reads the same
-	 * from the log's phase lines (`thumbnails: N of M prints`, `deletions: …`, `flags: …`; #lib/sync-progress.js).
+	 * and the thumb step's prints done of those offered: for /admin/render and the Update tab.
 	 */
 	phase: null as RenderRunPhase | null,
-	thumbs: null as { done: number; of: number } | null
+	thumbs: null as { done: number; of: number } | null,
+	/**
+	 * Plan, Draw, Upload and Thumbnails per source, then Clean up and Search flags (#lib/render-stages.js), from
+	 * the `tally` counted beside the run's own counters: the Update tab's board.
+	 */
+	stages: null as RenderStages | null
 };
+/** The run's counts by source (scripts/render/stages.ts): counted wherever a run.* page count changes. */
+const tally = stageTally();
+/** Clean up and Search flags, once per run: what `options.stages` says of them. */
+let cleanup: CleanupStage | null = null;
+let flagsStage: FlagsStage | null = null;
 const run: RunnerRun = {
 	id: newRunId(),
 	host: hostname(),
@@ -448,9 +459,12 @@ const uploader: Uploader | null = store
 			concurrency: args.uploadConcurrency,
 			graceMs,
 			log,
-			removed: guard?.removed
+			removed: guard?.removed,
+			onPageUp: (id, files, bytes) => tally.up(id, files, bytes)
 		})
 	: null;
+if (uploader) cleanup = { state: 'waiting', deleted: 0, kept: 0, failed: 0, pending: 0, nextDue: null, thumbsDeleted: 0 };
+if (uploader && args.flags) flagsStage = { state: 'waiting', stage: args.upload! };
 /** Page thumbnails (THUMBS_DIR), kept apart from the renders: made from finished overviews by the thumb step. */
 const THUMBS = thumbsDir(ROOT);
 if (args.thumbs && (resolve(THUMBS) === resolve(OUT_DIR) || resolve(THUMBS).startsWith(`${resolve(OUT_DIR)}/`))) {
@@ -583,6 +597,17 @@ const deferred: DeferredUpdate[] = [];
 /** Options (a batch's picks change as it goes) and upload counts into the run row. */
 function syncRun() {
 	runOptions.thumbs = thumbStep && !planOnly ? thumbStep.progress : null;
+	runOptions.stages = snapshot({
+		at: Date.now(),
+		tally,
+		tracked: printsTracked,
+		finished: printsFinished,
+		drawnPrints: renderedPrints,
+		upload: uploader ? { waiting: uploader.pendingEntries(), failing: uploader.failingIds() } : null,
+		thumbs: thumbStep && !planOnly ? thumbStep.progressBy(stageSite) : null,
+		cleanup: cleanup && { ...cleanup, pending: uploader?.deletesPending ?? 0, nextDue: uploader?.nextDue ?? null },
+		flags: flagsStage && { ...flagsStage }
+	});
 	run.options = JSON.stringify(runOptions);
 	run.prints_total = printsTracked.size;
 	run.prints_done = printsFinished.size;
@@ -754,6 +779,7 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		run.total++;
 		run.done++;
 		run.failed++;
+		tally.page(id, 'planFailed');
 		return { taken: true, queued: 0, modern: true };
 	}
 	let decoded: unknown;
@@ -770,6 +796,7 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		run.total++;
 		run.done++;
 		run.skipped++;
+		tally.page(id, 'skipped');
 		return { taken: true, queued: 0, modern: true };
 	}
 	const pages = [...blueprintPages(decoded)];
@@ -818,6 +845,7 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		if (reason) {
 			run.done++;
 			run.skipped++;
+			tally.page(id, 'skipped');
 			if (old?.status === 'done') indexStale = true;
 			if (!(old?.status === 'skipped' && old.input_key === key && old.reason === reason))
 				writes.push({ ...base, status: 'skipped', reason, attempts: 0, started_at: null, finished_at: t });
@@ -843,6 +871,7 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		if (sc && sc.inputKey === kept) {
 			run.done++;
 			run.unchanged++;
+			tally.page(id, 'unchanged');
 			doneHere++;
 			if (sc.pageData !== PAGE_DATA_VERSION) {
 				// Rendered before its page data existed: write that now, no redraw. Buckets holding the
@@ -875,12 +904,14 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 			// Failed every attempt at this input: left as it is, not drawn again until the key changes.
 			run.done++;
 			run.failed++;
+			tally.page(id, 'planFailed');
 			continue;
 		}
 		if (old?.status === 'done') indexStale = true;
 		writes.push({ ...base, status: 'pending', reason: null, attempts: 0, queued_at: t, started_at: null, finished_at: null });
 		todo.push({ id, path: page.path, entities: entityCount(page), key, offset: prep.offset, attempts: 0 });
 		queued++;
+		tally.page(id, 'queued');
 		if (!planOnly) pageCache.offer(id, page.path, prep);
 	}
 	// Nothing to draw at all (a book of upgrade or deconstruction planners): one skipped row says so,
@@ -892,6 +923,7 @@ async function enqueueRows(id: string): Promise<{ taken: boolean; queued: number
 		run.total++;
 		run.done++;
 		run.skipped++;
+		tally.page(id, 'skipped');
 		if (!(old?.status === 'skipped' && old.reason === NO_PAGES))
 			writes.push({ ...failedRow(id, record.title, 'no-pages', NO_PAGES, t, old), status: 'skipped' });
 	}
@@ -991,6 +1023,7 @@ async function complete(w: Work, o: Outcome) {
 		});
 		run.done++;
 		run.rendered++;
+		tally.page(w.id, 'drawn');
 		run.files += r.files;
 		run.bytes += r.bytes;
 		progress.completed(w, t);
@@ -1025,6 +1058,7 @@ async function complete(w: Work, o: Outcome) {
 	await queue.updateJob(w.id, w.path, { status: 'failed', reason: why, attempts: w.attempts, run_id: run.id, finished_at: t });
 	run.done++;
 	run.failed++;
+	tally.page(w.id, 'drawFailed');
 	progress.completed(w, t);
 	// An older version of the page in the bucket leaves its index.
 	if (uploadsAtStart.get(w.id)?.some((u) => u.path === w.path)) uploader?.schedule(w.id, uploader.pendingOf(w.id));
@@ -1143,6 +1177,7 @@ async function renderAll() {
 			await queue.updateJob(w.id, w.path, { status: 'failed', reason: 'the record changed during the run', finished_at: Date.now() });
 			run.done++;
 			run.failed++;
+			tally.page(w.id, 'drawFailed');
 			if (uploadsAtStart.get(w.id)?.some((u) => u.path === w.path)) uploader?.schedule(w.id, uploader.pendingOf(w.id));
 			await finishPrint(w.id);
 			continue;
@@ -1237,9 +1272,31 @@ async function pickBatch(ids: string[], b: BatchRecord): Promise<number> {
 	return taken;
 }
 
+// --- clean up
+
+/**
+ * Due deletions of replaced files (the renders, then the thumbnails), counted into the run's Clean up
+ * stage. As the run starts (never alongside a sync), and after the last upload (`final`; not after a stop,
+ * when it does nothing and what's due stays for the next run).
+ */
+async function cleanUp(final: boolean) {
+	if (!uploader || !cleanup) return;
+	if (final) cleanup.state = 'running';
+	const t = await uploader.processDeletes();
+	cleanup.deleted += t.deleted;
+	cleanup.kept += t.dropped;
+	cleanup.failed += t.failed;
+	if (!final || !stopping) await thumbUploader?.processDue();
+	cleanup.thumbsDeleted = thumbUploader?.stats.deleted ?? 0;
+	if (final) cleanup.state = stopping ? 'skipped' : 'done';
+}
+
 // --- main
 
 let exitCode = 0;
+/** How the run ended: written once the flags step (which runs after a stop or failure too) is over. */
+let endState: RunnerRun['state'] = 'failed';
+let flagsFailed = false;
 try {
 	const orphans = stopOrphanedWorkerd(
 		(await queue.deadRuns(run.id, run.host)).flatMap((r) => (JSON.parse(r.options) as { workerd?: number[] }).workerd ?? [])
@@ -1286,8 +1343,7 @@ try {
 	if (uploader) {
 		for (const [id, list] of byPrint(await queue.allUploads(args.upload!))) uploadsAtStart.set(id, list);
 		// Before any print syncs (never alongside one): replaced files whose grace period is over.
-		await uploader.processDeletes();
-		await thumbUploader?.processDue();
+		await cleanUp(false);
 	}
 	// --top: its prints first (by rank), then the selection without them; never a print removed on request
 	// (`removal_blocks`, copied from the stage by `bun run removals`). Their renders stay as they are here
@@ -1356,14 +1412,13 @@ try {
 			runOptions.phase = 'deletions';
 		}
 		// Not after a stop (it does nothing then): what's due stays for the next run.
-		await uploader.processDeletes();
-		if (!stopping) await thumbUploader?.processDue();
+		await cleanUp(true);
 	}
 	runOptions.phase = null;
-	// A plan-only run leaves its pages pending: it ends 'stopped', not 'finished'.
-	run.state = stopping || planOnly ? 'stopped' : 'finished';
+	// A plan-only run leaves its pages pending: it ends 'stopped', not 'finished' (once the flags step is over).
+	endState = stopping || planOnly ? 'stopped' : 'finished';
 } catch (e) {
-	run.state = 'failed';
+	endState = 'failed';
 	run.error = e instanceof Error ? e.message : String(e);
 	console.error(run.error);
 	exitCode = 1;
@@ -1376,6 +1431,15 @@ try {
 	await thumbStep?.drain();
 	await uploader?.drain();
 } finally {
+	if (cleanup && (cleanup.state === 'waiting' || cleanup.state === 'running')) cleanup.state = 'skipped';
+	// `--flags` runs even after a stop or a failure, while the run row stays live (the heartbeat goes on) with
+	// phase 'flags', so the Update tab shows it as part of the run.
+	if (uploader && args.flags) {
+		runOptions.phase = 'flags';
+		flagsFailed = !(await flagsStep());
+	}
+	runOptions.phase = null;
+	run.state = endState;
 	beating = false;
 	await beat;
 	run.finished_at = Date.now();
@@ -1386,6 +1450,9 @@ try {
 	await flushSeen().catch(() => undefined);
 	syncRun();
 	await queue.writeRun(run).catch((e: unknown) => console.error(`could not write the run's final state: ${e}`));
+	// The per-source figures must add up to the run's own: a missed tally shows here (never fatal).
+	const off = runOptions.stages ? stageMismatch(runOptions.stages, run) : [];
+	if (off.length) log(`stages: the per-source figures don't add up to the run's: ${off.join(', ')}`);
 	await guardTarget?.dispose().catch(() => undefined);
 	await proxy.dispose();
 	if (guard?.skipped.size) log(`not uploaded: ${guard.skipped.size} prints the ${args.upload} stage deleted or removed`);
@@ -1423,7 +1490,6 @@ function thumbSummary() {
 	);
 }
 const uploadsLeft = uploader && (uploader.broken || run.uploads_pending > 0);
-const flagsFailed = uploader && args.flags ? !(await flagsStep()) : false;
 process.exit(exitCode || (run.failed ? 2 : 0) || (uploadsLeft ? 3 : 0) || (flagsFailed ? 4 : 0));
 
 /**
@@ -1440,11 +1506,25 @@ async function flagsStep(): Promise<boolean> {
 		thumbDeletes: thumbUploader?.stats.deletesScheduled ?? 0
 	});
 	log(`flags: render:flags --stage ${args.upload}${bump ? ', and a page-cache bump' : ''}`);
+	flagsStage = { state: 'running', stage: args.upload! };
 	try {
-		// `--flags` is the consent: no typed "prod".
-		await runStageFlags(args.upload!, { confirm: async () => {}, bump, log });
+		// `--flags` is the consent: no typed "prod". Locally through this run's own platform proxy: a second
+		// workerd on the same database would meet the heartbeat's writes.
+		const target =
+			args.upload === 'local'
+				? {
+						stage: 'local' as const,
+						database: 'local D1 (.wrangler/state)',
+						bucket: 'local R2 prints-raw',
+						env: { DB: proxy.env.DB, RAW: proxy.env.RAW },
+						dispose: async () => {}
+					}
+				: undefined;
+		const done = await runStageFlags(args.upload!, { confirm: async () => {}, bump, log, target });
+		flagsStage = { state: 'done', stage: args.upload!, rowsWritten: done.rowsWritten, bumped: done.bumped };
 		return true;
 	} catch (e) {
+		flagsStage = { state: 'failed', stage: args.upload!, error: e instanceof Error ? e.message : String(e) };
 		log(
 			`flags: failed: ${e instanceof Error ? e.message : String(e)}\n` +
 				`  the renders and uploads stand; run by hand: bun run render:flags --stage ${args.upload}${bump ? ' --bump' : ''}`

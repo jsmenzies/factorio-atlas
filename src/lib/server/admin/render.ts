@@ -13,6 +13,7 @@ import {
 	type RenderRunPhase,
 	type RenderRunRow
 } from '#lib/server/render-queue.js';
+import type { RenderStages } from '#lib/render-stages.js';
 import { intParam, runControlActions } from './pipeline.js';
 import { parseScopes, scopeStatements } from './render-scope.js';
 
@@ -41,6 +42,8 @@ export interface RenderRunOptions {
 	/** After the last page: what the run is doing before it ends; and the thumb step's prints done of those offered. */
 	phase?: RenderRunPhase | null;
 	thumbs?: { done: number; of: number } | null;
+	/** Plan, Draw, Upload and Thumbnails per source, Clean up and Search flags (runs from before them have none). */
+	stages?: RenderStages | null;
 	[key: string]: unknown;
 }
 

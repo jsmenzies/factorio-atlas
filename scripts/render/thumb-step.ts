@@ -154,6 +154,18 @@ export function createThumbStep(opts: ThumbStepOptions) {
 		get progress(): { done: number; of: number } {
 			return { done: offered.size - queue.length - active, of: offered.size };
 		},
+		/** `progress` split by a key of the print id (its site): prints done of those offered, per key. */
+		progressBy<K>(keyOf: (id: string) => K): Map<K, { done: number; of: number }> {
+			const out = new Map<K, { done: number; of: number }>();
+			for (const id of offered) {
+				const k = keyOf(id);
+				let p = out.get(k);
+				if (!p) out.set(k, (p = { done: 0, of: 0 }));
+				p.of++;
+				if (!queued.has(id) && !working.has(id)) p.done++;
+			}
+			return out;
+		},
 		/** Resolves once every print offered is done (or, after a stop, once those in hand are). */
 		drain(): Promise<void> {
 			pump();

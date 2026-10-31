@@ -171,6 +171,8 @@ export interface UploaderOptions {
 	 * of a print: such a print is never uploaded. Throwing counts as a failed sync (tried again later).
 	 */
 	removed?: (id: string) => Promise<boolean>;
+	/** After each page whose files and index entry went up, with the objects and bytes it put (the run's per-site counts). */
+	onPageUp?: (id: string, files: number, bytes: number) => void;
 }
 
 export interface UploadStats {
@@ -525,6 +527,7 @@ export function createUploader(opts: UploaderOptions) {
 		stats.files += files;
 		stats.bytes += bytes;
 		stats.reused += hashes.length - missing.length;
+		opts.onPageUp?.(id, files, bytes);
 		log(`  ↑ ${id} ${pageBase(job.path).padEnd(6)} ${files} files, ${mb(bytes)} (${hashes.length - missing.length} tiles already up)`);
 		return row;
 	}
@@ -858,10 +861,14 @@ export function createUploader(opts: UploaderOptions) {
 		},
 		/** One print's pages waiting to go up. */
 		pendingOf: (id: string) => pendingByPrint.get(id) ?? 0,
+		/** Every print's pages waiting to go up (read-only: the run's per-site counts). */
+		pendingEntries: (): [string, number][] => [...pendingByPrint],
 		/** Pages whose last upload failed, not up since. */
 		get failing() {
 			return failingPages.size;
 		},
+		/** The print of each page whose last upload failed (one entry per page). */
+		failingIds: (): string[] => [...failingPages].map((k) => k.slice(0, k.indexOf('\n'))),
 		get inFlight() {
 			return active;
 		},

@@ -10,7 +10,7 @@
 import { bumpPageVersion } from '#lib/server/page-cache.js';
 import { planSize, syncRenderFlags, type RenderCover } from '#lib/server/pipeline/render-flags.js';
 import { loadRemovedPrintIds } from '#lib/server/removal-blocks.js';
-import { openTarget, type Stage } from '../backfill/stage.js';
+import { openTarget, type Stage, type Target } from '../backfill/stage.js';
 import { n, requireSchema } from '../stage-command.js';
 import {
 	coversFrom,
@@ -76,6 +76,8 @@ export interface StageFlagsOptions {
 	/** Bump the page cache even when no flag row changes (an upload run that replaced files). */
 	bump?: boolean;
 	log: (line: string) => void;
+	/** A stage connection to use (and leave open) instead of opening one: the render run's own, locally. */
+	target?: Target;
 }
 
 /**
@@ -87,7 +89,7 @@ export async function runStageFlags(stage: Stage, opts: StageFlagsOptions): Prom
 	for (const line of summary) opts.log(line);
 	// openTarget checks the stage has print_renders (migration 0015); the cover columns are 0018's. It
 	// throws rather than exits, so an upload run's `--flags` step can fail without ending the run.
-	const target = await openTarget(stage, { generation: opts.generation, log: opts.log });
+	const target = opts.target ?? (await openTarget(stage, { generation: opts.generation, log: opts.log }));
 	try {
 		const db = target.env.DB;
 		await requireSchema(db, stage, 'SELECT cover_stamp FROM print_renders LIMIT 0', "print_renders' cover columns", '0018');
@@ -128,6 +130,6 @@ export async function runStageFlags(stage: Stage, opts: StageFlagsOptions): Prom
 		}
 		return { rowsWritten, bumped };
 	} finally {
-		await target.dispose();
+		if (!opts.target) await target.dispose();
 	}
 }

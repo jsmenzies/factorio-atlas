@@ -62,7 +62,12 @@
 	// After the last page (options written by the heartbeat): what the run does before it ends, and its thumbnails.
 	const phase = $derived(run.options.phase ?? null);
 	const thumbs = $derived(run.options.thumbs?.of ? run.options.thumbs : null);
-	const PHASE = { thumbnails: 'Every page drawn; making thumbnails', uploads: 'Uploading the last pages', deletions: 'Removing replaced files' } as const;
+	const PHASE = {
+		thumbnails: 'Every page drawn; making thumbnails',
+		uploads: 'Uploading the last pages',
+		deletions: 'Removing replaced files',
+		flags: 'Setting the search flags'
+	} as const;
 	const avg = $derived(writtenAverages(run));
 	const speed = $derived(uploadSpeed(run, took, live && runState !== 'paused'));
 	const PACE = {

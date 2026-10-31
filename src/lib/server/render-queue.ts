@@ -63,10 +63,10 @@ export interface RenderRunRow {
 
 /**
  * What a render run does after its last page is drawn, before it ends (`options.phase`, null while drawing):
- * the thumb step's last prints, the last page uploads, then due deletions of replaced files. Its `--flags`
- * step runs after the row is final, so only the run's log names it.
+ * the thumb step's last prints, the last page uploads, due deletions of replaced files, then its `--flags`
+ * step (the row stays live through it).
  */
-export type RenderRunPhase = 'thumbnails' | 'uploads' | 'deletions';
+export type RenderRunPhase = 'thumbnails' | 'uploads' | 'deletions' | 'flags';
 
 export interface RenderJobRow {
 	print_id: string;
