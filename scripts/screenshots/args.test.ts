@@ -63,9 +63,10 @@ test('parseArgs defaults and flags', () => {
 test('parseArgs: the steps after the fetch', () => {
 	expect(parseArgs(['--make', '--jobs', '8'], defaults)).toMatchObject({ mode: 'make', jobs: 8 });
 	expect(parseArgs(['--upload', 'prod', '--limit', '5'], defaults)).toMatchObject({ mode: 'upload', target: 'prod', limit: 5 });
-	expect(parseArgs(['--recheck', '--ids', '8B9jpx6'], defaults)).toMatchObject({ mode: 'recheck', ids: ['8B9jpx6'] });
+	expect(parseArgs(['--make', '--ids', '8B9jpx6'], defaults)).toMatchObject({ mode: 'make', ids: ['8B9jpx6'] });
 	expect(() => parseArgs(['--upload', 'staging'], defaults)).toThrow(UsageError);
-	expect(() => parseArgs(['--make', '--recheck'], defaults)).toThrow(UsageError);
+	expect(() => parseArgs(['--make', '--upload', 'prod'], defaults)).toThrow(UsageError);
+	expect(() => parseArgs(['--recheck'], defaults)).toThrow('unknown option --recheck');
 	expect(() => parseArgs(['--jobs', '0'], defaults)).toThrow(UsageError);
 });
 

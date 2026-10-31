@@ -73,7 +73,7 @@
 {#if live}
 	<p class="rounded-lg border border-stone-800 bg-stone-900/50 px-4 py-2.5 text-xs text-stone-500">
 		Settings are locked while the update runs (it read them when it started): authors {settings.authors ? 'on' : 'off'} · screenshots
-		{settings.screenshots ? `on, Imgur recheck ${settings.imgurRecheck}` : 'off'} · render {settings.render
+		{settings.screenshots ? 'on' : 'off'} · render {settings.render
 			? `on, top ${int(settings.top)}, ${settings.perUpdate === null ? 'every print with work' : `≤ ${int(settings.perUpdate)} prints`}, ${settings.workers ?? 'default'} threads`
 			: 'off'} · hold back at {Math.round(settings.maxChange * 100)}% · codex {settings.polled.codex.on ? 'on' : 'off'} · fprints {settings.polled.fprints.on ? 'on' : 'off'}
 	</p>
@@ -94,13 +94,6 @@
 				<p class="text-sm font-medium text-stone-100">Copy screenshots <span class="font-normal text-stone-500">· Imgur, uploads and other sites’ images</span></p>
 				<p class="text-xs text-stone-500">At most 4 requests a second to Imgur; then sized and uploaded, and the cards updated.</p>
 			</div>
-			<label class="{lbl} {settings.screenshots ? '' : 'opacity-50'}" title="Asks about every copied image: ≈ 75 min at 4 a second">
-				Recheck Imgur for deletions
-				<select id="imgurRecheck" bind:value={settings.imgurRecheck} onchange={() => onchange()} class="rounded-md border border-stone-700 bg-stone-950 px-2 py-1 text-sm text-stone-100">
-					<option value="never">never</option>
-					<option value="weekly">weekly</option>
-				</select>
-			</label>
 			<Toggle bind:checked={settings.screenshots} label="Copy screenshots" {onchange} />
 		</div>
 

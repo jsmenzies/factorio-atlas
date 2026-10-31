@@ -27,7 +27,7 @@
  *                   own prints into the record store, so the render step draws them
  *   4. authors      `authors --stage S` (Firebase, only authors never asked;
  *                   factorioprints only); needs ingest
- *   5. screenshots  `screenshots` (new ones from Imgur; weekly `--recheck` if set), `--from-uploads S`
+ *   5. screenshots  `screenshots` (new ones from Imgur), `--from-uploads S`
  *                   (approved upload screenshots, from the stage's RAW), `--from-sites S` (images other
  *                   sites' records name, for the stage's prints showing them), `--upload S`,
  *                   `screenshots:flags --stage S`; needs removals
@@ -128,7 +128,6 @@ import {
 const USAGE =
 	'usage: bun run sync [--stage prod|local] [--yes] | --plan [--json] | --accept <commit|site|site:id> | --figures [--stage S] [--json] | --top-preview N';
 const ROOT = join(import.meta.dirname, '..');
-const WEEK_MS = 7 * 24 * 3600_000;
 
 const { values: flags } = (() => {
 	try {
@@ -690,13 +689,6 @@ const steps: StepDef[] = [
 					.replace(/^screenshots: /, '')
 					.replace(/ → .*$/, '')
 			);
-			const rechecked = await readMeta<number>(db, 'imgur-recheck');
-			if (!stopping() && settings.imgurRecheck === 'weekly' && Date.now() - (rechecked?.value ?? 0) > WEEK_MS) {
-				const r = await script(['scripts/screenshots.ts', '--recheck']);
-				if (r.code === 0) await writeMeta(db, 'imgur-recheck', Date.now());
-				else warning = true;
-				parts.push(lineMatching(r.tail, /^screenshots: /).replace(/^screenshots: /, ''));
-			}
 			if (stopping()) return { status: 'stopped', summary: parts.join(' · '), details };
 			// Approved upload screenshots, copied from the stage's private RAW: an input beside Imgur. A failure here
 			// still lets Imgur's go up.

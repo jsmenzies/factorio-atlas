@@ -8,7 +8,7 @@
  *
  * An image is copied once (its bytes never change: the id is their hash, checked on the way in); one the
  * run state has as removed (a takedown, `bun run removals`) is never copied again. Imgur is never asked
- * anything about these, and `--recheck` leaves them alone.
+ * anything about these.
  */
 import { appendFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';

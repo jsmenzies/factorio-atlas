@@ -59,7 +59,7 @@ export const siteImageId = (site: 'codex' | 'fprints' | 'factoriobin', urlSha256
 /** Only our own copies ever show: an upload's image or another site's, never looked up on Imgur. */
 export const isOwnImage = (id: string) => isUploadImage(id) || isSiteImage(id);
 
-/** copied: the files are in the bucket; dead: gone from Imgur before we copied it; removed: deleted on Imgur since, or on request. */
+/** copied: the files are in the bucket; dead: gone from Imgur before we copied it; removed: taken down on request. */
 export type ShotState = 'copied' | 'dead' | 'removed';
 
 /** An image whose copy is in the bucket: its Imgur id, the version its sizes were made with, the original's extension and size. */
@@ -209,7 +209,7 @@ const IMGUR_BACKDROP = { width: 1024, height: 576 };
  * render URL prefix, renders.ts):
  *
  * - copied: our 16:9 crops;
- * - dead (gone from Imgur before we copied it) or removed (deleted on Imgur, or on request): the
+ * - dead (gone from Imgur before we copied it) or removed (taken down on request): the
  *   cover page's render thumbnail, else nothing; never Imgur;
  * - unknown (no row: not copied yet): Imgur's 640 px copy as before, else the render thumbnail, else nothing;
  *   an upload's or another site's image (`upload.…`, `codex.…`) is never on Imgur, so until the screenshots

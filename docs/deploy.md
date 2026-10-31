@@ -406,15 +406,14 @@ bun run screenshots --from-disk                  # fetch originals from Imgur (p
 bun run screenshots --make                       # make the sizes (optional: --upload makes what's missing)
 bun run screenshots --upload prod                # files, then each image's manifest; asks nothing of Imgur
 bun run screenshots:flags --stage prod           # the `screenshots` table search cards read; purges cached pages
-bun run screenshots --recheck                    # now and then: images deleted on Imgur are marked removed
 ```
 
 The upload uses the same kind of R2 API token as "Uploading renders": **Object Read & Write** on
 the screenshots bucket (a token limited to the renders bucket must be edited to include it). Every
 put and delete is recorded in `<SCREENSHOTS_DIR>/uploads/<stage>.jsonl`, so an unchanged image costs
-no request and `screenshots:flags` knows what is up. Images deleted on Imgur since they were copied
-(`--recheck`) get a 'removed' manifest at the next upload, and their files are deleted a day later
-(cached pages may still name them); `screenshots:flags` then marks their rows 'removed'.
+no request and `screenshots:flags` knows what is up. A copied image is never checked against Imgur
+again: one deleted there stays shown here until someone asks for its removal ("Removal requests"
+below, or `screenshots:remove`).
 
 ### Screenshot removal requests
 
@@ -639,9 +638,8 @@ and starts no more; Ctrl-C again, or Quit now, ends the step at once, and kills 
 hasn't. An update refuses to start while another is running or a render run is live; one whose
 process was killed is closed as failed by the next, once its processes are gone.
 
-Its settings (each polled site on or off, the 5% guard, author lookups, screenshots and
-Imgur rechecks, render on or off, the top N favourites to render, how many prints to render per update and
-render workers) are saved in the local D1 as they are changed on the Update tab (`/admin/update`) under
+Its settings (each polled site on or off, the 5% guard, author lookups, screenshots, render on or off,
+the top N favourites to render, how many prints to render per update and render workers) are saved in the local D1 as they are changed on the Update tab (`/admin/update`) under
 `bun run dev`; without them the defaults apply. There, the Update tab draws the update as a board: one row per source
 (factorioprints, codex, fprints, uploads) across the steps in order, Changes (at the source), Added (the one gate,
 one source at a time), Authors, Screenshots, then the render run's stages Plan, Draw, Upload and Thumbnails, with a

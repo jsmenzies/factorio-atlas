@@ -143,9 +143,7 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 		settings.screenshots
 			? {
 					id: 'screenshots',
-					text:
-						(t.backfill ? `copy up to ${int(t.added)} new screenshots from Imgur, upload them` : 'copy any new screenshots from Imgur') +
-						(settings.imgurRecheck === 'weekly' ? '; recheck Imgur for deletions if a week has passed' : '')
+					text: t.backfill ? `copy up to ${int(t.added)} new screenshots from Imgur, upload them` : 'copy any new screenshots from Imgur'
 				}
 			: { id: 'screenshots', text: 'off in the settings', idle: true },
 		!settings.render

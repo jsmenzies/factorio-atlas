@@ -9,9 +9,16 @@ describe('parseSettings', () => {
 	});
 
 	test('valid fields kept, invalid ones named and replaced by the default', () => {
-		const { settings, errors } = parseSettings({ top: 2000, perUpdate: null, workers: 0, imgurRecheck: 'daily', screenshots: false });
-		expect(settings).toMatchObject({ top: 2000, perUpdate: null, workers: null, imgurRecheck: 'never', screenshots: false });
-		expect(errors.sort()).toEqual(['imgurRecheck', 'workers']);
+		const { settings, errors } = parseSettings({ top: 2000, perUpdate: null, workers: 0, screenshots: false });
+		expect(settings).toMatchObject({ top: 2000, perUpdate: null, workers: null, screenshots: false });
+		expect(errors).toEqual(['workers']);
+	});
+
+	test('an old saved imgurRecheck is ignored, like any unknown key', () => {
+		const { settings, errors } = parseSettings({ imgurRecheck: 'weekly', top: 5 });
+		expect(errors).toEqual([]);
+		expect(settings).toEqual({ ...DEFAULT_SETTINGS, top: 5 });
+		expect('imgurRecheck' in settings).toBe(false);
 	});
 
 	test('render on by default; turned off kept; settings saved before it existed render', () => {

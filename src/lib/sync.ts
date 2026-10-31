@@ -22,8 +22,6 @@ export interface SyncSettings {
 	render: boolean;
 	/** Copy new screenshots from Imgur, upload them and update the stage's screenshot rows. */
 	screenshots: boolean;
-	/** Ask Imgur whether copied screenshots were deleted, at most this often (≈ 75 min for 18k). */
-	imgurRecheck: 'never' | 'weekly';
 	/** Name new authors: their records first, then Firebase for every author never asked. An old saved `authorLimit` is ignored. */
 	authors: boolean;
 	/**
@@ -101,7 +99,6 @@ export const DEFAULT_SETTINGS: SyncSettings = {
 	workers: null,
 	render: true,
 	screenshots: true,
-	imgurRecheck: 'never',
 	authors: true,
 	maxChange: 0.05,
 	polled: Object.fromEntries(POLLED_SITES.map((p) => [p.site, DEFAULT_POLLED])) as Record<PolledSiteId, PolledSettings>
@@ -132,7 +129,6 @@ export function parseSettings(input: unknown): { settings: SyncSettings; errors:
 		workers: pick('workers', (v) => (v === null ? null : whole(v, 1, 64))),
 		render: pick('render', (v) => (typeof v === 'boolean' ? v : undefined)),
 		screenshots: pick('screenshots', (v) => (typeof v === 'boolean' ? v : undefined)),
-		imgurRecheck: pick('imgurRecheck', (v) => (v === 'never' || v === 'weekly' ? v : undefined)),
 		authors: pick('authors', (v) => (typeof v === 'boolean' ? v : undefined)),
 		maxChange: pick('maxChange', (v) => (typeof v === 'number' && v > 0 && v <= 1 ? v : undefined)),
 		polled: parsePolled(o.polled, errors)
@@ -433,10 +429,10 @@ export interface StorePrints {
 }
 
 /**
- * settings, plan, figures: above; imgur-recheck: when screenshots were last rechecked on Imgur (ms);
- * accept: a held-back source update to fetch anyway, by site (its `to` cursor id); store-prints: above.
+ * settings, plan, figures: above; accept: a held-back source update to fetch anyway, by site (its `to` cursor id);
+ * store-prints: above. An old 'imgur-recheck' row (the Imgur recheck, removed) is never read.
  */
-export type SyncMetaKey = 'settings' | 'plan' | 'figures' | 'imgur-recheck' | 'accept' | 'store-prints';
+export type SyncMetaKey = 'settings' | 'plan' | 'figures' | 'accept' | 'store-prints';
 
 // --- estimates
 

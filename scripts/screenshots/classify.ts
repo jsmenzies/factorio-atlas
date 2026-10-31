@@ -104,24 +104,3 @@ export function classify(r: Reply, md5: (b: Uint8Array) => string = md5Of): Outc
 	if (r.status === 408 || r.status >= 500) return { kind: 'retry', reason: `HTTP ${r.status}` };
 	return { kind: 'failed', reason: `HTTP ${r.status}` };
 }
-
-/** What a recheck of a copied image (its small `m` thumbnail) found. */
-export type CheckOutcome =
-	| { kind: 'alive' }
-	/** Gone from Imgur: deleted by its author (or Imgur) since we copied it. */
-	| { kind: 'gone'; reason: string }
-	| { kind: 'retry'; reason: string }
-	| { kind: 'unknown'; reason: string }
-	| { kind: 'stop'; reason: string };
-
-export function classifyCheck(r: Reply, md5: (b: Uint8Array) => string = md5Of): CheckOutcome {
-	if (r.status === 200) {
-		if (r.body && r.body.length && md5(r.body) === REMOVED_MD5) return { kind: 'gone', reason: 'removed.png served' };
-		if (r.contentType?.toLowerCase().startsWith('text/')) return { kind: 'stop', reason: `served ${r.contentType} instead of an image` };
-		return kindOfMime(r.contentType) ? { kind: 'alive' } : { kind: 'unknown', reason: `content-type ${r.contentType ?? 'missing'}` };
-	}
-	const o = classify({ ...r, body: null }, md5);
-	if (o.kind === 'dead') return { kind: 'gone', reason: o.reason };
-	if (o.kind === 'stop' || o.kind === 'retry') return o;
-	return { kind: 'unknown', reason: o.kind === 'failed' ? o.reason : `HTTP ${r.status}` };
-}

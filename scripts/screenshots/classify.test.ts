@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { classify, classifyCheck, etagMd5, REMOVED_MD5, type Reply } from './classify.js';
+import { classify, etagMd5, REMOVED_MD5, type Reply } from './classify.js';
 import { md5 } from './image.js';
 
 /** A 1 × 1 PNG header is enough for sniff and imageSize. */
@@ -72,26 +72,4 @@ test('etagMd5', () => {
 	expect(etagMd5('W/"58b12b0030452ea6180f464efe5ca515"')).toBe('58b12b0030452ea6180f464efe5ca515');
 	expect(etagMd5('"58b12b0030452ea6180f464efe5ca515-3"')).toBeNull();
 	expect(etagMd5(null)).toBeNull();
-});
-
-describe('classifyCheck (the recheck of a copied image)', () => {
-	const thumb = (over: Partial<Reply>): Reply => ({
-		status: 200,
-		location: null,
-		contentType: 'image/jpeg',
-		etag: null,
-		contentLength: null,
-		body: PNG,
-		...over
-	});
-	test('alive, gone, stop, retry, unknown', () => {
-		expect(classifyCheck(thumb({}))).toEqual({ kind: 'alive' });
-		expect(classifyCheck(thumb({ status: 302, body: null, location: 'https://i.imgur.com/removed.png' })).kind).toBe('gone');
-		expect(classifyCheck(thumb({ status: 404, body: null })).kind).toBe('gone');
-		expect(classifyCheck(thumb({}), () => REMOVED_MD5).kind).toBe('gone');
-		expect(classifyCheck(thumb({ status: 429, body: null })).kind).toBe('stop');
-		expect(classifyCheck(thumb({ contentType: 'text/html' })).kind).toBe('stop');
-		expect(classifyCheck(thumb({ status: 502, body: null })).kind).toBe('retry');
-		expect(classifyCheck(thumb({ status: 302, body: null, location: 'https://imgur.com/x' })).kind).toBe('unknown');
-	});
 });

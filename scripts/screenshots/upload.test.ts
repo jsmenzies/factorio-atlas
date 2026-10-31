@@ -165,7 +165,7 @@ describe('syncImage', () => {
 	);
 
 	test(
-		'deleted on Imgur: a removed manifest now, the files after the grace period',
+		'removed, not on request (an old Imgur recheck line): a removed manifest now, the files after the grace period',
 		inDir(async () => {
 			const e = await fetched('Gone1aa', await png(400, 300));
 			const made = await makeSizes(dir, e.id, 'png', await png(400, 300));

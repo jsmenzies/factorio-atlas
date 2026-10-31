@@ -42,9 +42,9 @@ export const screenshotsDir = (root = process.cwd(), value = process.env.SCREENS
  * fetch (default): copy originals from Imgur. uploads: copy a stage's approved upload screenshots from
  * its RAW bucket. sites: copy the images other sites' records name (codex's, fprints'), for a stage's prints that show
  * them (scripts/screenshots/sites.ts). make: the sizes, from the originals on disk. upload: make what's missing, then bring a
- * bucket in line. recheck: ask Imgur whether copied images still exist, and mark the deleted ones removed.
+ * bucket in line.
  */
-export type Mode = 'fetch' | 'uploads' | 'sites' | 'make' | 'upload' | 'recheck';
+export type Mode = 'fetch' | 'uploads' | 'sites' | 'make' | 'upload';
 
 /** Images made or uploaded at once (`--jobs`). */
 export const JOBS = 6;
@@ -78,8 +78,7 @@ const MODE_FLAG: Record<Mode, string> = {
 	uploads: '--from-uploads',
 	sites: '--from-sites',
 	make: '--make',
-	upload: '--upload',
-	recheck: '--recheck'
+	upload: '--upload'
 };
 
 export const USAGE =
@@ -88,8 +87,7 @@ export const USAGE =
 	'       screenshots --from-uploads local|prod [--ids a,b] [--limit N] [--plan-only] [--json]\n' +
 	'       screenshots --from-sites local|prod [--ids a,b] [--limit N] [--plan-only] [--json]\n' +
 	'       screenshots --make [--ids a,b] [--limit N] [--jobs N]\n' +
-	'       screenshots --upload local|prod [--ids a,b] [--limit N] [--jobs N] [--plan-only] [--json]\n' +
-	'       screenshots --recheck [--ids a,b] [--limit N] [--rate N] [--no-canary]';
+	'       screenshots --upload local|prod [--ids a,b] [--limit N] [--jobs N] [--plan-only] [--json]';
 
 export function parseArgs(argv: readonly string[], defaults: { clone: string; disk: string; root?: string }): ShotArgs {
 	const root = defaults.root ?? process.cwd();
@@ -139,7 +137,7 @@ export function parseArgs(argv: readonly string[], defaults: { clone: string; di
 			if (!Number.isInteger(n) || n < 1 || n > MAX_IN_FLIGHT)
 				throw new UsageError(`--in-flight takes a whole number from 1 to ${MAX_IN_FLIGHT}`);
 			a.inFlight = n;
-		} else if (flag === '--make' || flag === '--recheck' || flag === '--upload' || flag === '--from-uploads' || flag === '--from-sites') {
+		} else if (flag === '--make' || flag === '--upload' || flag === '--from-uploads' || flag === '--from-sites') {
 			const mode = (flag === '--from-uploads' ? 'uploads' : flag === '--from-sites' ? 'sites' : flag.slice(2)) as Mode;
 			if (a.mode !== 'fetch' && a.mode !== mode) throw new UsageError(`${MODE_FLAG[a.mode]} and ${flag} don't go together`);
 			a.mode = mode;

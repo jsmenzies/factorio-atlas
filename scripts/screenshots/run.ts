@@ -1,22 +1,18 @@
 /**
- * `bun run screenshots --make | --upload local|prod | --recheck`: the steps after the fetch, over
- * the images in the run state (state.jsonl). Make and upload never ask Imgur anything; recheck
- * asks for each copied image's small thumbnail.
+ * `bun run screenshots --make | --upload local|prod`: the steps after the fetch, over the images in
+ * the run state (state.jsonl). Neither asks Imgur anything.
  */
 import { appendFileSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { ATTEMPTS, CANARY, type ShotArgs } from './args.js';
-import { classifyCheck, type CheckOutcome } from './classify.js';
-import { fetchImgur, imgurOriginal, imgurThumb } from './fetch.js';
+import type { ShotArgs } from './args.js';
 import { formatLine, ledgerFile, readLedger, type LedgerLine } from './ledger.js';
-import { EXT } from './image.js';
 import { makeSizes, readMade, type Made } from './make.js';
-import { backoffMs, pacer, pool, realClock } from './pace.js';
-import { formatEntry, type StateEntry } from './state.js';
+import { pool } from './pace.js';
+import type { StateEntry } from './state.js';
 import { openShotStore } from './store.js';
 import { syncImage } from './upload.js';
-import { isOwnImage, isUploadImage } from '#lib/screenshots.js';
+import { isUploadImage } from '#lib/screenshots.js';
 
 const mb = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
 const secs = (ms: number) => `${Math.round(ms / 1000)}s`;
@@ -196,87 +192,4 @@ export async function runUpload(dir: string, entries: Map<string, StateEntry>, a
 			} satisfies UploadRunResult)
 		);
 	return stop ? 2 : failed.length ? 1 : 0;
-}
-
-/**
- * Most images deleted on Imgur in one recheck before it believes none of them: a mass "deleted"
- * is far likelier to be Imgur answering oddly than authors deleting at once.
- */
-export const MAX_GONE = { count: 50, share: 0.05 };
-export const tooManyGone = (gone: number, checked: number) => gone > MAX_GONE.count && gone > checked * MAX_GONE.share;
-
-export async function runRecheck(dir: string, stateFile: string, entries: Map<string, StateEntry>, args: ShotArgs): Promise<number> {
-	// Upload and other sites' images (`upload.…`, `codex.…`) were never on Imgur.
-	const todo = selectEntries(entries.values(), args.ids, args.limit, (e) => e.status === 'fetched' && !isOwnImage(e.id));
-	console.log(`screenshots: rechecking ${todo.length} copied images on Imgur, at most ${args.rate}/s`);
-	const pace = pacer(args.rate);
-	const abort = new AbortController();
-	const once = async (url: string): Promise<CheckOutcome> => {
-		for (let attempt = 1; ; attempt++) {
-			await pace.take();
-			let o: CheckOutcome;
-			try {
-				o = classifyCheck(await fetchImgur(url, abort.signal));
-			} catch (e) {
-				o = { kind: 'retry', reason: e instanceof Error ? e.message : String(e) };
-			}
-			if (o.kind !== 'retry' || attempt >= ATTEMPTS) return o;
-			await realClock.sleep(backoffMs(attempt));
-		}
-	};
-	// The small thumbnail is the cheap question; some ids (8 characters) have none and redirect to
-	// their page, so an unclear answer asks for the original instead.
-	const ask = async (id: string, type?: StateEntry['type']): Promise<CheckOutcome> => {
-		const o = await once(imgurThumb(id));
-		return o.kind === 'unknown' && type ? once(imgurOriginal(id, EXT[type])) : o;
-	};
-	if (args.canary) {
-		const c = await ask(CANARY.id);
-		if (c.kind !== 'alive') {
-			console.error(
-				`screenshots: canary ${CANARY.id} isn't answered as an image (${c.kind}${'reason' in c ? `: ${c.reason}` : ''}); nothing checked.`
-			);
-			return 2;
-		}
-	}
-	const started = Date.now();
-	let checked = 0;
-	let stop: string | null = null;
-	const gone: { e: StateEntry; reason: string }[] = [];
-	const unknown: string[] = [];
-	const ticker = setInterval(() => console.log(`screenshots: checked ${checked}/${todo.length} · deleted on Imgur ${gone.length}`), 15_000);
-	await pool(
-		todo,
-		args.inFlight,
-		async (e) => {
-			const o = await ask(e.id, e.type);
-			if (o.kind === 'stop') stop ??= `${e.id}: ${o.reason}`;
-			else if (o.kind === 'gone') gone.push({ e, reason: o.reason });
-			else if (o.kind !== 'alive') unknown.push(`${e.id}: ${o.reason}`);
-			checked++;
-		},
-		() => stop !== null
-	);
-	clearInterval(ticker);
-	console.log(
-		`screenshots: checked ${checked} in ${secs(Date.now() - started)}: deleted on Imgur ${gone.length}, unclear ${unknown.length}` +
-			(gone.length ? ` (${gone.map((g) => g.e.id).join(', ')})` : '')
-	);
-	for (const u of unknown.slice(0, 20)) console.log(`  ${u}`);
-	if (stop) {
-		console.error(`screenshots: STOPPED: ${stop}; nothing recorded`);
-		return 2;
-	}
-	if (tooManyGone(gone.length, checked)) {
-		console.error(`screenshots: ${gone.length} of ${checked} look deleted, too many to believe; nothing recorded`);
-		return 2;
-	}
-	const at = new Date().toISOString();
-	for (const { e, reason } of gone)
-		appendFileSync(stateFile, formatEntry({ ...e, status: 'removed', by: 'imgur', reason: `deleted on Imgur (${reason})`, at }));
-	if (gone.length)
-		console.log(
-			`screenshots: marked ${gone.length} removed. Next: --upload (their files go after the grace period), then screenshots:flags`
-		);
-	return 0;
 }

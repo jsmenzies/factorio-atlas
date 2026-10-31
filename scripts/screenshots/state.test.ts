@@ -84,7 +84,7 @@ test('originalPath', () => {
 });
 
 test('planWork never fetches a removed image again', () => {
-	const removed = entry('rmv', 'removed', { by: 'imgur', reason: 'deleted on Imgur' });
+	const removed = entry('rmv', 'removed', { by: 'request', reason: 'taken down on request' });
 	const plan = planWork([want('rmv')], new Map([['rmv', removed]]), { recheckDead: true, hasFile: () => false });
 	expect(plan.todo).toEqual([]);
 	expect(plan.removed).toBe(1);

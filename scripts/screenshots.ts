@@ -1,7 +1,8 @@
 /**
  * `bun run screenshots`: copy every print's screenshot, the original file exactly as Imgur serves
  * it, into SCREENSHOTS_DIR (e.g. in .env; default data/screenshots); then make the sizes the site
- * shows, upload them, and keep up with deletions on Imgur.
+ * shows and upload them. Imgur is never asked whether a copied image still exists: a screenshot
+ * goes only on request (a removal request's takedown, or `screenshots:remove` by hand).
  *
  *   bun run screenshots [--from-clone DIR] [--from-disk [DIR]] [--ids a,b] [--limit N]
  *                       [--rate N] [--in-flight N] [--recheck-dead] [--plan-only] [--no-canary] [--json]
@@ -9,7 +10,6 @@
  *   bun run screenshots --from-sites local|prod [--ids a,b] [--limit N] [--plan-only] [--json]
  *   bun run screenshots --make [--ids a,b] [--limit N] [--jobs N]
  *   bun run screenshots --upload local|prod [--ids a,b] [--limit N] [--jobs N] [--plan-only] [--json]
- *   bun run screenshots --recheck [--ids a,b] [--limit N] [--rate N]
  *
  * The fetch (the default):
  *
@@ -44,9 +44,6 @@
  * - `--upload local|prod`: makes what's missing, then brings the bucket in line (upload.ts): files,
  *   then each image's manifest, recorded in `<dir>/uploads/<target>.jsonl`. Afterwards run
  *   `bun run screenshots:flags --stage <same>` so search cards show them.
- * - `--recheck`: asks Imgur for each copied Imgur image's small thumbnail; images deleted there are
- *   marked removed, and the next upload deletes their files after DELETE_GRACE_MS. Upload images are
- *   never asked about.
  */
 import { appendFileSync, existsSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -55,7 +52,7 @@ import { dirname, join } from 'node:path';
 import { ATTEMPTS, CANARY, canaryDue, parseArgs, screenshotsDir, USAGE, UsageError, type ShotArgs } from './screenshots/args.js';
 import { classify, type Outcome, type Reply } from './screenshots/classify.js';
 import { decodes } from './screenshots/make.js';
-import { runMake, runRecheck, runUpload } from './screenshots/run.js';
+import { runMake, runUpload } from './screenshots/run.js';
 import { runFromUploads } from './screenshots/uploads.js';
 import { runFromSites } from './screenshots/sites.js';
 import { IMGUR_ID, isOwnImage } from '#lib/screenshots.js';
@@ -112,9 +109,7 @@ if (args.mode !== 'fetch') {
 				? await runFromSites(dir, stateFile, entries, args)
 				: args.mode === 'make'
 					? await runMake(dir, entries, args)
-					: args.mode === 'upload'
-						? await runUpload(dir, entries, args)
-						: await runRecheck(dir, stateFile, entries, args);
+					: await runUpload(dir, entries, args);
 	process.exit(code);
 }
 

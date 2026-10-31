@@ -102,9 +102,9 @@
 			are uploaded here by their authors, under their display name here (see “Accounts and uploads”).
 		</p>
 		<p>
-			Screenshots of copied prints are copies of the images authors uploaded to Imgur for them. When we find that a screenshot has been
-			deleted from Imgur, we delete our copy too. A print deleted from factorioprints.com may still be here: ask for it to be removed as
-			below. An uploaded print’s screenshot is the image its uploader sent with it.
+			Screenshots of copied prints are copies of the images authors uploaded to Imgur for them, and a print deleted from factorioprints.com
+			may still be here. To have a screenshot or a print removed, ask as below; once removed, it isn’t copied here again. An uploaded print’s
+			screenshot is the image its uploader sent with it.
 		</p>
 	</section>
 

@@ -8,8 +8,8 @@
 import type { ImageKind } from './image.js';
 
 /**
- * removed: deleted on Imgur since we copied it (`--recheck`), or taken down on request
- * (`screenshots:remove`). Never fetched or uploaded again; its line keeps the fetched fields.
+ * removed: taken down on request (a removal request's takedown, `screenshots:remove`). Never fetched or
+ * uploaded again; its line keeps the fetched fields.
  */
 export type Status = 'fetched' | 'dead' | 'failed' | 'removed';
 
@@ -30,7 +30,10 @@ export interface StateEntry {
 	height?: number | null;
 	/** For `dead`, `failed` and `removed`. */
 	reason?: string;
-	/** For `removed`: who removed it. */
+	/**
+	 * For `removed`: who removed it. 'imgur': marked deleted on Imgur by the old recheck (removed), kept so
+	 * older lines still read; such files go after the delete grace period, a request's at once.
+	 */
 	by?: 'imgur' | 'request';
 	attempts: number;
 	/** ISO time. */
@@ -80,7 +83,7 @@ export interface Plan {
 	retrying: number;
 	/** In the todo list because `--recheck-dead`. */
 	recheck: number;
-	/** Removed (deleted on Imgur, or on request): never fetched again. */
+	/** Removed (taken down on request): never fetched again. */
 	removed: number;
 }
 

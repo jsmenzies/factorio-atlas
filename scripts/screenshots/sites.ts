@@ -16,8 +16,8 @@
  *   on the next run. One the run state has as removed (a takedown)
  *   is never copied again.
  * - Polite: the importer's User-Agent (scripts/sync/polled.ts), no Referer, at most one request a second per
- *   host, 3 tries with backoff on 429/5xx/network errors. None of Imgur's checks (canary, removed.png,
- *   `--recheck`) apply.
+ *   host, 3 tries with backoff on 429/5xx/network errors. None of Imgur's checks (canary, removed.png)
+ *   apply.
  * From there `--make`, `--upload` and `screenshots:flags` treat them like any image. The update's screenshots
  * step runs it after `--from-uploads`.
  */
