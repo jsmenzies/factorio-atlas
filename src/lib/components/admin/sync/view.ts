@@ -129,17 +129,13 @@ export function previewSteps(plan: SyncPlan | null, union: ScopeFigures, setting
 				(t.polled ? `; then admit ${int(t.polled)} records from other sites through the gate` : ''),
 			idle: !t.backfill && !t.polled
 		},
-		settings.authors
-			? { id: 'authors', text: 'their records first, then Firebase for every author never asked' }
-			: { id: 'authors', text: 'off in the settings', idle: true },
-		settings.screenshots
-			? {
-					id: 'screenshots',
-					text:
-						(t.backfill ? `copy up to ${int(t.added)} new screenshots from Imgur` : 'copy any new screenshots from Imgur') +
-						', approved upload screenshots and other sites’ images; size and upload them'
-				}
-			: { id: 'screenshots', text: 'off in the settings', idle: true },
+		{ id: 'authors', text: 'their records first, then Firebase for every author never asked' },
+		{
+			id: 'screenshots',
+			text:
+				(t.backfill ? `copy up to ${int(t.added)} new screenshots from Imgur` : 'copy any new screenshots from Imgur') +
+				', approved upload screenshots and other sites’ images; size and upload them'
+		},
 		!settings.render
 			? { id: 'render', text: 'off in the settings', idle: true }
 			: {

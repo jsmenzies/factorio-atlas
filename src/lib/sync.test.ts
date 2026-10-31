@@ -18,20 +18,19 @@ import {
 describe('parseSettings', () => {
 	test('nothing stored: the defaults', () => {
 		expect(parseSettings(undefined)).toEqual({ settings: DEFAULT_SETTINGS, errors: [] });
-		expect(DEFAULT_SETTINGS).toMatchObject({ top: 1000, perUpdate: 500, authors: true, maxChange: 0.05 });
+		expect(DEFAULT_SETTINGS).toMatchObject({ top: 1000, perUpdate: 500, maxChange: 0.05 });
 	});
 
 	test('valid fields kept, invalid ones named and replaced by the default', () => {
-		const { settings, errors } = parseSettings({ top: 2000, perUpdate: null, workers: 0, screenshots: false });
-		expect(settings).toMatchObject({ top: 2000, perUpdate: null, workers: null, screenshots: false });
+		const { settings, errors } = parseSettings({ top: 2000, perUpdate: null, workers: 0, render: false });
+		expect(settings).toMatchObject({ top: 2000, perUpdate: null, workers: null, render: false });
 		expect(errors).toEqual(['workers']);
 	});
 
-	test('an old saved imgurRecheck is ignored, like any unknown key', () => {
-		const { settings, errors } = parseSettings({ imgurRecheck: 'weekly', top: 5 });
+	test('settings that no longer exist are ignored, like any unknown key', () => {
+		const { settings, errors } = parseSettings({ authors: false, screenshots: false, authorLimit: 50, imgurRecheck: 'weekly', top: 5 });
 		expect(errors).toEqual([]);
 		expect(settings).toEqual({ ...DEFAULT_SETTINGS, top: 5 });
-		expect('imgurRecheck' in settings).toBe(false);
 	});
 
 	test('render on by default; turned off kept; settings saved before it existed render', () => {

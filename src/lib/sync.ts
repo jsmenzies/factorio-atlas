@@ -32,10 +32,6 @@ export interface SyncSettings {
 	retryFailed: boolean;
 	/** Run the render step (top list, changed records, render and upload); off: the step is skipped. */
 	render: boolean;
-	/** Copy new screenshots (Imgur's, approved uploads', other sites'), size and upload them, and update the stage's screenshot rows. */
-	screenshots: boolean;
-	/** Name new authors: their records first, then Firebase for every author never asked. An old saved `authorLimit` is ignored. */
-	authors: boolean;
 	/**
 	 * Hold a source back when its new and removed prints (the mirror's moved files too) in one update are more
 	 * than this share of the prints known from it, and at least HOLD_FLOOR; edits don't count (`holdBack`). A
@@ -114,8 +110,6 @@ export const DEFAULT_SETTINGS: SyncSettings = {
 	memCapMb: RENDER_MEM_CAP_MB,
 	retryFailed: false,
 	render: true,
-	screenshots: true,
-	authors: true,
 	maxChange: 0.05,
 	polled: Object.fromEntries(POLLED_SITES.map((p) => [p.site, { on: true }])) as Record<PolledSiteId, { on: boolean }>
 };
@@ -139,7 +133,8 @@ const whole = (v: unknown, min: number, max: number) =>
 /**
  * Settings from stored or posted JSON: each valid field kept, anything else the default. `errors`
  * names the fields that were given but invalid, so a form can say so. With `ramMb` (the machine's RAM),
- * `memCapMb` is held to memCapMaxMb; without, only to MEM_CAP_MIN_MB and up.
+ * `memCapMb` is held to memCapMaxMb; without, only to MEM_CAP_MIN_MB and up. Old keys (`authors`, `screenshots`:
+ * those steps always run; `authorLimit`, `imgurRecheck`) are ignored.
  */
 export function parseSettings(input: unknown, machine: { ramMb?: number | null } = {}): { settings: SyncSettings; errors: string[] } {
 	const capMax = machine.ramMb ? memCapMaxMb(machine.ramMb) : 1 << 22;
@@ -162,8 +157,6 @@ export function parseSettings(input: unknown, machine: { ramMb?: number | null }
 		memCapMb: pick('memCapMb', (v) => (v === RENDER_MEM_CAP_MB ? v : whole(v, MEM_CAP_MIN_MB, capMax))),
 		retryFailed: pick('retryFailed', (v) => (typeof v === 'boolean' ? v : undefined)),
 		render: pick('render', (v) => (typeof v === 'boolean' ? v : undefined)),
-		screenshots: pick('screenshots', (v) => (typeof v === 'boolean' ? v : undefined)),
-		authors: pick('authors', (v) => (typeof v === 'boolean' ? v : undefined)),
 		maxChange: pick('maxChange', (v) => (typeof v === 'number' && v > 0 && v <= 1 ? v : undefined)),
 		polled: parsePolled(o.polled, errors)
 	};

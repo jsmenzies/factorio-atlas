@@ -61,11 +61,11 @@ describe('renderWork', () => {
 });
 
 describe('previewSteps', () => {
-	test('one line per step; steps turned off say so', () => {
-		const steps = previewSteps(plan(), union(5), { ...DEFAULT_SETTINGS, authors: false });
+	test('one line per step', () => {
+		const steps = previewSteps(plan(), union(5), DEFAULT_SETTINGS);
 		expect(steps.map((s) => s.id)).toEqual(['removals', 'fetch', 'ingest', 'authors', 'screenshots', 'render', 'figures']);
 		expect(steps[1].text).toBe('+46 new, 4 edited, 212 only favourite counts changed, 1 deleted');
-		expect(steps[3]).toEqual({ id: 'authors', text: 'off in the settings', idle: true });
+		expect(steps[3]).toEqual({ id: 'authors', text: 'their records first, then Firebase for every author never asked' });
 		expect(steps[5].text).toContain('render about 46 prints');
 	});
 	test('render turned off: the step says so and costs nothing', () => {

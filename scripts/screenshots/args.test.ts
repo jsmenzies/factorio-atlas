@@ -66,7 +66,6 @@ test('parseArgs: the steps after the fetch', () => {
 	expect(parseArgs(['--make', '--ids', '8B9jpx6'], defaults)).toMatchObject({ mode: 'make', ids: ['8B9jpx6'] });
 	expect(() => parseArgs(['--upload', 'staging'], defaults)).toThrow(UsageError);
 	expect(() => parseArgs(['--make', '--upload', 'prod'], defaults)).toThrow(UsageError);
-	expect(() => parseArgs(['--recheck'], defaults)).toThrow('unknown option --recheck');
 	expect(() => parseArgs(['--jobs', '0'], defaults)).toThrow(UsageError);
 });
 

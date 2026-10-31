@@ -83,30 +83,13 @@
 
 {#if live}
 	<p class="rounded-lg border border-stone-800 bg-stone-900/50 px-4 py-2.5 text-xs text-stone-500">
-		Settings are locked while the update runs (it read them when it started): authors {settings.authors ? 'on' : 'off'} · screenshots
-		{settings.screenshots ? 'on' : 'off'} · render {settings.render
+		Settings are locked while the update runs (it read them when it started): render {settings.render
 			? `on, top ${int(settings.top)}, ${settings.perUpdate === null ? 'every print with work' : `≤ ${int(settings.perUpdate)} prints`}, ${settings.workers ?? 'default'} threads, ${gb(settings.memCapMb)} GB per worker${settings.retryFailed ? ', retrying failed pages' : ''}`
 			: 'off'} · hold back at {Math.round(settings.maxChange * 100)}% · codex {settings.polled.codex.on ? 'on' : 'off'} · fprints {settings.polled.fprints.on ? 'on' : 'off'}
 	</p>
 {:else}
 	<section aria-labelledby="settings-title" class="rounded-lg border border-stone-800 bg-stone-900/50 px-4 pt-3 pb-1">
 		<h2 id="settings-title" class="pb-2 text-xs font-semibold tracking-wide text-stone-500 uppercase">How the next update runs</h2>
-
-		<div class={row}>
-			<div class="min-w-0 flex-1 basis-60">
-				<p class="text-sm font-medium text-stone-100">Name new authors <span class="font-normal text-stone-500">· factorioprints only</span></p>
-				<p class="text-xs text-stone-500">Their records first, then Firebase, once per author, ever.</p>
-			</div>
-			<Toggle bind:checked={settings.authors} label="Name new authors" {onchange} />
-		</div>
-
-		<div class={row}>
-			<div class="min-w-0 flex-1 basis-60">
-				<p class="text-sm font-medium text-stone-100">Copy screenshots <span class="font-normal text-stone-500">· Imgur, uploads and other sites’ images</span></p>
-				<p class="text-xs text-stone-500">At most 4 requests a second to Imgur; then sized and uploaded, and the cards updated.</p>
-			</div>
-			<Toggle bind:checked={settings.screenshots} label="Copy screenshots" {onchange} />
-		</div>
 
 		<div class={row}>
 			<div class="min-w-0 flex-1 basis-60">

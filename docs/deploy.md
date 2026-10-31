@@ -543,9 +543,9 @@ bun run authors --stage prod             # asks before writing; --yes skips that
 bun run authors --stage local            # the local D1 and bucket (reuses earlier answers)
 ```
 
-It's resumable: a stopped run saves what came back, and the next one carries on (`--limit N` asks
-about at most N authors). New prints get their author's name at ingest when the table has it; run
-the command again to look up authors who are new to the site. It reaches prod through the
+It's resumable: a stopped run saves what came back, and the next one carries on. New prints get
+their author's name at ingest when the table has it; every update's authors step runs this command
+for authors who are new to the site. It reaches prod through the
 backfill's remote bindings (`wrangler login`, Node on PATH), and the deployed database must have
 migration 0017.
 
@@ -638,7 +638,7 @@ and starts no more; Ctrl-C again, or Quit now, ends the step at once, and kills 
 hasn't. An update refuses to start while another is running or a render run is live; one whose
 process was killed is closed as failed by the next, once its processes are gone.
 
-Its settings (each polled site on or off, the 5% guard, author lookups, screenshots, render on or off,
+Its settings (each polled site on or off, the 5% guard, render on or off,
 the top N favourites to render, how many prints to render per update, render workers, the memory cap per worker
 and a one-off "retry failed pages", which the next update's render step uses, cleared once the render step has drawn) are saved in the local D1 as they are changed on the Update tab (`/admin/update`) under
 `bun run dev`; without them the defaults apply. There, the Update tab draws the update as a board: one row per source

@@ -658,7 +658,7 @@ const steps: StepDef[] = [
 	{
 		id: 'authors',
 		needs: ['ingest'],
-		gate: () => (!settings.authors ? 'turned off in the settings' : !hasSource(MIRROR_SITE) ? 'factorioprints prints only' : null),
+		gate: () => (hasSource(MIRROR_SITE) ? null : 'factorioprints prints only'),
 		async run(): Promise<Outcome> {
 			const r = await script(['scripts/authors.ts', '--stage', stage, '--yes', '--json']);
 			if (r.code !== 0) return failed(r);
@@ -676,7 +676,6 @@ const steps: StepDef[] = [
 	{
 		id: 'screenshots',
 		needs: ['removals'],
-		gate: () => (settings.screenshots ? null : 'turned off in the settings'),
 		async run({ stopping }): Promise<Outcome> {
 			const parts: string[] = [];
 			let warning = false;
