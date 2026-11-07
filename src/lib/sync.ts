@@ -222,8 +222,6 @@ export interface StepFigures {
 	bucketPut?: { files: number; bytes: number };
 }
 
-/** Bytes as the screenshots step shows them: "156.1 MB". */
-
 /** The screenshots step's group of one site's images (`From other sites: codex`). */
 export const SITE_SHOTS_GROUP = 'From other sites: ';
 

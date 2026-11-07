@@ -127,7 +127,6 @@
 	const onWindowPointerdown = (e: PointerEvent) => {
 		if (open && !root.contains(e.target as Node)) open = false;
 	};
-
 </script>
 
 <!-- Scrolling the results or resizing moves the chip away from the dropdown, so either closes it. -->
